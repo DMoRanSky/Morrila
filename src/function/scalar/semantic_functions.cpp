@@ -14,7 +14,7 @@ static void SemanticFunction(DataChunk &args, ExpressionState &state, Vector &re
 
     idx_t count = args.size();
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-    auto out = FlatVector::GetData<bool>(result);
+	auto out = FlatVector::GetDataMutable<bool>(result);
     auto &out_valid = FlatVector::Validity(result);
 
     std::vector<std::string> prompts;
@@ -51,7 +51,7 @@ static void SemanticFunctionInt(DataChunk &args, ExpressionState &state, Vector 
 
 	idx_t count = args.size();
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<int64_t>(result);
+	auto out = FlatVector::GetDataMutable<int64_t>(result);
 	auto &out_valid = FlatVector::Validity(result);
 
 	std::vector<std::string> prompts;
@@ -88,7 +88,7 @@ static void SemanticFunctionString(DataChunk &args, ExpressionState &state, Vect
 
 	idx_t count = args.size();
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<string_t>(result);
+	auto out = FlatVector::GetDataMutable<string_t>(result);
 	auto &out_valid = FlatVector::Validity(result);
 
 	std::vector<std::string> prompts;
@@ -125,7 +125,7 @@ static void SemanticFunctionDouble(DataChunk &args, ExpressionState &state, Vect
 
 	idx_t count = args.size();
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetData<double>(result);
+	auto out = FlatVector::GetDataMutable<double>(result);
 	auto &out_valid = FlatVector::Validity(result);
 
 	std::vector<std::string> prompts;

@@ -8,6 +8,8 @@
 
 namespace duckdb {
 
+void RegisterSemanticFunctions(BuiltinFunctions &set);
+
 FunctionData::~FunctionData() {
 }
 
@@ -94,6 +96,7 @@ void BuiltinFunctions::Initialize() {
 	RegisterReadFunctions();
 	RegisterTableFunctions();
 	RegisterArrowFunctions();
+	RegisterSemanticFunctions(*this);
 
 	RegisterPragmaFunctions();
 

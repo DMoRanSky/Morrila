@@ -1,6 +1,21 @@
 
-#include <bits/stdc++.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cctype>
+#include <cstdint>
+#include <ctime>
+#include <fstream>
+#include <functional>
+#include <mutex>
+#include <queue>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "yyjson.hpp"
 
 

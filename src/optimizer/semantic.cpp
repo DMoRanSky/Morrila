@@ -64,7 +64,7 @@ static std::string EnhancedToStringWithAnnotations(
 		if (it != subtree_table_indices.end()) return it->second;
 		std::unordered_set<idx_t> set;
 		auto own_tbls = n->GetTableIndex();
-		for (auto t : own_tbls) set.insert((idx_t)t);
+		for (auto t : own_tbls) set.insert(t.index);
 		for (auto &c : n->children) {
 			if (!c) continue;
 			auto &child_set = collect_subtree_tables(c.get());
@@ -82,7 +82,7 @@ static std::string EnhancedToStringWithAnnotations(
 		auto node = p.first;
 		if (node && node->type == LogicalOperatorType::LOGICAL_PROJECTION) {
 			auto &proj = node->Cast<LogicalProjection>();
-			idx_t pidx = proj.table_index;
+			idx_t pidx = proj.table_index.index;
 			auto it = subtree_table_indices.find(node);
 			if (it != subtree_table_indices.end()) {
 				proj_index_to_subtrees[pidx] = it->second;
@@ -303,13 +303,13 @@ static void CollectReferencedTables(Expression &expr, std::unordered_set<idx_t> 
 	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 		auto &colref = expr.Cast<BoundColumnRefExpression>();
 		// Note: depth may be > 0 for correlated refs; we still count its table index here
-		tables.insert(colref.binding.table_index);
+		tables.insert(colref.binding.table_index.index);
 	}
 	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { CollectReferencedTables(child, tables); });
 }
 // copy from pushdown_projection.cpp
 static void ReplaceExpressionBinding(vector<unique_ptr<Expression>> &proj_expressions, Expression &expr,
-                                     idx_t proj_table_idx) {
+							 TableIndex proj_table_idx) {
 	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 		bool found_proj_col = false;
 		BoundColumnRefExpression &colref = expr.Cast<BoundColumnRefExpression>();
@@ -319,7 +319,7 @@ static void ReplaceExpressionBinding(vector<unique_ptr<Expression>> &proj_expres
 			if (proj_expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 				if (colref.ToString() == proj_expr.ToString()) {
 					colref.binding.table_index = proj_table_idx;
-					colref.binding.column_index = proj_idx;
+					colref.binding.column_index = ProjectionIndex(proj_idx);
 					found_proj_col = true;
 				}
 			}
@@ -328,7 +328,7 @@ static void ReplaceExpressionBinding(vector<unique_ptr<Expression>> &proj_expres
 			// Project a new column
 			auto new_colref = colref.Copy();
 			colref.binding.table_index = proj_table_idx;
-			colref.binding.column_index = proj_expressions.size();
+			colref.binding.column_index = ProjectionIndex(proj_expressions.size());
 			proj_expressions.push_back(std::move(new_colref));
 		}
 	}
@@ -575,7 +575,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		LogicalOperator *ptr = n.get();
 		DPNode dn; dn.id = node_ids[ptr]; dn.node = ptr;
 		for (auto &c : n->children) if (c) dn.children.push_back(node_ids[c.get()]);
-		auto tbls = n->GetTableIndex(); for (auto t : tbls) dn.tables.push_back((idx_t)t);
+		auto tbls = n->GetTableIndex(); for (auto t : tbls) dn.tables.push_back(t.index);
 		try { dn.card = (double)ptr->EstimateCardinality(optimizer.GetContext()); } catch(...) { dn.card = 0.0; }
 		dn.cost = dn.card; // naive cost = cardinality
 		nodes.push_back(std::move(dn));
@@ -589,7 +589,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		for (auto &b : bindings) {
 			if (!b) continue;
 			// Binding::index is the table_index
-			table_names_map[b->index] = b->GetAlias();
+			table_names_map[b->GetIndex().index] = b->GetAlias();
 		}
 	} catch (...) {
 		// ignore if binder not available
@@ -615,7 +615,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		std::unordered_set<idx_t> set;
 		// Own tables (some nodes may report table indices; include them)
 		auto own_tbls = n->GetTableIndex();
-		for (auto t : own_tbls) set.insert((idx_t)t);
+		for (auto t : own_tbls) set.insert(t.index);
 		// Recurse children
 		for (auto &c : n->children) {
 			if (!c) continue;
@@ -644,7 +644,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		auto node = p.first;
 		if (node && node->type == LogicalOperatorType::LOGICAL_PROJECTION) {
 			auto &proj = node->Cast<LogicalProjection>();
-			idx_t pidx = proj.table_index;
+			idx_t pidx = proj.table_index.index;
 			auto it = subtree_table_indices.find(node);
 			if (it != subtree_table_indices.end()) {
 				proj_index_to_subtrees[pidx] = it->second;
@@ -655,7 +655,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		for (auto &c : node->children) std::cout << " " << c.get();
 		std::cout << " tables:";
 		auto tbls = node->GetTableIndex();
-		for (auto t : tbls) std::cout << " " << t;
+		for (auto t : tbls) std::cout << " " << t.index;
 		std::cout << std::endl;
 	}
 
@@ -690,7 +690,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 			auto &bindings = optimizer.binder.bind_context.GetBindingsList();
 			for (auto &b : bindings) {
 				if (!b) continue;
-				std::cout << "TABLE[" << b->index << "] NAME=\"" << b->GetAlias() << "\"\n";
+				std::cout << "TABLE[" << b->GetIndex().index << "] NAME=\"" << b->GetAlias() << "\"\n";
 			}
 		} catch (...) {
 			std::cout << "DP_TABLES: (binder not available)\n";
@@ -908,7 +908,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 					if (dp[u][i ^ (1 << j)] == INF) continue;
 					double sz = 1;
 					for (auto table_id: semantic_filter_tables[j]) sz *= table_size[table_id];
-					double cost = alpha * sz * pow(abla_filter, count(semantic_filter_tables[j], i ^ (1 << j))) * get_multiplies(u, j);
+					double cost = sz * pow(abla_filter, count(semantic_filter_tables[j], i ^ (1 << j))) * get_multiplies(u, j);
 					double v = dp[u][i ^ (1 << j)] + cost;
 					double &pre = dp[u][i];
 					if (v < pre) {
@@ -1202,7 +1202,7 @@ void SemanticOptimizer::SwapFilterWithParent(FilterLocation &location) {
 		}
 		vector<unique_ptr<Expression>> new_filters;
 
-		orig_table_index = proj.table_index;
+		orig_table_index = proj.table_index.index;
 		for (auto &f : semantic_filter->expressions) {
 			auto cf = f->Copy();
 			ReplaceExpressionBinding(copy_proj, *cf, proj.table_index);
