@@ -1,16 +1,7 @@
 #include "duckdb/common/llm_query.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include <algorithm>
-#if defined(__has_include)
-#if __has_include(<cpr/cpr.h>)
 #include <cpr/cpr.h>
-#define DUCKDB_HAS_CPR 1
-#else
-#define DUCKDB_HAS_CPR 0
-#endif
-#else
-#define DUCKDB_HAS_CPR 0
-#endif
 #include <iostream>
 #include <fstream>
 #include <mutex>
@@ -178,11 +169,6 @@ auto LLMCallManager::get_response_(const std::string &prompt, ReturnType return_
 
     logger_.LLMLog("PROMPT:\n" + prompt);
     int tries = 0;
-#if !DUCKDB_HAS_CPR
-    logger_.LLMLog("CPR dependency is missing; semantic LLM call is disabled in this build.");
-    (void)tries;
-    return LLMResponse{"", false, return_type};
-#else
     while(true){
         std::string body = construct_body_(prompt);
         cpr::Response r = cpr::Post(
@@ -228,7 +214,6 @@ auto LLMCallManager::get_response_(const std::string &prompt, ReturnType return_
             continue;
         }
     }
-#endif
 }
 
 auto LLMCallManager::workloop_() -> void {

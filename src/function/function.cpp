@@ -5,9 +5,14 @@
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/parser/parsed_data/pragma_info.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/main/extension_entries.hpp"
 
 namespace duckdb {
 
+// Forward declaration for custom semantic functions
 void RegisterSemanticFunctions(BuiltinFunctions &set);
 
 FunctionData::~FunctionData() {
@@ -96,11 +101,8 @@ void BuiltinFunctions::Initialize() {
 	RegisterReadFunctions();
 	RegisterTableFunctions();
 	RegisterArrowFunctions();
-	RegisterSemanticFunctions(*this);
 
 	RegisterPragmaFunctions();
-
-	RegisterCopyFunctions();
 
 	// initialize collations
 	AddCollation("nocase", LowerFun::GetFunction(), true);
@@ -108,6 +110,9 @@ void BuiltinFunctions::Initialize() {
 	AddCollation("nfc", NFCNormalizeFun::GetFunction());
 
 	RegisterExtensionOverloads();
+
+	// Register custom semantic functions (semantic_match)
+	RegisterSemanticFunctions(*this);
 }
 
 hash_t BaseScalarFunction::Hash() const {
