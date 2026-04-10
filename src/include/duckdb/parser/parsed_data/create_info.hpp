@@ -42,8 +42,6 @@ public:
 	bool temporary;
 	//! Whether or not the entry is an internal entry
 	bool internal;
-	//! The name of the extension that registered this entry (empty for core entries)
-	string extension_name;
 	//! The SQL string of the CREATE statement
 	string sql;
 	//! The inherent dependencies of the created entry
@@ -62,8 +60,6 @@ public:
 	DUCKDB_API void CopyProperties(CreateInfo &other) const;
 	//! Generates an alter statement from the create statement - used for OnCreateConflict::ALTER_ON_CONFLICT
 	DUCKDB_API virtual unique_ptr<AlterInfo> GetAlterInfo() const;
-	//! Returns a string like "CREATE (OR REPLACE) (TEMPORARY) <entry> (IF NOT EXISTS) " for TABLE/VIEW/TYPE/MACRO
-	DUCKDB_API string GetCreatePrefix(const string &entry) const;
 
 	virtual string ToString() const {
 		throw NotImplementedException("ToString not supported for this type of CreateInfo: '%s'",

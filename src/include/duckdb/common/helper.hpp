@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/common/bswap.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include <string.h>
@@ -59,7 +58,7 @@ struct TemplatedUniqueIf<DATA_TYPE[N]>
 };
 
 template<class DATA_TYPE, class... ARGS>
-inline
+inline 
 typename TemplatedUniqueIf<DATA_TYPE, true>::templated_unique_single_t
 make_uniq(ARGS&&... args) // NOLINT: mimic std style
 {
@@ -67,7 +66,7 @@ make_uniq(ARGS&&... args) // NOLINT: mimic std style
 }
 
 template<class DATA_TYPE, class... ARGS>
-inline
+inline 
 shared_ptr<DATA_TYPE>
 make_shared_ptr(ARGS&&... args) // NOLINT: mimic std style
 {
@@ -75,7 +74,7 @@ make_shared_ptr(ARGS&&... args) // NOLINT: mimic std style
 }
 
 template<class DATA_TYPE, class... ARGS>
-inline
+inline 
 typename TemplatedUniqueIf<DATA_TYPE, false>::templated_unique_single_t
 make_unsafe_uniq(ARGS&&... args) // NOLINT: mimic std style
 {
@@ -137,6 +136,20 @@ shared_ptr<TGT> shared_ptr_cast(shared_ptr<SRC> src) { // NOLINT: mimic std styl
 	return shared_ptr<TGT>(std::static_pointer_cast<TGT, SRC>(src.internal));
 }
 
+struct SharedConstructor {
+	template <class T, typename... ARGS>
+	static shared_ptr<T> Create(ARGS &&...args) {
+		return make_shared_ptr<T>(std::forward<ARGS>(args)...);
+	}
+};
+
+struct UniqueConstructor {
+	template <class T, typename... ARGS>
+	static unique_ptr<T> Create(ARGS &&...args) {
+		return make_uniq<T>(std::forward<ARGS>(args)...);
+	}
+};
+
 #ifdef DUCKDB_DEBUG_MOVE
 template<class T>
 typename std::remove_reference<T>::type&& move(T&& t) noexcept {
@@ -188,11 +201,6 @@ static inline T AlignValue(T n) {
 	return ((n + (val - 1)) / val) * val;
 }
 
-template <class T>
-static T AlignValue(T n, T val) {
-	return ((n + (val - 1)) / val) * val;
-}
-
 template<uintptr_t alignment, class T>
 inline T *AlignPointer(T *addr) {
 	static_assert((alignment & (alignment - 1)) == 0, "'alignment' has to be a power of 2");
@@ -219,11 +227,6 @@ const T Load(const_data_ptr_t ptr) {
 	T ret;
 	memcpy(&ret, ptr, sizeof(ret)); // NOLINT
 	return ret;
-}
-
-template <typename T>
-const T LoadLE(const_data_ptr_t ptr) {
-	return BSwapIfBE(Load<T>(ptr));
 }
 
 template <typename T>
@@ -265,18 +268,5 @@ void DynamicCastCheck(const SRC *source) {
 	D_ASSERT(reinterpret_cast<const T *>(source) == dynamic_cast<const T *>(source));
 #endif
 }
-
-//! Used to increment counters that need to be exception-proof
-template<typename T>
-class PostIncrement {
-public:
-	explicit PostIncrement(T &t) : t(t) {
-	}
-	~PostIncrement() {
-		++t;
-	}
-private:
-	T &t;
-};
 
 } // namespace duckdb

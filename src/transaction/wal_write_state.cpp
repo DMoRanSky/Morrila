@@ -3,7 +3,6 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
@@ -13,7 +12,6 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/chunk_info.hpp"
 #include "duckdb/storage/table/column_data.hpp"
-#include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/row_group.hpp"
 #include "duckdb/storage/table/row_version_manager.hpp"
 #include "duckdb/storage/table/update_segment.hpp"
@@ -29,10 +27,10 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
     : transaction(transaction_p), log(log), commit_state(commit_state), current_table_info(nullptr) {
 }
 
-void WALWriteState::SwitchTable(DataTableInfo &table_info, UndoFlags new_op) {
-	if (current_table_info != &table_info) {
+void WALWriteState::SwitchTable(DataTableInfo *table_info, UndoFlags new_op) {
+	if (current_table_info != table_info) {
 		// write the current table to the log
-		log.WriteSetTable(table_info.GetSchemaName(), table_info.GetTableName());
+		log.WriteSetTable(table_info->GetSchemaName(), table_info->GetTableName());
 		current_table_info = table_info;
 	}
 }
@@ -46,11 +44,6 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	auto &parent = entry.Parent();
 
 	switch (parent.type) {
-	case CatalogType::TRIGGER_ENTRY:
-		// Triggers do not support ALTER — always a CREATE
-		D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
-		log.WriteCreateTrigger(parent.Cast<TriggerCatalogEntry>());
-		break;
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::INDEX_ENTRY:
@@ -145,9 +138,6 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			log.WriteDropIndex(entry.Cast<IndexCatalogEntry>());
 			break;
 		}
-		case CatalogType::TRIGGER_ENTRY:
-			log.WriteDropTrigger(entry.Cast<TriggerCatalogEntry>());
-			break;
 		case CatalogType::RENAMED_ENTRY:
 		case CatalogType::PREPARED_STATEMENT:
 		case CatalogType::SCALAR_FUNCTION_ENTRY:
@@ -168,7 +158,6 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	case CatalogType::COPY_FUNCTION_ENTRY:
 	case CatalogType::PRAGMA_FUNCTION_ENTRY:
 	case CatalogType::COLLATION_ENTRY:
-	case CatalogType::COORDINATE_SYSTEM_ENTRY:
 	case CatalogType::DEPENDENCY_ENTRY:
 	case CatalogType::SECRET_ENTRY:
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -182,14 +171,14 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 
 void WALWriteState::WriteDelete(DeleteInfo &info) {
 	// switch to the current table, if necessary
-	SwitchTable(*info.table->GetDataTableInfo(), UndoFlags::DELETE_TUPLE);
+	SwitchTable(info.table->GetDataTableInfo().get(), UndoFlags::DELETE_TUPLE);
 
 	if (!delete_chunk) {
 		delete_chunk = make_uniq<DataChunk>();
 		vector<LogicalType> delete_types = {LogicalType::ROW_TYPE};
 		delete_chunk->Initialize(Allocator::DefaultAllocator(), delete_types);
 	}
-	auto rows = FlatVector::GetDataMutable<row_t>(delete_chunk->data[0]);
+	auto rows = FlatVector::GetData<row_t>(delete_chunk->data[0]);
 	if (info.is_consecutive) {
 		for (idx_t i = 0; i < info.count; i++) {
 			rows[i] = UnsafeNumericCast<int64_t>(info.base_row + i);
@@ -209,7 +198,7 @@ void WALWriteState::WriteUpdate(UpdateInfo &info) {
 	auto &column_data = info.segment->column_data;
 	auto &table_info = column_data.GetTableInfo();
 
-	SwitchTable(table_info, UndoFlags::UPDATE_TUPLE);
+	SwitchTable(&table_info, UndoFlags::UPDATE_TUPLE);
 
 	// initialize the update chunk
 	vector<LogicalType> update_types;
@@ -227,8 +216,8 @@ void WALWriteState::WriteUpdate(UpdateInfo &info) {
 	info.segment->FetchCommitted(info.vector_index, update_chunk->data[0]);
 
 	// write the row ids into the chunk
-	auto row_ids = FlatVector::GetDataMutable<row_t>(update_chunk->data[1]);
-	idx_t start = info.row_group_start + info.vector_index * STANDARD_VECTOR_SIZE;
+	auto row_ids = FlatVector::GetData<row_t>(update_chunk->data[1]);
+	idx_t start = column_data.start + info.vector_index * STANDARD_VECTOR_SIZE;
 	auto tuples = info.GetTuples();
 	for (idx_t i = 0; i < info.N; i++) {
 		row_ids[tuples[i]] = UnsafeNumericCast<int64_t>(start + tuples[i]);
@@ -236,7 +225,7 @@ void WALWriteState::WriteUpdate(UpdateInfo &info) {
 	if (column_data.type.id() == LogicalTypeId::VALIDITY) {
 		// zero-initialize the booleans
 		// FIXME: this is only required because of NullValue<T> in Vector::Serialize...
-		auto booleans = FlatVector::GetDataMutable<bool>(update_chunk->data[0]);
+		auto booleans = FlatVector::GetData<bool>(update_chunk->data[0]);
 		for (idx_t i = 0; i < info.N; i++) {
 			auto idx = tuples[i];
 			booleans[idx] = false;
@@ -292,8 +281,6 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		}
 		break;
 	}
-	case UndoFlags::ATTACHED_DATABASE:
-		break;
 	case UndoFlags::SEQUENCE_VALUE: {
 		auto info = reinterpret_cast<SequenceValue *>(data);
 		log.WriteSequenceValue(*info);

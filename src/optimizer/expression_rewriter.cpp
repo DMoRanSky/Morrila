@@ -55,7 +55,7 @@ unique_ptr<Expression> ExpressionRewriter::ConstantOrNull(vector<unique_ptr<Expr
 	auto type = value.type();
 	auto func = ConstantOrNullFun::GetFunction();
 	func.arguments[0] = type;
-	func.SetReturnType(type);
+	func.return_type = type;
 	children.insert(children.begin(), make_uniq<BoundConstantExpression>(value));
 	return make_uniq<BoundFunctionExpression>(type, func, std::move(children), ConstantOrNull::Bind(std::move(value)));
 }
@@ -69,19 +69,12 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 		to_apply_rules.push_back(*rule);
 	}
 
+	VisitOperatorExpressions(op);
+
+	// if it is a LogicalFilter, we split up filter conjunctions again
 	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
-		// For FILTER we want to ensure we always visit the split predicates
-		// Rewrites can add more predicates, so we need to loop
 		auto &filter = op.Cast<LogicalFilter>();
-		idx_t visited_until = 0;
-		do {
-			for (idx_t i = visited_until; i < filter.expressions.size(); i++) {
-				VisitExpression(&filter.expressions[i]);
-			}
-			visited_until = filter.expressions.size();
-		} while (LogicalFilter::SplitPredicates(filter.expressions));
-	} else {
-		VisitOperatorExpressions(op);
+		filter.SplitPredicates();
 	}
 }
 

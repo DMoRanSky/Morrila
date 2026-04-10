@@ -20,8 +20,7 @@ struct AggregatePartition;
 
 class RadixPartitionedHashTable {
 public:
-	RadixPartitionedHashTable(GroupingSet &grouping_set, const GroupedAggregateData &op,
-	                          TupleDataValidityType group_validity);
+	RadixPartitionedHashTable(GroupingSet &grouping_set, const GroupedAggregateData &op);
 	unique_ptr<GroupedAggregateHashTable> CreateHT(ClientContext &context, const idx_t capacity,
 	                                               const idx_t radix_bits) const;
 
@@ -33,8 +32,6 @@ public:
 	vector<LogicalType> group_types;
 	//! The GROUPING values that belong to this hash table
 	vector<Value> grouping_values;
-	//! Whether there are no NULLs in the groups
-	const TupleDataValidityType group_validity;
 
 public:
 	//! Sink Interface

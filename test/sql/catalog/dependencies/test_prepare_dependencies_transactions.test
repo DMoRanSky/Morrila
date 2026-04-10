@@ -33,7 +33,7 @@ EXECUTE v
 statement error con2
 DROP TABLE integers CASCADE
 ----
-<REGEX>:.*TransactionContext Error: Catalog write-write conflict on alter.*
+Catalog write-write conflict on alter
 
 # now we rollback
 statement ok con2
@@ -43,7 +43,6 @@ ROLLBACK
 statement error con2
 EXECUTE v
 ----
-<REGEX>:.*Catalog Error.*does not exist.*
 
 # case two: prepared statement is created inside transaction
 statement ok con1
@@ -78,4 +77,3 @@ COMMIT
 statement error con2
 EXECUTE v
 ----
-<REGEX>:.*Catalog Error.*does not exist.*

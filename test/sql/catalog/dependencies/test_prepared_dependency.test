@@ -23,7 +23,6 @@ DROP TABLE integers CASCADE
 statement error con2
 EXECUTE v
 ----
-<REGEX>:.*Catalog Error.*does not exist.*
 
 # dependency on a sequence for prepare
 statement ok con1
@@ -43,4 +42,4 @@ DROP SEQUENCE seq CASCADE
 statement error con2
 EXECUTE v
 ----
-<REGEX>:.*Catalog Error.*does not exist.*
+

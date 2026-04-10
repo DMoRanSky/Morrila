@@ -43,7 +43,7 @@ QualifiedName Transformer::TransformQualifiedName(duckdb_libpgquery::PGRangeVar 
 	if (root.relname) {
 		qname.name = root.relname;
 	} else {
-		throw ParserException("Empty table name not supported");
+		qname.name = string();
 	}
 	return qname;
 }

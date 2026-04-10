@@ -11,15 +11,13 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/column_index.hpp"
-#include "duckdb/planner/table_filter_set.hpp"
+#include "duckdb/planner/table_filter.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/common/open_file_info.hpp"
 
 namespace duckdb {
-
-class BaseStatistics;
 class BaseUnionData;
 struct GlobalTableFunctionState;
 struct LocalTableFunctionState;
@@ -57,7 +55,7 @@ public:
 	const vector<MultiFileColumnDefinition> &GetColumns() const {
 		return columns;
 	}
-	const string &GetFileName() const {
+	const string &GetFileName() {
 		return file.path;
 	}
 	virtual bool UseCastMap() const {
@@ -76,14 +74,11 @@ public:
 	//! Prepare reader for scanning
 	DUCKDB_API virtual void PrepareReader(ClientContext &context, GlobalTableFunctionState &);
 
-	//! Try to initialize a scan over the reader - this is done while the global lock is held
 	virtual bool TryInitializeScan(ClientContext &context, GlobalTableFunctionState &gstate,
 	                               LocalTableFunctionState &lstate) = 0;
-	//! Prepare a scan - called after TryInitializeScan succeeds - this is done without any lock held
-	virtual void PrepareScan(ClientContext &context, GlobalTableFunctionState &gstate, LocalTableFunctionState &lstate);
 	//! Scan a chunk from the read state
-	virtual AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &global_state,
-	                         LocalTableFunctionState &local_state, DataChunk &chunk) = 0;
+	virtual void Scan(ClientContext &context, GlobalTableFunctionState &global_state,
+	                  LocalTableFunctionState &local_state, DataChunk &chunk) = 0;
 	//! Finish scanning a given file
 	DUCKDB_API virtual void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate);
 	//! Get progress within a given file
@@ -138,11 +133,6 @@ public:
 	const string &GetFileName() {
 		return file.path;
 	}
-
-	virtual optional_idx TryGetCardinalityEstimate() const {
-		return optional_idx();
-	}
-	virtual unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, const string &name);
 
 public:
 	template <class TARGET>

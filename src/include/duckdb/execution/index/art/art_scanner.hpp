@@ -5,7 +5,6 @@
 //
 //
 //===----------------------------------------------------------------------===//
-
 #pragma once
 
 #include "duckdb/common/stack.hpp"
@@ -72,7 +71,7 @@ public:
 				break;
 			}
 			default:
-				throw InternalException("invalid node type for ART ARTScanner: %d", type);
+				throw InternalException("invalid node type for ART ARTScanner: %s", EnumUtil::ToString(type));
 			}
 		}
 	}
@@ -81,11 +80,9 @@ private:
 	template <class FUNC>
 	void Emplace(FUNC &&handler, NODE &node) {
 		if (HANDLING == ARTScanHandling::EMPLACE) {
-			auto result = handler(node);
-			if (result == ARTHandlingResult::SKIP) {
+			if (handler(node) == ARTHandlingResult::SKIP) {
 				return;
 			}
-			D_ASSERT(result == ARTHandlingResult::CONTINUE);
 		}
 		s.emplace(node);
 	}

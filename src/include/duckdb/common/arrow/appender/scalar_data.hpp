@@ -71,10 +71,9 @@ struct ArrowUUIDBlobConverter {
 	template <class TGT, class SRC>
 	static TGT Operation(hugeint_t input) {
 		// Turn into big-end
-		auto upper = BSwapIfLE(input.lower);
+		auto upper = BSwap(input.lower);
 		// flip Upper MSD
-		auto lower =
-		    BSwapIfLE(static_cast<int64_t>(static_cast<uint64_t>(input.upper) ^ (static_cast<uint64_t>(1) << 63)));
+		auto lower = BSwap(static_cast<int64_t>(static_cast<uint64_t>(input.upper) ^ (static_cast<uint64_t>(1) << 63)));
 		return {static_cast<int64_t>(upper), static_cast<uint64_t>(lower)};
 	}
 
@@ -97,7 +96,7 @@ struct ArrowScalarBaseData {
 		input.ToUnifiedFormat(input_size, format);
 
 		// append the validity mask
-		append_data.AppendValidity(format, from, to);
+		AppendValidity(append_data, format, from, to);
 
 		// append the main data
 		auto &main_buffer = append_data.GetMainBuffer();

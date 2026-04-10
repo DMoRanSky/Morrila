@@ -20,7 +20,6 @@ CREATE TABLE tbl (
 	x INTEGER
 );
 ----
-<REGEX>:.*Invalid Input Error.*Circular dependency.*
 
 statement ok
 CREATE TABLE tbl (
@@ -53,4 +52,3 @@ CREATE TABLE circular (
 	x INTEGER,
 );
 ----
-<REGEX>:.*Invalid Input Error.*Circular dependency.*

@@ -107,7 +107,7 @@ ARTConflictType ARTMerger::MergeNodeAndInlined(NodeEntry &entry) {
 	// We fall back to the ART insertion code.
 	auto row_id_key = ARTKey::CreateARTKey<row_t>(arena, entry.right.GetRowId());
 	return ARTOperator::Insert(arena, art, entry.left, row_id_key, entry.depth, row_id_key, GateStatus::GATE_SET,
-	                           DeleteIndexInfo(), IndexAppendMode::DEFAULT);
+	                           nullptr, IndexAppendMode::DEFAULT);
 }
 
 array_ptr<uint8_t> ARTMerger::GetBytes(Node &leaf) {
@@ -144,7 +144,7 @@ void ARTMerger::MergeLeaves(NodeEntry &entry) {
 	for (idx_t i = 0; i < bytes.size(); i++) {
 		Node::InsertChild(art, entry.left, bytes[i]);
 	}
-	Node::FreeNode(art, entry.right);
+	Node::Free(art, entry.right);
 }
 
 NodeChildren ARTMerger::ExtractChildren(Node &node) {
@@ -177,7 +177,7 @@ void ARTMerger::MergeNodes(NodeEntry &entry) {
 	auto children = ExtractChildren(entry.right);
 	// As long as the arena is valid,
 	// the copied-out nodes (and their references) are valid.
-	Node::FreeNode(art, entry.right);
+	Node::Free(art, entry.right);
 
 	// First, we iterate and insert children.
 	// This might grow the node, so we need to do it prior to Emplace.
@@ -217,6 +217,9 @@ void ARTMerger::MergeNodeAndPrefix(Node &node, Node &prefix, const GateStatus pa
 	auto child = node.GetChildMutable(art, byte);
 
 	// Reduce the prefix to the bytes after pos.
+	// We always reduce by at least one byte,
+	// thus, if the prefix was a gate, it no longer is.
+	prefix.SetGateStatus(GateStatus::GATE_NOT_SET);
 	Prefix::Reduce(art, prefix, pos);
 
 	if (child) {
@@ -255,7 +258,7 @@ void ARTMerger::MergePrefixes(NodeEntry &entry) {
 
 	Prefix l_prefix(art, entry.left, true);
 	Prefix r_prefix(art, entry.right, true);
-	const auto count = art.PrefixCount();
+	const auto count = Prefix::Count(art);
 
 	// Find a byte at pos where the prefixes differ.
 	// If they match up to max_count, then pos stays invalid.
@@ -297,7 +300,8 @@ void ARTMerger::MergePrefixes(NodeEntry &entry) {
 		// Free the right prefix, but keep the reference to its child alive.
 		// Then, iterate on the left and right (reduced) child.
 		auto r_child = *r_prefix.ptr;
-		Node::FreeNode(art, entry.right);
+		r_prefix.ptr->Clear();
+		Node::Free(art, entry.right);
 		entry.right = r_child;
 
 		auto depth = entry.depth + l_prefix.data[count];

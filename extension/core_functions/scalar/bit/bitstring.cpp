@@ -23,8 +23,12 @@ static void BitStringFunction(DataChunk &args, ExpressionState &state, Vector &r
 		    if (idx_t(n) < input_length) {
 			    throw InvalidInputException("Length must be equal or larger than input string");
 		    }
+		    idx_t len;
+		    if (FROM_STRING) {
+			    Bit::TryGetBitStringSize(input, len, nullptr); // string verification
+		    }
 
-		    idx_t len = Bit::ComputeBitstringLen(UnsafeNumericCast<idx_t>(n));
+		    len = Bit::ComputeBitstringLen(UnsafeNumericCast<idx_t>(n));
 		    string_t target = StringVector::EmptyString(result, len);
 		    if (FROM_STRING) {
 			    Bit::BitString(input, UnsafeNumericCast<idx_t>(n), target);
@@ -43,7 +47,7 @@ ScalarFunctionSet BitStringFun::GetFunctions() {
 	bitstring.AddFunction(
 	    ScalarFunction({LogicalType::BIT, LogicalType::INTEGER}, LogicalType::BIT, BitStringFunction<false>));
 	for (auto &func : bitstring.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return bitstring;
 }
@@ -51,8 +55,6 @@ ScalarFunctionSet BitStringFun::GetFunctions() {
 //===--------------------------------------------------------------------===//
 // get_bit
 //===--------------------------------------------------------------------===//
-namespace {
-
 struct GetBitOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA input, TB n) {
@@ -64,11 +66,10 @@ struct GetBitOperator {
 	}
 };
 
-} // namespace
 ScalarFunction GetBitFun::GetFunction() {
 	ScalarFunction func({LogicalType::BIT, LogicalType::INTEGER}, LogicalType::INTEGER,
 	                    ScalarFunction::BinaryFunction<string_t, int32_t, int32_t, GetBitOperator>);
-	func.SetFallible();
+	BaseScalarFunction::SetReturnsError(func);
 	return func;
 }
 
@@ -96,15 +97,13 @@ static void SetBitOperation(DataChunk &args, ExpressionState &state, Vector &res
 ScalarFunction SetBitFun::GetFunction() {
 	ScalarFunction function({LogicalType::BIT, LogicalType::INTEGER, LogicalType::INTEGER}, LogicalType::BIT,
 	                        SetBitOperation);
-	function.SetFallible();
+	BaseScalarFunction::SetReturnsError(function);
 	return function;
 }
 
 //===--------------------------------------------------------------------===//
 // bit_position
 //===--------------------------------------------------------------------===//
-namespace {
-
 struct BitPositionOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA substring, TB input) {
@@ -114,8 +113,6 @@ struct BitPositionOperator {
 		return UnsafeNumericCast<TR>(Bit::BitPosition(substring, input));
 	}
 };
-
-} // namespace
 
 ScalarFunction BitPositionFun::GetFunction() {
 	return ScalarFunction({LogicalType::BIT, LogicalType::BIT}, LogicalType::INTEGER,

@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/list_vector.hpp"
 #include "reader/list_column_reader.hpp"
 #include "parquet_reader.hpp"
 
@@ -19,7 +18,7 @@ struct TemplatedListReader {
 	static DATA Initialize(optional_ptr<Vector> result_out) {
 		D_ASSERT(ListVector::GetListSize(*result_out) == 0);
 
-		auto result_ptr = FlatVector::GetDataMutable<list_entry_t>(*result_out);
+		auto result_ptr = FlatVector::GetData<list_entry_t>(*result_out);
 		auto &result_mask = FlatVector::Validity(*result_out);
 		return ListReaderData(result_ptr, result_mask);
 	}
@@ -172,10 +171,11 @@ idx_t ListColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_pt
 	return ReadInternal<TemplatedListReader>(num_values, define_out, repeat_out, result_out);
 }
 
-ListColumnReader::ListColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema,
+ListColumnReader::ListColumnReader(ParquetReader &reader, const ParquetColumnSchema &schema,
                                    unique_ptr<ColumnReader> child_column_reader_p)
     : ColumnReader(reader, schema), child_column_reader(std::move(child_column_reader_p)),
       read_cache(reader.allocator, ListType::GetChildType(Type())), read_vector(read_cache), overflow_child_count(0) {
+
 	child_defines.resize(reader.allocator, STANDARD_VECTOR_SIZE);
 	child_repeats.resize(reader.allocator, STANDARD_VECTOR_SIZE);
 	child_defines_ptr = (uint8_t *)child_defines.ptr;

@@ -15,19 +15,13 @@ INSERT INTO "my""db".tbl VALUES (42)
 statement ok
 USE "my""db";
 
-statement ok
-SET search_path=current_setting('search_path')
-
 query I
 SELECT * FROM tbl
 ----
 42
 
 statement ok
-ATTACH '{TEST_DIR}/attach_quoated_base.db'
-
-statement ok
-USE attach_quoated_base
+USE memory
 
 statement ok
 CREATE SCHEMA "my""db"."my""schema"

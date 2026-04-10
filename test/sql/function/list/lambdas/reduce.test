@@ -3,6 +3,9 @@
 # group: [lambdas]
 
 statement ok
+pragma enable_verification
+
+statement ok
 SET lambda_syntax='DISABLE_SINGLE_ARROW'
 
 query I
@@ -65,7 +68,7 @@ Cannot perform list_reduce on an empty input list
 statement error
 SELECT list_reduce([1, 2, 3], lambda x, y: (x * y)::VARCHAR || 'please work');
 ----
-Binder Error
+Could not convert
 
 statement error
 SELECT list_reduce([1, 2], lambda x: x);

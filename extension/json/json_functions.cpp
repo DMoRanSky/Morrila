@@ -1,6 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 #include "json_functions.hpp"
 
 #include "duckdb/common/file_system.hpp"
@@ -162,8 +159,6 @@ vector<ScalarFunctionSet> JSONFunctions::GetScalarFunctions() {
 	functions.push_back(GetArrayToJSONFunction());
 	functions.push_back(GetRowToJSONFunction());
 	functions.push_back(GetMergePatchFunction());
-	functions.push_back(GetMergePatchDiffFunction());
-	functions.push_back(GetDeepMergeFunction());
 
 	// Structure/Transform
 	functions.push_back(GetStructureFunction());
@@ -183,8 +178,6 @@ vector<ScalarFunctionSet> JSONFunctions::GetScalarFunctions() {
 	functions.push_back(GetDeserializeSqlFunction());
 
 	functions.push_back(GetPrettyPrintFunction());
-	functions.push_back(GetNormalizeFunction());
-	functions.push_back(GetStripNullsFunction());
 
 	return functions;
 }
@@ -266,151 +259,20 @@ static bool CastVarcharToJSON(Vector &source, Vector &result, idx_t count, CastP
 	return success;
 }
 
-static bool CastJSONListToVarchar(Vector &source, Vector &result, idx_t count, CastParameters &) {
-	UnifiedVectorFormat child_format;
-	ListVector::GetEntry(source).ToUnifiedFormat(ListVector::GetListSize(source), child_format);
-	const auto input_jsons = UnifiedVectorFormat::GetData<string_t>(child_format);
-
-	static constexpr char const *NULL_STRING = "NULL";
-	static constexpr idx_t NULL_STRING_LENGTH = 4;
-
-	UnaryExecutor::Execute<list_entry_t, string_t>(
-	    source, result, count,
-	    [&](const list_entry_t &input) {
-		    // Compute len (start with [] and ,)
-		    idx_t len = 2;
-		    len += input.length == 0 ? 0 : (input.length - 1) * 2;
-		    for (idx_t json_idx = input.offset; json_idx < input.offset + input.length; json_idx++) {
-			    const auto sel_json_idx = child_format.sel->get_index(json_idx);
-			    if (child_format.validity.RowIsValid(sel_json_idx)) {
-				    len += input_jsons[sel_json_idx].GetSize();
-			    } else {
-				    len += NULL_STRING_LENGTH;
-			    }
-		    }
-
-		    // Allocate string
-		    auto res = StringVector::EmptyString(result, len);
-		    auto ptr = res.GetDataWriteable();
-
-		    // Populate string
-		    *ptr++ = '[';
-		    for (idx_t json_idx = input.offset; json_idx < input.offset + input.length; json_idx++) {
-			    const auto sel_json_idx = child_format.sel->get_index(json_idx);
-			    if (child_format.validity.RowIsValid(sel_json_idx)) {
-				    auto &input_json = input_jsons[sel_json_idx];
-				    memcpy(ptr, input_json.GetData(), input_json.GetSize());
-				    ptr += input_json.GetSize();
-			    } else {
-				    memcpy(ptr, NULL_STRING, NULL_STRING_LENGTH);
-				    ptr += NULL_STRING_LENGTH;
-			    }
-			    if (json_idx != input.offset + input.length - 1) {
-				    *ptr++ = ',';
-				    *ptr++ = ' ';
-			    }
-		    }
-		    *ptr = ']';
-
-		    res.Finalize();
-		    return res;
-	    },
-	    FunctionErrors::CANNOT_ERROR);
-	return true;
-}
-
-static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
-
-	bool success = true;
-	UnaryExecutor::ExecuteWithNulls<string_t, list_entry_t>(
-	    source, result, count, [&](const string_t &input, ValidityMask &mask, idx_t idx) -> list_entry_t {
-		    // Figure out if the cast can succeed
-		    yyjson_read_err error;
-		    const auto doc = JSONCommon::ReadDocumentUnsafe(input.GetDataWriteable(), input.GetSize(),
-		                                                    JSONCommon::READ_FLAG, alc, &error);
-		    if (!doc || !unsafe_yyjson_is_arr(doc->root)) {
-			    mask.SetInvalid(idx);
-			    if (success) {
-				    if (!doc) {
-					    HandleCastError::AssignError(
-					        JSONCommon::FormatParseError(input.GetDataWriteable(), input.GetSize(), error), parameters);
-				    } else if (!unsafe_yyjson_is_arr(doc->root)) {
-					    auto truncated_input =
-					        input.GetSize() > 50 ? string(input.GetData(), 47) + "..." : input.GetString();
-					    HandleCastError::AssignError(
-					        StringUtil::Format("Cannot cast to list of JSON. Input \"%s\"", truncated_input),
-					        parameters);
-				    }
-				    success = false;
-			    }
-			    return {};
-		    }
-
-		    auto current_size = ListVector::GetListSize(result);
-		    const auto arr_len = unsafe_yyjson_get_len(doc->root);
-		    const auto new_size = current_size + arr_len;
-
-		    // Grow list if needed
-		    if (ListVector::GetListCapacity(result) < new_size) {
-			    ListVector::Reserve(result, new_size);
-		    }
-
-		    // Populate list
-		    const auto result_jsons = FlatVector::GetDataMutable<string_t>(ListVector::GetEntry(result));
-		    size_t arr_idx, max;
-		    yyjson_val *val;
-		    yyjson_arr_foreach(doc->root, arr_idx, max, val) {
-			    result_jsons[current_size + arr_idx] = JSONCommon::WriteVal(val, alc);
-		    }
-
-		    // Update size
-		    ListVector::SetListSize(result, current_size + arr_len);
-
-		    return {current_size, arr_len};
-	    });
-
-	JSONAllocator::AddBuffer(ListVector::GetEntry(result), alc);
-	return success;
-}
-
-void JSONFunctions::RegisterSimpleCastFunctions(ExtensionLoader &loader) {
-	auto &db = loader.GetDatabaseInstance();
-
+void JSONFunctions::RegisterSimpleCastFunctions(CastFunctionSet &casts) {
 	// JSON to VARCHAR is basically free
-	loader.RegisterCastFunction(LogicalType::JSON(), LogicalType::VARCHAR, DefaultCasts::ReinterpretCast, 1);
+	casts.RegisterCastFunction(LogicalType::JSON(), LogicalType::VARCHAR, DefaultCasts::ReinterpretCast, 1);
 
 	// VARCHAR to JSON requires a parse so it's not free. Let's make it 1 more than a cast to STRUCT
-	const auto varchar_to_json_cost =
-	    CastFunctionSet::ImplicitCastCost(db, LogicalType::SQLNULL, LogicalTypeId::STRUCT) + 1;
+	auto varchar_to_json_cost = casts.ImplicitCastCost(LogicalType::SQLNULL, LogicalTypeId::STRUCT) + 1;
 	BoundCastInfo varchar_to_json_info(CastVarcharToJSON, nullptr, JSONFunctionLocalState::InitCastLocalState);
-	loader.RegisterCastFunction(LogicalType::VARCHAR, LogicalType::JSON(), std::move(varchar_to_json_info),
-	                            varchar_to_json_cost);
+	casts.RegisterCastFunction(LogicalType::VARCHAR, LogicalType::JSON(), std::move(varchar_to_json_info),
+	                           varchar_to_json_cost);
 
 	// Register NULL to JSON with a different cost than NULL to VARCHAR so the binder can disambiguate functions
-	const auto null_to_json_cost =
-	    CastFunctionSet::ImplicitCastCost(db, LogicalType::SQLNULL, LogicalTypeId::VARCHAR) + 1;
-	loader.RegisterCastFunction(LogicalType::SQLNULL, LogicalType::JSON(), DefaultCasts::TryVectorNullCast,
-	                            null_to_json_cost);
-
-	// JSON[] to VARCHAR (this needs a special case otherwise the cast will escape quotes)
-	const auto json_list_to_varchar_cost =
-	    CastFunctionSet::ImplicitCastCost(db, LogicalType::LIST(LogicalType::JSON()), LogicalTypeId::VARCHAR) - 1;
-	loader.RegisterCastFunction(LogicalType::LIST(LogicalType::JSON()), LogicalTypeId::VARCHAR, CastJSONListToVarchar,
-	                            json_list_to_varchar_cost);
-
-	// JSON[] to JSON is allowed implicitly
-	loader.RegisterCastFunction(LogicalType::LIST(LogicalType::JSON()), LogicalType::JSON(), CastJSONListToVarchar,
-	                            100);
-
-	// VARCHAR to JSON[] (also needs a special case otherwise we get a VARCHAR -> VARCHAR[] cast first)
-	const auto varchar_to_json_list_cost =
-	    CastFunctionSet::ImplicitCastCost(db, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::JSON())) - 1;
-	BoundCastInfo varchar_to_json_list_info(CastVarcharToJSONList, nullptr, JSONFunctionLocalState::InitCastLocalState);
-	loader.RegisterCastFunction(LogicalType::VARCHAR, LogicalType::LIST(LogicalType::JSON()),
-	                            std::move(varchar_to_json_list_info), varchar_to_json_list_cost);
+	auto null_to_json_cost = casts.ImplicitCastCost(LogicalType::SQLNULL, LogicalTypeId::VARCHAR) + 1;
+	casts.RegisterCastFunction(LogicalType::SQLNULL, LogicalType::JSON(), DefaultCasts::TryVectorNullCast,
+	                           null_to_json_cost);
 }
 
 } // namespace duckdb

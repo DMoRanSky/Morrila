@@ -7,7 +7,9 @@
 
 // Allow implicit conversion from char16_t* to UnicodeString for this file:
 // Helpful in toString methods and elsewhere.
+#ifndef UNISTR_FROM_STRING_EXPLICIT
 #define UNISTR_FROM_STRING_EXPLICIT
+#endif
 
 #include "numparse_types.h"
 #include "numparse_compositions.h"
@@ -24,7 +26,7 @@ bool SeriesMatcher::match(StringSegment& segment, ParsedNumber& result, UErrorCo
 
     int32_t initialOffset = segment.getOffset();
     bool maybeMore = true;
-    for (const auto* it = begin(); it < end();) {
+    for (auto* it = begin(); it < end();) {
         const NumberParseMatcher* matcher = *it;
         int matcherOffset = segment.getOffset();
         if (segment.length() != 0) {
@@ -64,7 +66,7 @@ bool SeriesMatcher::match(StringSegment& segment, ParsedNumber& result, UErrorCo
 bool SeriesMatcher::smokeTest(const StringSegment& segment) const {
     // NOTE: The range-based for loop calls the virtual begin() and end() methods.
     // NOTE: We only want the first element. Use the for loop for boundary checking.
-    for (const auto& matcher : *this) {
+    for (auto& matcher : *this) {
         // SeriesMatchers are never allowed to start with a Flexible matcher.
         U_ASSERT(!matcher->isFlexible());
         return matcher->smokeTest(segment);
@@ -74,7 +76,7 @@ bool SeriesMatcher::smokeTest(const StringSegment& segment) const {
 
 void SeriesMatcher::postProcess(ParsedNumber& result) const {
     // NOTE: The range-based for loop calls the virtual begin() and end() methods.
-    for (const auto* matcher : *this) {
+    for (auto* matcher : *this) {
         matcher->postProcess(result);
     }
 }

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb.h"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #ifdef DEBUG
@@ -39,6 +40,7 @@ struct LeadingZeroBufferConstants {
 
 template <bool EMPTY>
 class LeadingZeroBuffer {
+
 public:
 	static constexpr uint32_t CHIMP_GROUP_SIZE = 1024;
 	static constexpr uint32_t LEADING_ZERO_BITS_SIZE = 3;

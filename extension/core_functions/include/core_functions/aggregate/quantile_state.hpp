@@ -77,7 +77,7 @@ struct QuantileOperation {
 	static idx_t FrameSize(QuantileIncluded<INPUT_TYPE> &included, const SubFrames &frames) {
 		//	Count the number of valid values
 		idx_t n = 0;
-		if (included.CannotHaveNull()) {
+		if (included.AllValid()) {
 			for (const auto &frame : frames) {
 				n += frame.end - frame.start;
 			}
@@ -201,7 +201,7 @@ struct WindowQuantileState {
 		} else if (s) {
 			// Find the position(s) needed
 			try {
-				QuantileInterpolator<DISCRETE> interp(q, s->size(), false);
+				Interpolator<DISCRETE> interp(q, s->size(), false);
 				s->at(interp.FRN, interp.CRN - interp.FRN + 1, skips);
 				array<INPUT_TYPE, 2> dest;
 				dest[0] = skips[0].second;
@@ -225,7 +225,7 @@ struct WindowQuantileState {
 	                const QuantileBindData &bind_data) const {
 		D_ASSERT(n > 0);
 		// Result is a constant LIST<CHILD_TYPE> with a fixed length
-		auto ldata = FlatVector::GetDataMutable<list_entry_t>(list);
+		auto ldata = FlatVector::GetData<list_entry_t>(list);
 		auto &lentry = ldata[lidx];
 		lentry.offset = ListVector::GetListSize(list);
 		lentry.length = bind_data.quantiles.size();
@@ -233,7 +233,7 @@ struct WindowQuantileState {
 		ListVector::Reserve(list, lentry.offset + lentry.length);
 		ListVector::SetListSize(list, lentry.offset + lentry.length);
 		auto &result = ListVector::GetEntry(list);
-		auto rdata = FlatVector::GetDataMutable<CHILD_TYPE>(result);
+		auto rdata = FlatVector::GetData<CHILD_TYPE>(result);
 
 		for (const auto &q : bind_data.order) {
 			const auto &quantile = bind_data.quantiles[q];

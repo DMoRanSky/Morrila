@@ -20,7 +20,7 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::VACUUM;
 
 public:
-	PhysicalVacuum(PhysicalPlan &physical_plan, unique_ptr<VacuumInfo> info, optional_ptr<TableCatalogEntry> table,
+	PhysicalVacuum(unique_ptr<VacuumInfo> info, optional_ptr<TableCatalogEntry> table,
 	               unordered_map<idx_t, idx_t> column_id_map, idx_t estimated_cardinality);
 
 	unique_ptr<VacuumInfo> info;
@@ -29,8 +29,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

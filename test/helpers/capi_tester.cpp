@@ -1,9 +1,6 @@
 #include "capi_tester.hpp"
 
 bool NO_FAIL(duckdb::CAPIResult &result) {
-	if (result.HasError()) {
-		fprintf(stderr, "Query failed with message: %s\n", result.ErrorMessage());
-	}
 	return result.success;
 }
 
@@ -82,12 +79,6 @@ duckdb_date CAPIResult::Fetch(idx_t col, idx_t row) {
 template <>
 duckdb_time CAPIResult::Fetch(idx_t col, idx_t row) {
 	auto data = (duckdb_time *)duckdb_column_data(&result, col);
-	return data[row];
-}
-
-template <>
-duckdb_time_ns CAPIResult::Fetch(idx_t col, idx_t row) {
-	auto data = (duckdb_time_ns *)duckdb_column_data(&result, col);
 	return data[row];
 }
 

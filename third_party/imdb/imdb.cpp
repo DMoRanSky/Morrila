@@ -4,6 +4,7 @@
 
 
 using namespace duckdb;
+using namespace std;
 
 namespace imdb {
 

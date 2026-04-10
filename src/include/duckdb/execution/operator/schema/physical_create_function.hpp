@@ -19,10 +19,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::CREATE_MACRO;
 
 public:
-	explicit PhysicalCreateFunction(PhysicalPlan &physical_plan, unique_ptr<CreateMacroInfo> info,
-	                                idx_t estimated_cardinality)
-	    : PhysicalOperator(physical_plan, PhysicalOperatorType::CREATE_MACRO, {LogicalType::BIGINT},
-	                       estimated_cardinality),
+	explicit PhysicalCreateFunction(unique_ptr<CreateMacroInfo> info, idx_t estimated_cardinality)
+	    : PhysicalOperator(PhysicalOperatorType::CREATE_MACRO, {LogicalType::BIGINT}, estimated_cardinality),
 	      info(std::move(info)) {
 	}
 
@@ -30,8 +28,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

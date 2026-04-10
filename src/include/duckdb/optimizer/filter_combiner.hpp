@@ -50,7 +50,6 @@ public:
 	//! If this returns true - this sorts "in_list" as a side-effect
 	static bool IsDenseRange(vector<Value> &in_list);
 	static bool ContainsNull(vector<Value> &in_list);
-	static bool FindNextLegalUTF8(string &prefix_string);
 
 	void GenerateFilters(const std::function<void(unique_ptr<Expression> filter)> &callback);
 	bool HasFilters();
@@ -80,11 +79,6 @@ private:
 	                                         Expression &expr);
 	FilterPushdownResult TryPushdownOrClause(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
 	                                         Expression &expr);
-	FilterPushdownResult TryPushdownTemporalCastFilter(TableFilterSet &table_filters,
-	                                                   const vector<ColumnIndex> &column_ids, Expression &expr);
-	void TryPushdownRelaxedFilter(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
-	                              vector<FilterPushdownResult> &pushdown_results, column_t expr_id,
-	                              vector<ExpressionValueInformation> &info_list);
 
 private:
 	vector<unique_ptr<Expression>> remaining_filters;

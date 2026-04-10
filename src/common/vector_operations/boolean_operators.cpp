@@ -10,12 +10,11 @@
 
 namespace duckdb {
 
-namespace {
 //===--------------------------------------------------------------------===//
 // AND/OR
 //===--------------------------------------------------------------------===//
 template <class OP>
-void TemplatedBooleanNullmask(Vector &left, Vector &right, Vector &result, idx_t count) {
+static void TemplatedBooleanNullmask(Vector &left, Vector &right, Vector &result, idx_t count) {
 	D_ASSERT(left.GetType().id() == LogicalTypeId::BOOLEAN && right.GetType().id() == LogicalTypeId::BOOLEAN &&
 	         result.GetType().id() == LogicalTypeId::BOOLEAN);
 
@@ -28,33 +27,33 @@ void TemplatedBooleanNullmask(Vector &left, Vector &right, Vector &result, idx_t
 
 		bool is_null = OP::Operation(*ldata > 0, *rdata > 0, ConstantVector::IsNull(left),
 		                             ConstantVector::IsNull(right), *result_data);
-		if (is_null) {
-			ConstantVector::SetNull(result);
-		}
-		return;
-	}
-	// perform generic loop
-	// we use uint8 to avoid load of gunk bools
-	auto left_data = left.Values<uint8_t>(count);
-	auto right_data = right.Values<uint8_t>(count);
-
-	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::Writer<bool>(result, count);
-	if (left_data.CanHaveNull() || right_data.CanHaveNull()) {
-		for (idx_t i = 0; i < count; i++) {
-			auto left_entry = left_data[i];
-			auto right_entry = right_data[i];
-			bool is_null = OP::Operation(left_entry.value > 0, right_entry.value > 0, !left_entry.IsValid(),
-			                             !right_entry.IsValid(), result_data[i]);
-			if (is_null) {
-				result_data.SetInvalid(i);
-			}
-		}
+		ConstantVector::SetNull(result, is_null);
 	} else {
-		for (idx_t i = 0; i < count; i++) {
-			auto left_val = left_data.GetValueUnsafe(i);
-			auto right_val = right_data.GetValueUnsafe(i);
-			result_data[i] = OP::SimpleOperation(left_val, right_val);
+		// perform generic loop
+		UnifiedVectorFormat ldata, rdata;
+		left.ToUnifiedFormat(count, ldata);
+		right.ToUnifiedFormat(count, rdata);
+
+		result.SetVectorType(VectorType::FLAT_VECTOR);
+		auto left_data = UnifiedVectorFormat::GetData<uint8_t>(ldata); // we use uint8 to avoid load of gunk bools
+		auto right_data = UnifiedVectorFormat::GetData<uint8_t>(rdata);
+		auto result_data = FlatVector::GetData<bool>(result);
+		auto &result_mask = FlatVector::Validity(result);
+		if (!ldata.validity.AllValid() || !rdata.validity.AllValid()) {
+			for (idx_t i = 0; i < count; i++) {
+				auto lidx = ldata.sel->get_index(i);
+				auto ridx = rdata.sel->get_index(i);
+				bool is_null =
+				    OP::Operation(left_data[lidx] > 0, right_data[ridx] > 0, !ldata.validity.RowIsValid(lidx),
+				                  !rdata.validity.RowIsValid(ridx), result_data[i]);
+				result_mask.Set(i, !is_null);
+			}
+		} else {
+			for (idx_t i = 0; i < count; i++) {
+				auto lidx = ldata.sel->get_index(i);
+				auto ridx = rdata.sel->get_index(i);
+				result_data[i] = OP::SimpleOperation(left_data[lidx], right_data[ridx]);
+			}
 		}
 	}
 }
@@ -106,6 +105,10 @@ struct TernaryAnd {
 	}
 };
 
+void VectorOperations::And(Vector &left, Vector &right, Vector &result, idx_t count) {
+	TemplatedBooleanNullmask<TernaryAnd>(left, right, result, count);
+}
+
 /*
 SQL OR Rules:
 
@@ -155,22 +158,16 @@ struct TernaryOr {
 	}
 };
 
+void VectorOperations::Or(Vector &left, Vector &right, Vector &result, idx_t count) {
+	TemplatedBooleanNullmask<TernaryOr>(left, right, result, count);
+}
+
 struct NotOperator {
 	template <class TA, class TR>
 	static inline TR Operation(TA left) {
 		return !left;
 	}
 };
-
-} // namespace
-
-void VectorOperations::And(Vector &left, Vector &right, Vector &result, idx_t count) {
-	TemplatedBooleanNullmask<TernaryAnd>(left, right, result, count);
-}
-
-void VectorOperations::Or(Vector &left, Vector &right, Vector &result, idx_t count) {
-	TemplatedBooleanNullmask<TernaryOr>(left, right, result, count);
-}
 
 void VectorOperations::Not(Vector &input, Vector &result, idx_t count) {
 	D_ASSERT(input.GetType() == LogicalType::BOOLEAN && result.GetType() == LogicalType::BOOLEAN);

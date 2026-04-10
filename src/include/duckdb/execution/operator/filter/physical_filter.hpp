@@ -21,8 +21,7 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::FILTER;
 
 public:
-	PhysicalFilter(PhysicalPlan &physical_plan, vector<LogicalType> types, vector<unique_ptr<Expression>> select_list,
-	               idx_t estimated_cardinality);
+	PhysicalFilter(vector<LogicalType> types, vector<unique_ptr<Expression>> select_list, idx_t estimated_cardinality);
 
 	//! The filter expression
 	unique_ptr<Expression> expression;

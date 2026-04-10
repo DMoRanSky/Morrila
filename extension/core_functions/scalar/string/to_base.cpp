@@ -22,7 +22,6 @@ static void ToBaseFunction(DataChunk &args, ExpressionState &state, Vector &resu
 	auto &min_length = args.data[2];
 	auto count = args.size();
 
-	auto &heap = StringVector::GetStringHeap(result);
 	TernaryExecutor::Execute<int64_t, int32_t, int32_t, string_t>(
 	    input, radix, min_length, result, count, [&](int64_t input, int32_t radix, int32_t min_length) {
 		    if (input < 0) {
@@ -49,7 +48,7 @@ static void ToBaseFunction(DataChunk &args, ExpressionState &state, Vector &resu
 			    length++;
 		    }
 
-		    return heap.AddString(ptr, UnsafeNumericCast<idx_t>(end - ptr));
+		    return StringVector::AddString(result, ptr, UnsafeNumericCast<idx_t>(end - ptr));
 	    });
 }
 

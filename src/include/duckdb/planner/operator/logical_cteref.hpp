@@ -19,24 +19,26 @@ public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_CTE_REF;
 
 public:
-	LogicalCTERef(TableIndex table_index, TableIndex cte_index, vector<LogicalType> types, vector<string> colnames,
-	              bool is_recurring = false)
+	LogicalCTERef(idx_t table_index, idx_t cte_index, vector<LogicalType> types, vector<string> colnames,
+	              CTEMaterialize materialized_cte, bool is_recurring = false)
 	    : LogicalOperator(LogicalOperatorType::LOGICAL_CTE_REF), table_index(table_index), cte_index(cte_index),
-	      correlated_columns(0), is_recurring(is_recurring) {
-		D_ASSERT(!types.empty());
+	      correlated_columns(0), materialized_cte(materialized_cte), is_recurring(is_recurring) {
+		D_ASSERT(types.size() > 0);
 		chunk_types = std::move(types);
 		bound_columns = std::move(colnames);
 	}
 
 	vector<string> bound_columns;
 	//! The table index in the current bind context
-	TableIndex table_index;
+	idx_t table_index;
 	//! CTE index
-	TableIndex cte_index;
+	idx_t cte_index;
 	//! The types of the chunk
 	vector<LogicalType> chunk_types;
 	//! Number of correlated columns
 	idx_t correlated_columns;
+	//! Does this operator read a materialized CTE?
+	CTEMaterialize materialized_cte;
 	//! Does this operator read the recurring CTE table
 	bool is_recurring = false;
 
@@ -47,7 +49,7 @@ public:
 	}
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
-	vector<TableIndex> GetTableIndex() const override;
+	vector<idx_t> GetTableIndex() const override;
 	string GetName() const override;
 
 protected:

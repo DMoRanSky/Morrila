@@ -37,30 +37,30 @@ struct CurrentSettingFun {
 
 struct HashFun {
 	static constexpr const char *Name = "hash";
-	static constexpr const char *Parameters = "value";
-	static constexpr const char *Description = "Returns a `UBIGINT` with the hash of the `value`. Note that this is not a cryptographic hash.";
+	static constexpr const char *Parameters = "param";
+	static constexpr const char *Description = "Returns an integer with the hash of the value. Note that this is not a cryptographic hash";
 	static constexpr const char *Example = "hash('🦆')";
-	static constexpr const char *Categories = "string";
+	static constexpr const char *Categories = "";
 
 	static ScalarFunction GetFunction();
 };
 
 struct LeastFun {
 	static constexpr const char *Name = "least";
-	static constexpr const char *Parameters = "arg1,arg2,...";
-	static constexpr const char *Description = "Returns the smallest value. For strings lexicographical ordering is used. Note that uppercase characters are considered “smaller” than lowercase characters, and collations are not supported.";
-	static constexpr const char *Example = "least(42, 84)\002least('abc', 'bcd', 'cde', 'EFG')";
-	static constexpr const char *Categories = "string,numeric,date,timestamp,aggregate";
+	static constexpr const char *Parameters = "arg1, arg2, ...";
+	static constexpr const char *Description = "Returns the lowest value of the set of input parameters";
+	static constexpr const char *Example = "least(42, 84)";
+	static constexpr const char *Categories = "";
 
 	static ScalarFunctionSet GetFunctions();
 };
 
 struct GreatestFun {
 	static constexpr const char *Name = "greatest";
-	static constexpr const char *Parameters = "arg1,arg2,...";
-	static constexpr const char *Description = "Returns the largest value. For strings lexicographical ordering is used. Note that lowercase characters are considered “larger” than uppercase characters and collations are not supported.";
-	static constexpr const char *Example = "greatest(42, 84)\002greatest('abc', 'bcd', 'cde', 'EFG')";
-	static constexpr const char *Categories = "string,numeric,date,timestamp,aggregate";
+	static constexpr const char *Parameters = "arg1, arg2, ...";
+	static constexpr const char *Description = "Returns the highest value of the set of input parameters";
+	static constexpr const char *Example = "greatest(42, 84)";
+	static constexpr const char *Categories = "";
 
 	static ScalarFunctionSet GetFunctions();
 };
@@ -85,31 +85,11 @@ struct TypeOfFun {
 	static ScalarFunction GetFunction();
 };
 
-struct GetTypeFun {
-	static constexpr const char *Name = "get_type";
-	static constexpr const char *Parameters = "expression";
-	static constexpr const char *Description = "Returns the type of the result of the expression";
-	static constexpr const char *Example = "get_type('abc')";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunction GetFunction();
-};
-
-struct MakeTypeFun {
-	static constexpr const char *Name = "make_type";
-	static constexpr const char *Parameters = "name,...";
-	static constexpr const char *Description = "Construct a type from its name and optional parameters";
-	static constexpr const char *Example = "make_type('DECIMAL', 10, 2)";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunction GetFunction();
-};
-
 struct CanCastImplicitlyFun {
 	static constexpr const char *Name = "can_cast_implicitly";
 	static constexpr const char *Parameters = "source_type,target_type";
 	static constexpr const char *Description = "Whether or not we can implicitly cast from the source type to the other type";
-	static constexpr const char *Example = "can_cast_implicitly(NULL::INTEGER, NULL::BIGINT)";
+	static constexpr const char *Example = "can_implicitly_cast(NULL::INTEGER, NULL::BIGINT)";
 	static constexpr const char *Categories = "";
 
 	static ScalarFunction GetFunction();
@@ -210,16 +190,6 @@ struct CastToTypeFun {
 	static constexpr const char *Parameters = "param,type";
 	static constexpr const char *Description = "Casts the first argument to the type of the second argument";
 	static constexpr const char *Example = "cast_to_type('42', NULL::INTEGER)";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunction GetFunction();
-};
-
-struct ReplaceTypeFun {
-	static constexpr const char *Name = "replace_type";
-	static constexpr const char *Parameters = "param,type1,type2";
-	static constexpr const char *Description = "Casts all fields of type1 to type2";
-	static constexpr const char *Example = "replace_type({duck: 3.141592653589793::DOUBLE}, NULL::DOUBLE, NULL::DECIMAL(15,2))";
 	static constexpr const char *Categories = "";
 
 	static ScalarFunction GetFunction();

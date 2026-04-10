@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 #include "core_functions/aggregate/histogram_helpers.hpp"
 #include "core_functions/aggregate/holistic_functions.hpp"
 #include "duckdb/function/aggregate/sort_key_helpers.hpp"
@@ -8,8 +6,6 @@
 #include "duckdb/common/printer.hpp"
 
 namespace duckdb {
-
-namespace {
 
 struct ApproxTopKString {
 	ApproxTopKString() : str(UINT32_C(0)), hash(0) {
@@ -204,12 +200,13 @@ struct ApproxTopKOperation {
 		if (state.values.empty()) {
 			static constexpr int64_t MAX_APPROX_K = 1000000;
 			// not initialized yet - initialize the K value and set all counters to 0
-			auto top_k_format = top_k_vector.Values<int64_t>(count);
-			auto top_k_entry = top_k_format[offset];
-			if (!top_k_entry.is_valid) {
+			UnifiedVectorFormat kdata;
+			top_k_vector.ToUnifiedFormat(count, kdata);
+			auto kidx = kdata.sel->get_index(offset);
+			if (!kdata.validity.RowIsValid(kidx)) {
 				throw InvalidInputException("Invalid input for approx_top_k: k value cannot be NULL");
 			}
-			auto kval = top_k_entry.value;
+			auto kval = UnifiedVectorFormat::GetData<int64_t>(kdata)[kidx];
 			if (kval <= 0) {
 				throw InvalidInputException("Invalid input for approx_top_k: k value must be > 0");
 			}
@@ -316,10 +313,12 @@ struct ApproxTopKOperation {
 };
 
 template <class T = string_t, class OP = HistogramGenericFunctor>
-void ApproxTopKUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_count, Vector &state_vector,
-                      idx_t count) {
+static void ApproxTopKUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_count, Vector &state_vector,
+                             idx_t count) {
 	using STATE = ApproxTopKState;
 	auto &input = inputs[0];
+	UnifiedVectorFormat sdata;
+	state_vector.ToUnifiedFormat(count, sdata);
 
 	auto &top_k_vector = inputs[1];
 
@@ -327,28 +326,30 @@ void ApproxTopKUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t inp
 	UnifiedVectorFormat input_data;
 	OP::PrepareData(input, count, extra_state, input_data);
 
-	auto states = state_vector.Values<STATE *>(count);
+	auto states = UnifiedVectorFormat::GetData<STATE *>(sdata);
 	auto data = UnifiedVectorFormat::GetData<T>(input_data);
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = input_data.sel->get_index(i);
 		if (!input_data.validity.RowIsValid(idx)) {
 			continue;
 		}
-		auto &state = *states[i].value;
+		auto &state = *states[sdata.sel->get_index(i)];
 		ApproxTopKOperation::Operation<T, STATE>(state, data[idx], aggr_input, top_k_vector, i, count);
 	}
 }
 
 template <class OP = HistogramGenericFunctor>
-void ApproxTopKFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
-	auto states = state_vector.Values<ApproxTopKState *>(count);
+static void ApproxTopKFinalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+	UnifiedVectorFormat sdata;
+	state_vector.ToUnifiedFormat(count, sdata);
+	auto states = UnifiedVectorFormat::GetData<ApproxTopKState *>(sdata);
 
 	auto &mask = FlatVector::Validity(result);
 	auto old_len = ListVector::GetListSize(result);
 	idx_t new_entries = 0;
 	// figure out how much space we need
 	for (idx_t i = 0; i < count; i++) {
-		auto &state = states[i].value->GetState();
+		auto &state = states[sdata.sel->get_index(i)]->GetState();
 		if (state.values.empty()) {
 			continue;
 		}
@@ -358,13 +359,13 @@ void ApproxTopKFinalize(Vector &state_vector, AggregateInputData &, Vector &resu
 	}
 	// reserve space in the list vector
 	ListVector::Reserve(result, old_len + new_entries);
-	auto list_entries = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto list_entries = FlatVector::GetData<list_entry_t>(result);
 	auto &child_data = ListVector::GetEntry(result);
 
 	idx_t current_offset = old_len;
 	for (idx_t i = 0; i < count; i++) {
 		const auto rid = i + offset;
-		auto &state = states[i].value->GetState();
+		auto &state = states[sdata.sel->get_index(i)]->GetState();
 		if (state.values.empty()) {
 			mask.SetInvalid(rid);
 			continue;
@@ -392,14 +393,12 @@ unique_ptr<FunctionData> ApproxTopKBind(ClientContext &context, AggregateFunctio
 		}
 	}
 	if (arguments[0]->return_type.id() == LogicalTypeId::VARCHAR) {
-		function.SetStateUpdateCallback(ApproxTopKUpdate<string_t, HistogramStringFunctor>);
-		function.SetStateFinalizeCallback(ApproxTopKFinalize<HistogramStringFunctor>);
+		function.update = ApproxTopKUpdate<string_t, HistogramStringFunctor>;
+		function.finalize = ApproxTopKFinalize<HistogramStringFunctor>;
 	}
-	function.SetReturnType(LogicalType::LIST(arguments[0]->return_type));
+	function.return_type = LogicalType::LIST(arguments[0]->return_type);
 	return nullptr;
 }
-
-} // namespace
 
 AggregateFunction ApproxTopKFun::GetFunction() {
 	using STATE = ApproxTopKState;

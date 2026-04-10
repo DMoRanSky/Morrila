@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr int32_t ASCII_LIMIT = 0x80;
+constexpr int32_t UTRIE_ASCII_LIMIT = 0x80;
 
 }  // namespace
 
@@ -31,10 +31,10 @@ utrie_swap(const UDataSwapper *ds,
     int32_t size;
     UBool dataIs32;
 
-    if(pErrorCode==nullptr || U_FAILURE(*pErrorCode)) {
+    if(pErrorCode==NULL || U_FAILURE(*pErrorCode)) {
         return 0;
     }
-    if(ds==nullptr || inData==nullptr || (length>=0 && outData==nullptr)) {
+    if(ds==NULL || inData==NULL || (length>=0 && outData==NULL)) {
         *pErrorCode=U_ILLEGAL_ARGUMENT_ERROR;
         return 0;
     }
@@ -64,7 +64,7 @@ utrie_swap(const UDataSwapper *ds,
         return 0;
     }
 
-    dataIs32 = (trie.options & UTRIE_OPTIONS_DATA_IS_32_BIT) != 0;
+    dataIs32=(UBool)((trie.options&UTRIE_OPTIONS_DATA_IS_32_BIT)!=0);
     size=sizeof(UTrieHeader)+trie.indexLength*2+trie.dataLength*(dataIs32?4:2);
 
     if(length>=0) {
@@ -105,7 +105,7 @@ utrie2_swap(const UDataSwapper *ds,
     if(U_FAILURE(*pErrorCode)) {
         return 0;
     }
-    if(ds==nullptr || inData==nullptr || (length>=0 && outData==nullptr)) {
+    if(ds==NULL || inData==NULL || (length>=0 && outData==NULL)) {
         *pErrorCode=U_ILLEGAL_ARGUMENT_ERROR;
         return 0;
     }
@@ -220,7 +220,7 @@ ucptrie_swap(const UDataSwapper *ds,
         (trie.options & UCPTRIE_OPTIONS_RESERVED_MASK) != 0 ||
         valueWidth > UCPTRIE_VALUE_BITS_8 ||
         trie.indexLength < minIndexLength ||
-        dataLength < ASCII_LIMIT
+        dataLength < UTRIE_ASCII_LIMIT
     ) {
         *pErrorCode=U_INVALID_FORMAT_ERROR; /* not a UCPTrie */
         return 0;
@@ -256,24 +256,20 @@ ucptrie_swap(const UDataSwapper *ds,
         ds->swapArray32(ds, &inTrie->signature, 4, &outTrie->signature, pErrorCode);
         ds->swapArray16(ds, &inTrie->options, 12, &outTrie->options, pErrorCode);
 
-        /* swap the index */
-        const uint16_t *inIndex=reinterpret_cast<const uint16_t *>(inTrie+1);
-        uint16_t *outIndex=reinterpret_cast<uint16_t *>(outTrie+1);
-        ds->swapArray16(ds, inIndex, trie.indexLength*2, outIndex, pErrorCode);
-
-        /* swap the data */
-        const uint16_t *inData=inIndex+trie.indexLength;
-        uint16_t *outData=outIndex+trie.indexLength;
+        /* swap the index and the data */
         switch(valueWidth) {
         case UCPTRIE_VALUE_BITS_16:
-            ds->swapArray16(ds, inData, dataLength*2, outData, pErrorCode);
+            ds->swapArray16(ds, inTrie+1, (trie.indexLength+dataLength)*2, outTrie+1, pErrorCode);
             break;
         case UCPTRIE_VALUE_BITS_32:
-            ds->swapArray32(ds, inData, dataLength*4, outData, pErrorCode);
+            ds->swapArray16(ds, inTrie+1, trie.indexLength*2, outTrie+1, pErrorCode);
+            ds->swapArray32(ds, (const uint16_t *)(inTrie+1)+trie.indexLength, dataLength*4,
+                                     (uint16_t *)(outTrie+1)+trie.indexLength, pErrorCode);
             break;
         case UCPTRIE_VALUE_BITS_8:
+            ds->swapArray16(ds, inTrie+1, trie.indexLength*2, outTrie+1, pErrorCode);
             if(inTrie!=outTrie) {
-                uprv_memmove(outData, inData, dataLength);
+                uprv_memmove((outTrie+1)+trie.indexLength, (inTrie+1)+trie.indexLength, dataLength);
             }
             break;
         default:
@@ -294,8 +290,8 @@ namespace {
  * @param data a pointer to 32-bit-aligned memory containing the serialized form of a trie
  * @param length the number of bytes available at data;
  *               can be more than necessary (see return value)
- * @param anyEndianOk If false, only platform-endian serialized forms are recognized.
- *                    If true, opposite-endian serialized forms are recognized as well.
+ * @param anyEndianOk If FALSE, only platform-endian serialized forms are recognized.
+ *                    If TRUE, opposite-endian serialized forms are recognized as well.
  * @return the trie version of the serialized form, or 0 if it is not
  *         recognized as a serialized trie
  */
@@ -305,7 +301,7 @@ getVersion(const void *data, int32_t length, UBool anyEndianOk) {
     if(length<16 || data==nullptr || (U_POINTER_MASK_LSB(data, 3)!=0)) {
         return 0;
     }
-    signature = *static_cast<const uint32_t*>(data);
+    signature=*(const uint32_t *)data;
     if(signature==UCPTRIE_SIG) {
         return 3;
     }
@@ -334,7 +330,7 @@ utrie_swapAnyVersion(const UDataSwapper *ds,
                      const void *inData, int32_t length, void *outData,
                      UErrorCode *pErrorCode) {
     if(U_FAILURE(*pErrorCode)) { return 0; }
-    switch(getVersion(inData, length, true)) {
+    switch(getVersion(inData, length, TRUE)) {
     case 1:
         return utrie_swap(ds, inData, length, outData, pErrorCode);
     case 2:

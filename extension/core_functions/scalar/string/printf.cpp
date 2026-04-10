@@ -41,12 +41,6 @@ unique_ptr<FunctionData> BindPrintfFunction(ClientContext &context, ScalarFuncti
 		case LogicalTypeId::UBIGINT:
 			bound_function.arguments.emplace_back(LogicalType::UBIGINT);
 			break;
-		case LogicalTypeId::HUGEINT:
-			bound_function.arguments.emplace_back(LogicalType::HUGEINT);
-			break;
-		case LogicalTypeId::UHUGEINT:
-			bound_function.arguments.emplace_back(LogicalType::UHUGEINT);
-			break;
 		case LogicalTypeId::FLOAT:
 		case LogicalTypeId::DOUBLE:
 			bound_function.arguments.emplace_back(LogicalType::DOUBLE);
@@ -73,29 +67,32 @@ unique_ptr<FunctionData> BindPrintfFunction(ClientContext &context, ScalarFuncti
 
 template <class FORMAT_FUN, class CTX>
 static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &format_string_vec = args.data[0];
+	auto &format_string = args.data[0];
 	auto &result_validity = FlatVector::Validity(result);
+	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	result_validity.Initialize(args.size());
 	for (idx_t i = 0; i < args.ColumnCount(); i++) {
 		switch (args.data[i].GetVectorType()) {
 		case VectorType::CONSTANT_VECTOR:
 			if (ConstantVector::IsNull(args.data[i])) {
 				// constant null! result is always NULL regardless of other input
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 				return;
 			}
 			break;
 		default:
 			// FLAT VECTOR, we can directly OR the nullmask
 			args.data[i].Flatten(args.size());
+			result.SetVectorType(VectorType::FLAT_VECTOR);
 			result_validity.Combine(FlatVector::Validity(args.data[i]), args.size());
 			break;
 		}
 	}
-	idx_t count = args.size();
+	idx_t count = result.GetVectorType() == VectorType::CONSTANT_VECTOR ? 1 : args.size();
 
-	auto format_data = FlatVector::GetData<string_t>(format_string_vec);
-	auto result_data = FlatVector::Writer<string_t>(result, count);
+	auto format_data = FlatVector::GetData<string_t>(format_string);
+	auto result_data = FlatVector::GetData<string_t>(result);
 	for (idx_t idx = 0; idx < count; idx++) {
 		if (result.GetVectorType() == VectorType::FLAT_VECTOR && FlatVector::IsNull(result, idx)) {
 			// this entry is NULL: skip it
@@ -103,7 +100,7 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		}
 
 		// first fetch the format string
-		auto fmt_idx = format_string_vec.GetVectorType() == VectorType::CONSTANT_VECTOR ? 0 : idx;
+		auto fmt_idx = format_string.GetVectorType() == VectorType::CONSTANT_VECTOR ? 0 : idx;
 		auto format_string = format_data[fmt_idx].GetString();
 
 		// now gather all the format arguments
@@ -149,16 +146,6 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 				format_args.emplace_back(duckdb_fmt::internal::make_arg<CTX>(arg_data[arg_idx]));
 				break;
 			}
-			case LogicalTypeId::HUGEINT: {
-				auto arg_data = FlatVector::GetData<hugeint_t>(col);
-				format_args.emplace_back(duckdb_fmt::internal::make_arg<CTX>(arg_data[arg_idx]));
-				break;
-			}
-			case LogicalTypeId::UHUGEINT: {
-				auto arg_data = FlatVector::GetData<uhugeint_t>(col);
-				format_args.emplace_back(duckdb_fmt::internal::make_arg<CTX>(arg_data[arg_idx]));
-				break;
-			}
 			case LogicalTypeId::DOUBLE: {
 				auto arg_data = FlatVector::GetData<double>(col);
 				format_args.emplace_back(duckdb_fmt::internal::make_arg<CTX>(arg_data[arg_idx]));
@@ -177,7 +164,7 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		}
 		// finally actually perform the format
 		string dynamic_result = FORMAT_FUN::template OP<CTX>(format_string.c_str(), format_args);
-		result_data[idx] = dynamic_result;
+		result_data[idx] = StringVector::AddString(result, dynamic_result);
 	}
 }
 
@@ -186,7 +173,7 @@ ScalarFunction PrintfFun::GetFunction() {
 	ScalarFunction printf_fun({LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                          PrintfFunction<FMTPrintf, duckdb_fmt::printf_context>, BindPrintfFunction);
 	printf_fun.varargs = LogicalType::ANY;
-	printf_fun.SetFallible();
+	BaseScalarFunction::SetReturnsError(printf_fun);
 	return printf_fun;
 }
 
@@ -195,7 +182,7 @@ ScalarFunction FormatFun::GetFunction() {
 	ScalarFunction format_fun({LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                          PrintfFunction<FMTFormat, duckdb_fmt::format_context>, BindPrintfFunction);
 	format_fun.varargs = LogicalType::ANY;
-	format_fun.SetFallible();
+	BaseScalarFunction::SetReturnsError(format_fun);
 	return format_fun;
 }
 

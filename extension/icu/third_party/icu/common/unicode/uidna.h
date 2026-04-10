@@ -23,12 +23,8 @@
 
 #if !UCONFIG_NO_IDNA
 
-#include <stdbool.h>
-#include "unicode/parseerr.h"
-
-#if U_SHOW_CPLUSPLUS_API
 #include "unicode/localpointer.h"
-#endif   // U_SHOW_CPLUSPLUS_API
+#include "unicode/parseerr.h"
 
 /**
  * \file
@@ -49,19 +45,11 @@
  */
 enum {
     /**
-     * Default options value: UTS #46 nontransitional processing.
+     * Default options value: None of the other options are set.
      * For use in static worker and factory methods.
-     *
-     * Since ICU 76, this is the same as
-     * UIDNA_NONTRANSITIONAL_TO_ASCII | UIDNA_NONTRANSITIONAL_TO_UNICODE,
-     * corresponding to Unicode 15.1 UTS #46 deprecating transitional processing.
-     * (These options are ignored by the IDNA2003 implementation.)
-     *
-     * Before ICU 76, this constant did not set any of the options.
-     *
      * @stable ICU 2.6
      */
-    UIDNA_DEFAULT=0x30,
+    UIDNA_DEFAULT=0,
 #ifndef U_HIDE_DEPRECATED_API
     /**
      * Option to allow unassigned code points in domain names and labels.
@@ -99,27 +87,19 @@ enum {
     /**
      * IDNA option for nontransitional processing in ToASCII().
      * For use in static worker and factory methods.
-     *
      * <p>By default, ToASCII() uses transitional processing.
-     * Unicode 15.1 UTS #46 deprecated transitional processing.
-     *
      * <p>This option is ignored by the IDNA2003 implementation.
      * (This is only relevant for compatibility of newer IDNA implementations with IDNA2003.)
      * @stable ICU 4.6
-     * @see UIDNA_DEFAULT
      */
     UIDNA_NONTRANSITIONAL_TO_ASCII=0x10,
     /**
      * IDNA option for nontransitional processing in ToUnicode().
      * For use in static worker and factory methods.
-     *
      * <p>By default, ToUnicode() uses transitional processing.
-     * Unicode 15.1 UTS #46 deprecated transitional processing.
-     *
      * <p>This option is ignored by the IDNA2003 implementation.
      * (This is only relevant for compatibility of newer IDNA implementations with IDNA2003.)
      * @stable ICU 4.6
-     * @see UIDNA_DEFAULT
      */
     UIDNA_NONTRANSITIONAL_TO_UNICODE=0x20,
     /**
@@ -150,8 +130,6 @@ typedef struct UIDNA UIDNA;  /**< C typedef for struct UIDNA. @stable ICU 4.6 */
  * For details about the UTS #46 implementation see the IDNA C++ class in idna.h.
  *
  * @param options Bit set to modify the processing and error checking.
- *                These should include UIDNA_DEFAULT, or
- *                UIDNA_NONTRANSITIONAL_TO_ASCII | UIDNA_NONTRANSITIONAL_TO_UNICODE.
  *                See option bit set values in uidna.h.
  * @param pErrorCode Standard ICU error code. Its input value must
  *                  pass the U_SUCCESS() test, or else the function returns
@@ -160,7 +138,7 @@ typedef struct UIDNA UIDNA;  /**< C typedef for struct UIDNA. @stable ICU 4.6 */
  * @return the UTS #46 UIDNA instance, if successful
  * @stable ICU 4.6
  */
-U_CAPI UIDNA * U_EXPORT2
+U_STABLE UIDNA * U_EXPORT2
 uidna_openUTS46(uint32_t options, UErrorCode *pErrorCode);
 
 /**
@@ -168,7 +146,7 @@ uidna_openUTS46(uint32_t options, UErrorCode *pErrorCode);
  * @param idna UIDNA instance to be closed
  * @stable ICU 4.6
  */
-U_CAPI void U_EXPORT2
+U_STABLE void U_EXPORT2
 uidna_close(UIDNA *idna);
 
 #if U_SHOW_CPLUSPLUS_API
@@ -204,7 +182,7 @@ typedef struct UIDNAInfo {
     /** sizeof(UIDNAInfo) @stable ICU 4.6 */
     int16_t size;
     /**
-     * Set to true if transitional and nontransitional processing produce different results.
+     * Set to TRUE if transitional and nontransitional processing produce different results.
      * For details see C++ IDNAInfo::isTransitionalDifferent().
      * @stable ICU 4.6
      */
@@ -226,7 +204,7 @@ typedef struct UIDNAInfo {
  */
 #define UIDNA_INFO_INITIALIZER { \
     (int16_t)sizeof(UIDNAInfo), \
-    false, false, \
+    FALSE, FALSE, \
     0, 0, 0 }
 
 /**
@@ -252,7 +230,7 @@ typedef struct UIDNAInfo {
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_labelToASCII(const UIDNA *idna,
                    const UChar *label, int32_t length,
                    UChar *dest, int32_t capacity,
@@ -279,7 +257,7 @@ uidna_labelToASCII(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_labelToUnicode(const UIDNA *idna,
                      const UChar *label, int32_t length,
                      UChar *dest, int32_t capacity,
@@ -308,7 +286,7 @@ uidna_labelToUnicode(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_nameToASCII(const UIDNA *idna,
                   const UChar *name, int32_t length,
                   UChar *dest, int32_t capacity,
@@ -335,7 +313,7 @@ uidna_nameToASCII(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_nameToUnicode(const UIDNA *idna,
                     const UChar *name, int32_t length,
                     UChar *dest, int32_t capacity,
@@ -360,7 +338,7 @@ uidna_nameToUnicode(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_labelToASCII_UTF8(const UIDNA *idna,
                         const char *label, int32_t length,
                         char *dest, int32_t capacity,
@@ -383,7 +361,7 @@ uidna_labelToASCII_UTF8(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_labelToUnicodeUTF8(const UIDNA *idna,
                          const char *label, int32_t length,
                          char *dest, int32_t capacity,
@@ -406,7 +384,7 @@ uidna_labelToUnicodeUTF8(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_nameToASCII_UTF8(const UIDNA *idna,
                        const char *name, int32_t length,
                        char *dest, int32_t capacity,
@@ -429,7 +407,7 @@ uidna_nameToASCII_UTF8(const UIDNA *idna,
  * @return destination string length
  * @stable ICU 4.6
  */
-U_CAPI int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 uidna_nameToUnicodeUTF8(const UIDNA *idna,
                         const char *name, int32_t length,
                         char *dest, int32_t capacity,

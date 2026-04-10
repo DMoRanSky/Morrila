@@ -41,21 +41,17 @@ duckdb_logical_type duckdb_create_logical_type(duckdb_type type) {
 		type = DUCKDB_TYPE_INVALID;
 	}
 
-	auto type_id = duckdb::LogicalTypeIdFromC(type);
-	return reinterpret_cast<duckdb_logical_type>(new duckdb::LogicalType(type_id));
+	auto cpp_type = duckdb::ConvertCTypeToCPP(type);
+	return reinterpret_cast<duckdb_logical_type>(new duckdb::LogicalType(cpp_type));
 }
 
 duckdb_logical_type duckdb_create_list_type(duckdb_logical_type type) {
 	if (!type) {
 		return nullptr;
 	}
-	try {
-		duckdb::LogicalType *logical_type =
-		    new duckdb::LogicalType(duckdb::LogicalType::LIST(*reinterpret_cast<duckdb::LogicalType *>(type)));
-		return reinterpret_cast<duckdb_logical_type>(logical_type);
-	} catch (...) {
-		return nullptr;
-	}
+	duckdb::LogicalType *logical_type = new duckdb::LogicalType;
+	*logical_type = duckdb::LogicalType::LIST(*reinterpret_cast<duckdb::LogicalType *>(type));
+	return reinterpret_cast<duckdb_logical_type>(logical_type);
 }
 
 duckdb_logical_type duckdb_create_array_type(duckdb_logical_type type, idx_t array_size) {
@@ -65,13 +61,9 @@ duckdb_logical_type duckdb_create_array_type(duckdb_logical_type type, idx_t arr
 	if (array_size >= duckdb::ArrayType::MAX_ARRAY_SIZE) {
 		return nullptr;
 	}
-	try {
-		duckdb::LogicalType *ltype = new duckdb::LogicalType(
-		    duckdb::LogicalType::ARRAY(*reinterpret_cast<duckdb::LogicalType *>(type), array_size));
-		return reinterpret_cast<duckdb_logical_type>(ltype);
-	} catch (...) {
-		return nullptr;
-	}
+	duckdb::LogicalType *ltype = new duckdb::LogicalType;
+	*ltype = duckdb::LogicalType::ARRAY(*reinterpret_cast<duckdb::LogicalType *>(type), array_size);
+	return reinterpret_cast<duckdb_logical_type>(ltype);
 }
 
 duckdb_logical_type duckdb_create_union_type(duckdb_logical_type *member_types_p, const char **member_names,
@@ -80,17 +72,14 @@ duckdb_logical_type duckdb_create_union_type(duckdb_logical_type *member_types_p
 		return nullptr;
 	}
 	duckdb::LogicalType **member_types = reinterpret_cast<duckdb::LogicalType **>(member_types_p);
-	try {
-		duckdb::child_list_t<duckdb::LogicalType> members;
+	duckdb::LogicalType *mtype = new duckdb::LogicalType;
+	duckdb::child_list_t<duckdb::LogicalType> members;
 
-		for (idx_t i = 0; i < member_count; i++) {
-			members.push_back(make_pair(member_names[i], *member_types[i]));
-		}
-		duckdb::LogicalType *mtype = new duckdb::LogicalType(duckdb::LogicalType::UNION(members));
-		return reinterpret_cast<duckdb_logical_type>(mtype);
-	} catch (...) {
-		return nullptr;
+	for (idx_t i = 0; i < member_count; i++) {
+		members.push_back(make_pair(member_names[i], *member_types[i]));
 	}
+	*mtype = duckdb::LogicalType::UNION(members);
+	return reinterpret_cast<duckdb_logical_type>(mtype);
 }
 
 duckdb_logical_type duckdb_create_struct_type(duckdb_logical_type *member_types_p, const char **member_names,
@@ -105,17 +94,14 @@ duckdb_logical_type duckdb_create_struct_type(duckdb_logical_type *member_types_
 		}
 	}
 
-	try {
-		duckdb::child_list_t<duckdb::LogicalType> members;
+	duckdb::LogicalType *mtype = new duckdb::LogicalType;
+	duckdb::child_list_t<duckdb::LogicalType> members;
 
-		for (idx_t i = 0; i < member_count; i++) {
-			members.push_back(make_pair(member_names[i], *member_types[i]));
-		}
-		duckdb::LogicalType *mtype = new duckdb::LogicalType(duckdb::LogicalType::STRUCT(members));
-		return reinterpret_cast<duckdb_logical_type>(mtype);
-	} catch (...) {
-		return nullptr;
+	for (idx_t i = 0; i < member_count; i++) {
+		members.push_back(make_pair(member_names[i], *member_types[i]));
 	}
+	*mtype = duckdb::LogicalType::STRUCT(members);
+	return reinterpret_cast<duckdb_logical_type>(mtype);
 }
 
 duckdb_logical_type duckdb_create_enum_type(const char **member_names, idx_t member_count) {
@@ -123,7 +109,7 @@ duckdb_logical_type duckdb_create_enum_type(const char **member_names, idx_t mem
 		return nullptr;
 	}
 	duckdb::Vector enum_vector(duckdb::LogicalType::VARCHAR, member_count);
-	auto enum_vector_ptr = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(enum_vector);
+	auto enum_vector_ptr = duckdb::FlatVector::GetData<duckdb::string_t>(enum_vector);
 
 	for (idx_t i = 0; i < member_count; i++) {
 		if (!member_names[i]) {
@@ -132,25 +118,19 @@ duckdb_logical_type duckdb_create_enum_type(const char **member_names, idx_t mem
 		enum_vector_ptr[i] = duckdb::StringVector::AddStringOrBlob(enum_vector, member_names[i]);
 	}
 
-	try {
-		duckdb::LogicalType *mtype = new duckdb::LogicalType(duckdb::LogicalType::ENUM(enum_vector, member_count));
-		return reinterpret_cast<duckdb_logical_type>(mtype);
-	} catch (...) {
-		return nullptr;
-	}
+	duckdb::LogicalType *mtype = new duckdb::LogicalType;
+	*mtype = duckdb::LogicalType::ENUM(enum_vector, member_count);
+	return reinterpret_cast<duckdb_logical_type>(mtype);
 }
 
 duckdb_logical_type duckdb_create_map_type(duckdb_logical_type key_type, duckdb_logical_type value_type) {
 	if (!key_type || !value_type) {
 		return nullptr;
 	}
-	try {
-		duckdb::LogicalType *mtype = new duckdb::LogicalType(duckdb::LogicalType::MAP(
-		    *reinterpret_cast<duckdb::LogicalType *>(key_type), *reinterpret_cast<duckdb::LogicalType *>(value_type)));
-		return reinterpret_cast<duckdb_logical_type>(mtype);
-	} catch (...) {
-		return nullptr;
-	}
+	duckdb::LogicalType *mtype = new duckdb::LogicalType;
+	*mtype = duckdb::LogicalType::MAP(*reinterpret_cast<duckdb::LogicalType *>(key_type),
+	                                  *reinterpret_cast<duckdb::LogicalType *>(value_type));
+	return reinterpret_cast<duckdb_logical_type>(mtype);
 }
 
 duckdb_logical_type duckdb_create_decimal_type(uint8_t width, uint8_t scale) {
@@ -162,7 +142,7 @@ duckdb_type duckdb_get_type_id(duckdb_logical_type type) {
 		return DUCKDB_TYPE_INVALID;
 	}
 	auto logical_type = reinterpret_cast<duckdb::LogicalType *>(type);
-	return duckdb::LogicalTypeIdToC(logical_type->id());
+	return duckdb::ConvertCPPTypeToC(*logical_type);
 }
 
 void duckdb_destroy_logical_type(duckdb_logical_type *type) {

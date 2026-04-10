@@ -9,6 +9,10 @@
 #pragma once
 
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/limits.hpp"
+#include "duckdb/common/operator/subtract.hpp"
+#include "duckdb/common/types/null_value.hpp"
+#include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
@@ -20,10 +24,13 @@
 #include "duckdb/storage/table/column_data_checkpointer.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
+#include <functional>
+
 namespace duckdb {
 
 template <class T>
 struct AlpRDCompressionState : public CompressionState {
+
 public:
 	using EXACT_TYPE = typename FloatingToExact<T>::TYPE;
 
@@ -31,20 +38,19 @@ public:
 	    : CompressionState(analyze_state->info), checkpoint_data(checkpoint_data),
 	      function(checkpoint_data.GetCompressionFunction(CompressionType::COMPRESSION_ALPRD)) {
 		//! State variables from the analyze step that are needed for compression
-		compression_data.left_parts_dict_map = std::move(analyze_state->compression_data.left_parts_dict_map);
-		compression_data.left_bit_width = analyze_state->compression_data.left_bit_width;
-		compression_data.right_bit_width = analyze_state->compression_data.right_bit_width;
-		compression_data.actual_dictionary_size = analyze_state->compression_data.actual_dictionary_size;
-		actual_dictionary_size_bytes =
-		    compression_data.actual_dictionary_size * AlpRDConstants::DICTIONARY_ELEMENT_SIZE;
+		state.left_parts_dict_map = std::move(analyze_state->state.left_parts_dict_map);
+		state.left_bit_width = analyze_state->state.left_bit_width;
+		state.right_bit_width = analyze_state->state.right_bit_width;
+		state.actual_dictionary_size = analyze_state->state.actual_dictionary_size;
+		actual_dictionary_size_bytes = state.actual_dictionary_size * AlpRDConstants::DICTIONARY_ELEMENT_SIZE;
 		next_vector_byte_index_start = AlpRDConstants::HEADER_SIZE + actual_dictionary_size_bytes;
-		memcpy((void *)compression_data.left_parts_dict, (void *)analyze_state->compression_data.left_parts_dict,
+		memcpy((void *)state.left_parts_dict, (void *)analyze_state->state.left_parts_dict,
 		       actual_dictionary_size_bytes);
-		CreateEmptySegment();
+		CreateEmptySegment(checkpoint_data.GetRowGroup().start);
 	}
 
 	ColumnDataCheckpointData &checkpoint_data;
-	const CompressionFunction &function;
+	CompressionFunction &function;
 	unique_ptr<ColumnSegment> current_segment;
 	BufferHandle handle;
 
@@ -61,7 +67,7 @@ public:
 	EXACT_TYPE input_vector[AlpRDConstants::ALP_VECTOR_SIZE];
 	uint16_t vector_null_positions[AlpRDConstants::ALP_VECTOR_SIZE];
 
-	alp::AlpRDCompressionData<T, false> compression_data;
+	alp::AlpRDCompressionState<T, false> state;
 
 public:
 	// Returns the space currently used in the segment (in bytes)
@@ -70,10 +76,19 @@ public:
 		return AlpRDConstants::HEADER_SIZE + actual_dictionary_size_bytes + data_bytes_used;
 	}
 
-	bool HasEnoughSpace(idx_t vector_size) {
+	// Returns the required space to store the newly compressed vector
+	idx_t RequiredSpace() {
+		idx_t required_space =
+		    state.left_bit_packed_size + state.right_bit_packed_size +
+		    state.exceptions_count * (AlpRDConstants::EXCEPTION_SIZE + AlpRDConstants::EXCEPTION_POSITION_SIZE) +
+		    AlpRDConstants::EXCEPTIONS_COUNT_SIZE;
+		return required_space;
+	}
+
+	bool HasEnoughSpace() {
 		//! If [start of block + used space + required space] is more than whats left (current position
 		//! of metadata pointer - the size of a new metadata pointer)
-		if ((handle.Ptr() + AlignValue(UsedSpace() + vector_size)) >=
+		if ((handle.Ptr() + AlignValue(UsedSpace() + RequiredSpace())) >=
 		    (metadata_ptr - AlpRDConstants::METADATA_POINTER_SIZE)) {
 			return false;
 		}
@@ -81,15 +96,15 @@ public:
 	}
 
 	void ResetVector() {
-		compression_data.Reset();
+		state.Reset();
 	}
 
-	void CreateEmptySegment() {
+	void CreateEmptySegment(idx_t row_start) {
 		auto &db = checkpoint_data.GetDatabase();
 		auto &type = checkpoint_data.GetType();
 
-		auto compressed_segment =
-		    ColumnSegment::CreateTransientSegment(db, function, type, info.GetBlockSize(), info.GetBlockManager());
+		auto compressed_segment = ColumnSegment::CreateTransientSegment(db, function, type, row_start,
+		                                                                info.GetBlockSize(), info.GetBlockManager());
 		current_segment = std::move(compressed_segment);
 
 		auto &buffer_manager = BufferManager::GetBufferManager(db);
@@ -108,88 +123,46 @@ public:
 			alp::AlpUtils::FindAndReplaceNullsInVector<EXACT_TYPE>(input_vector, vector_null_positions, vector_idx,
 			                                                       nulls_idx);
 		}
-		alp::AlpRDCompression<T, false>::Compress(input_vector, vector_idx, compression_data);
-
-		const idx_t uncompressed_size = AlpConstants::EXCEPTIONS_COUNT_SIZE + sizeof(EXACT_TYPE) * vector_idx;
-		const idx_t compressed_size = compression_data.RequiredSpace();
-
-		const auto storage_version = checkpoint_data.GetStorageManager().GetStorageVersion();
-		const bool should_compress = compressed_size < uncompressed_size || storage_version < 7;
-
-		const idx_t vector_size = should_compress ? compressed_size : uncompressed_size;
-
+		alp::AlpRDCompression<T, false>::Compress(input_vector, vector_idx, state);
 		//! Check if the compressed vector fits on current segment
-		if (!HasEnoughSpace(vector_size)) {
+		if (!HasEnoughSpace()) {
+			auto row_start = current_segment->start + current_segment->count;
 			FlushSegment();
-			CreateEmptySegment();
-		}
-		if (nulls_idx) {
-			current_segment->stats.statistics.SetHasNullFast();
+			CreateEmptySegment(row_start);
 		}
 		if (vector_idx != nulls_idx) { //! At least there is one valid value in the vector
-			current_segment->stats.statistics.SetHasNoNullFast();
 			for (idx_t i = 0; i < vector_idx; i++) {
 				T floating_point_value = Load<T>(const_data_ptr_cast(&input_vector[i]));
 				current_segment->stats.statistics.UpdateNumericStats<T>(floating_point_value);
 			}
 		}
 		current_segment->count += vector_idx;
-
-		if (should_compress) {
-			FlushCompressedVector();
-		} else {
-			FlushUncompressedVector();
-		}
+		FlushVector();
 	}
 
 	// Stores the vector and its metadata
-	void FlushCompressedVector() {
-		Store<uint16_t>(compression_data.exceptions_count, data_ptr);
+	void FlushVector() {
+		Store<uint16_t>(state.exceptions_count, data_ptr);
 		data_ptr += AlpRDConstants::EXCEPTIONS_COUNT_SIZE;
 
-		memcpy((void *)data_ptr, (void *)compression_data.left_parts_encoded, compression_data.left_bit_packed_size);
-		data_ptr += compression_data.left_bit_packed_size;
+		memcpy((void *)data_ptr, (void *)state.left_parts_encoded, state.left_bit_packed_size);
+		data_ptr += state.left_bit_packed_size;
 
-		memcpy((void *)data_ptr, (void *)compression_data.right_parts_encoded, compression_data.right_bit_packed_size);
-		data_ptr += compression_data.right_bit_packed_size;
+		memcpy((void *)data_ptr, (void *)state.right_parts_encoded, state.right_bit_packed_size);
+		data_ptr += state.right_bit_packed_size;
 
-		if (compression_data.exceptions_count > 0) {
-			memcpy((void *)data_ptr, (void *)compression_data.exceptions,
-			       AlpRDConstants::EXCEPTION_SIZE * compression_data.exceptions_count);
-			data_ptr += AlpRDConstants::EXCEPTION_SIZE * compression_data.exceptions_count;
-			memcpy((void *)data_ptr, (void *)compression_data.exceptions_positions,
-			       AlpRDConstants::EXCEPTION_POSITION_SIZE * compression_data.exceptions_count);
-			data_ptr += AlpRDConstants::EXCEPTION_POSITION_SIZE * compression_data.exceptions_count;
+		if (state.exceptions_count > 0) {
+			memcpy((void *)data_ptr, (void *)state.exceptions, AlpRDConstants::EXCEPTION_SIZE * state.exceptions_count);
+			data_ptr += AlpRDConstants::EXCEPTION_SIZE * state.exceptions_count;
+			memcpy((void *)data_ptr, (void *)state.exceptions_positions,
+			       AlpRDConstants::EXCEPTION_POSITION_SIZE * state.exceptions_count);
+			data_ptr += AlpRDConstants::EXCEPTION_POSITION_SIZE * state.exceptions_count;
 		}
 
-		data_bytes_used += compression_data.left_bit_packed_size + compression_data.right_bit_packed_size +
-		                   (compression_data.exceptions_count *
-		                    (AlpRDConstants::EXCEPTION_SIZE + AlpRDConstants::EXCEPTION_POSITION_SIZE)) +
-		                   AlpRDConstants::EXCEPTIONS_COUNT_SIZE;
-
-		// Write pointer to the vector data (metadata)
-		metadata_ptr -= AlpRDConstants::METADATA_POINTER_SIZE;
-		Store<uint32_t>(next_vector_byte_index_start, metadata_ptr);
-		next_vector_byte_index_start = NumericCast<uint32_t>(UsedSpace());
-
-		vectors_flushed++;
-		vector_idx = 0;
-		nulls_idx = 0;
-		ResetVector();
-	}
-
-	//! Uncompressed mode
-	void FlushUncompressedVector() {
-		// Store a sentinel value, signaling the coming data is stored uncompressed.
-		constexpr uint16_t sentinel = AlpRDConstants::UNCOMPRESSED_MODE_SENTINEL;
-		Store<uint16_t>(sentinel, data_ptr);
-		data_ptr += AlpRDConstants::EXCEPTIONS_COUNT_SIZE;
-
-		// Store uncompressed data
-		memcpy(data_ptr, input_vector, sizeof(EXACT_TYPE) * vector_idx);
-		data_ptr += sizeof(EXACT_TYPE) * vector_idx;
-
-		data_bytes_used += AlpConstants::EXCEPTIONS_COUNT_SIZE + (sizeof(EXACT_TYPE) * vector_idx);
+		data_bytes_used +=
+		    state.left_bit_packed_size + state.right_bit_packed_size +
+		    (state.exceptions_count * (AlpRDConstants::EXCEPTION_SIZE + AlpRDConstants::EXCEPTION_POSITION_SIZE)) +
+		    AlpRDConstants::EXCEPTIONS_COUNT_SIZE;
 
 		// Write pointer to the vector data (metadata)
 		metadata_ptr -= AlpRDConstants::METADATA_POINTER_SIZE;
@@ -238,19 +211,19 @@ public:
 		dataptr += AlpRDConstants::METADATA_POINTER_SIZE;
 
 		// Store the right bw for the segment
-		Store<uint8_t>(compression_data.right_bit_width, dataptr);
+		Store<uint8_t>(state.right_bit_width, dataptr);
 		dataptr += AlpRDConstants::RIGHT_BIT_WIDTH_SIZE;
 
 		// Store the left bw for the segment
-		Store<uint8_t>(compression_data.left_bit_width, dataptr);
+		Store<uint8_t>(state.left_bit_width, dataptr);
 		dataptr += AlpRDConstants::LEFT_BIT_WIDTH_SIZE;
 
 		// Store the actual number of elements on the dictionary of the segment
-		Store<uint8_t>(compression_data.actual_dictionary_size, dataptr);
+		Store<uint8_t>(state.actual_dictionary_size, dataptr);
 		dataptr += AlpRDConstants::N_DICTIONARY_ELEMENTS_SIZE;
 
 		// Store the Dictionary
-		memcpy((void *)dataptr, (void *)compression_data.left_parts_dict, actual_dictionary_size_bytes);
+		memcpy((void *)dataptr, (void *)state.left_parts_dict, actual_dictionary_size_bytes);
 
 		checkpoint_state.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
 		data_bytes_used = 0;
@@ -274,7 +247,7 @@ public:
 			// to avoid checking if input_vector is filled in each iteration
 			auto values_to_fill_alp_input =
 			    MinValue<idx_t>(AlpConstants::ALP_VECTOR_SIZE - vector_idx, values_left_in_data);
-			if (vdata.validity.CannotHaveNull()) { //! We optimize a loop when there are no null
+			if (vdata.validity.AllValid()) { //! We optimize a loop when there are no null
 				for (idx_t i = 0; i < values_to_fill_alp_input; i++) {
 					auto idx = vdata.sel->get_index(offset_in_data + i);
 					EXACT_TYPE value = Load<EXACT_TYPE>(const_data_ptr_cast(&data[idx]));

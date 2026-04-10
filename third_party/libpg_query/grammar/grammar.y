@@ -60,7 +60,6 @@
 	PGInsertColumnOrder bynameorposition;
 	PGLoadInstallType loadinstalltype;
 	PGTransactionStmtType transactiontype;
-	PGMergeAction mergeaction;
 }
 
 %type <node> stmt

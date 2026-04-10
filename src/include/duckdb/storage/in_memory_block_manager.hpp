@@ -8,8 +8,8 @@
 
 #pragma once
 
+#include "duckdb/common/common.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/main/client_context.hpp"
 #include "duckdb/storage/block_manager.hpp"
 
 namespace duckdb {
@@ -29,17 +29,14 @@ public:
 	block_id_t GetFreeBlockId() override {
 		throw InternalException("Cannot perform IO in in-memory database - GetFreeBlockId!");
 	}
-	block_id_t GetFreeBlockIdForCheckpoint() override {
-		throw InternalException("Cannot perform IO in in-memory database - GetFreeBlockIdForCheckpoint!");
-	}
 	block_id_t PeekFreeBlockId() override {
 		throw InternalException("Cannot perform IO in in-memory database - PeekFreeBlockId!");
 	}
 	bool IsRootBlock(MetaBlockPointer root) override {
 		throw InternalException("Cannot perform IO in in-memory database - IsRootBlock!");
 	}
-	void MarkBlockAsCheckpointed(block_id_t block_id) override {
-		throw InternalException("Cannot perform IO in in-memory database - MarkBlockAsCheckpointed!");
+	void MarkBlockAsFree(block_id_t block_id) override {
+		throw InternalException("Cannot perform IO in in-memory database - MarkBlockAsFree!");
 	}
 	void MarkBlockAsUsed(block_id_t block_id) override {
 		throw InternalException("Cannot perform IO in in-memory database - MarkBlockAsUsed!");
@@ -53,8 +50,7 @@ public:
 	idx_t GetMetaBlock() override {
 		throw InternalException("Cannot perform IO in in-memory database - GetMetaBlock!");
 	}
-
-	void Read(QueryContext context, Block &block) override {
+	void Read(Block &block) override {
 		throw InternalException("Cannot perform IO in in-memory database - Read!");
 	}
 	void ReadBlocks(FileBuffer &buffer, block_id_t start_block, idx_t block_count) override {
@@ -63,10 +59,7 @@ public:
 	void Write(FileBuffer &block, block_id_t block_id) override {
 		throw InternalException("Cannot perform IO in in-memory database - Write!");
 	}
-	void Write(QueryContext context, FileBuffer &block, block_id_t block_id) override {
-		throw InternalException("Cannot perform IO in in-memory database - Write with client context!");
-	}
-	void WriteHeader(QueryContext context, DatabaseHeader header) override {
+	void WriteHeader(DatabaseHeader header) override {
 		throw InternalException("Cannot perform IO in in-memory database - WriteHeader!");
 	}
 	bool InMemory() override {

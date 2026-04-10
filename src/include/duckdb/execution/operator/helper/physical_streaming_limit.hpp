@@ -19,8 +19,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::STREAMING_LIMIT;
 
 public:
-	PhysicalStreamingLimit(PhysicalPlan &physical_plan, vector<LogicalType> types, BoundLimitNode limit_val_p,
-	                       BoundLimitNode offset_val_p, idx_t estimated_cardinality, bool parallel);
+	PhysicalStreamingLimit(vector<LogicalType> types, BoundLimitNode limit_val_p, BoundLimitNode offset_val_p,
+	                       idx_t estimated_cardinality, bool parallel);
 
 	BoundLimitNode limit_val;
 	BoundLimitNode offset_val;
@@ -35,8 +35,6 @@ public:
 
 	OrderPreservationType OperatorOrder() const override;
 	bool ParallelOperator() const override;
-
-	InsertionOrderPreservingMap<string> ParamsToString() const override;
 };
 
 } // namespace duckdb

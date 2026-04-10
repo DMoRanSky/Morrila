@@ -10,6 +10,7 @@
 
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/constants.hpp"
+#include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/stack_checker.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -18,6 +19,7 @@
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/query_node.hpp"
+#include "duckdb/parser/query_node/cte_node.hpp"
 #include "duckdb/parser/tokens.hpp"
 #include "nodes/parsenodes.hpp"
 #include "nodes/primnodes.hpp"
@@ -78,15 +80,12 @@ private:
 	//! The set of pivot entries to create
 	vector<unique_ptr<CreatePivotEntry>> pivot_entries;
 	//! Sets of stored CTEs, if any
-	vector<reference<CommonTableExpressionMap>> stored_cte_map;
+	vector<CommonTableExpressionMap *> stored_cte_map;
 	//! Whether or not we are currently binding a window definition
 	bool in_window_definition = false;
-	//! Whether or not we are currently binding a macro definition
-	bool in_macro_definition = false;
 
 	void Clear();
 	bool InWindowDefinition();
-	bool InMacroDefinition();
 
 	Transformer &RootTransformer();
 	const Transformer &RootTransformer() const;
@@ -116,9 +115,7 @@ private:
 	unique_ptr<SelectStatement> TransformSelectStmt(duckdb_libpgquery::PGSelectStmt &select, bool is_select = true);
 	unique_ptr<SelectStatement> TransformSelectStmt(duckdb_libpgquery::PGNode &node, bool is_select = true);
 	//! Transform a Postgres T_AlterStmt node into a AlterStatement
-	unique_ptr<SQLStatement> TransformAlter(duckdb_libpgquery::PGAlterTableStmt &stmt);
-	//! Transform a Postgres T_AlterDatabaseStmt node into a AlterStatement
-	unique_ptr<AlterStatement> TransformAlterDatabase(duckdb_libpgquery::PGAlterDatabaseStmt &stmt);
+	unique_ptr<AlterStatement> TransformAlter(duckdb_libpgquery::PGAlterTableStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGRenameStmt node into a RenameStatement
 	unique_ptr<AlterStatement> TransformRename(duckdb_libpgquery::PGRenameStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGCreateStmt node into a CreateStatement
@@ -145,9 +142,6 @@ private:
 	unique_ptr<SQLStatement> TransformDrop(duckdb_libpgquery::PGDropStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGInsertStmt node into a InsertStatement
 	unique_ptr<InsertStatement> TransformInsert(duckdb_libpgquery::PGInsertStmt &stmt);
-	InsertColumnOrder TransformColumnOrder(duckdb_libpgquery::PGInsertColumnOrder insert_column_order);
-
-	vector<string> TransformInsertColumns(duckdb_libpgquery::PGList &cols);
 
 	//! Transform a Postgres duckdb_libpgquery::T_PGOnConflictClause node into a OnConflictInfo
 	unique_ptr<OnConflictInfo> TransformOnConflictClause(duckdb_libpgquery::PGOnConflictClause *node,
@@ -159,8 +153,6 @@ private:
 	unique_ptr<CopyStatement> TransformCopy(duckdb_libpgquery::PGCopyStmt &stmt);
 	void TransformCopyOptions(CopyInfo &info, optional_ptr<duckdb_libpgquery::PGList> options);
 	void TransformCreateSecretOptions(CreateSecretInfo &info, optional_ptr<duckdb_libpgquery::PGList> options);
-	void TransformTableOptions(case_insensitive_map_t<unique_ptr<ParsedExpression>> &info,
-	                           optional_ptr<duckdb_libpgquery::PGList> options, bool throw_if_value = false);
 	//! Transform a Postgres duckdb_libpgquery::T_PGTransactionStmt node into a TransactionStatement
 	unique_ptr<TransactionStatement> TransformTransaction(duckdb_libpgquery::PGTransactionStmt &stmt);
 	//! Transform a Postgres T_DeleteStatement node into a DeleteStatement
@@ -196,9 +188,8 @@ private:
 	unique_ptr<SQLStatement> CreatePivotStatement(unique_ptr<SQLStatement> statement);
 	PivotColumn TransformPivotColumn(duckdb_libpgquery::PGPivot &pivot, bool is_pivot);
 	vector<PivotColumn> TransformPivotList(duckdb_libpgquery::PGList &list, bool is_pivot);
-
-	unique_ptr<SQLStatement> TransformMergeInto(duckdb_libpgquery::PGMergeIntoStmt &stmt);
-	unique_ptr<MergeIntoAction> TransformMergeIntoAction(duckdb_libpgquery::PGMatchAction &action);
+	static bool TransformPivotInList(unique_ptr<ParsedExpression> &expr, PivotColumnEntry &entry,
+	                                 bool root_entry = true);
 
 	//===--------------------------------------------------------------------===//
 	// SetStatement Transform
@@ -218,8 +209,6 @@ private:
 	unique_ptr<QueryNode> TransformSelectNodeInternal(duckdb_libpgquery::PGSelectStmt &select, bool is_select = true);
 	unique_ptr<QueryNode> TransformSelectInternal(duckdb_libpgquery::PGSelectStmt &select);
 	void TransformModifiers(duckdb_libpgquery::PGSelectStmt &stmt, QueryNode &node);
-	bool SetOperationsMatch(duckdb_libpgquery::PGSelectStmt &root, duckdb_libpgquery::PGNode &node);
-	void TransformSetOperationChildren(duckdb_libpgquery::PGSelectStmt &stmt, SetOperationNode &result);
 
 	//===--------------------------------------------------------------------===//
 	// Expression Transform
@@ -305,12 +294,14 @@ private:
 	string TransformAlias(duckdb_libpgquery::PGAlias *root, vector<string> &column_name_alias);
 	vector<string> TransformStringList(duckdb_libpgquery::PGList *list);
 	void TransformCTE(duckdb_libpgquery::PGWithClause &de_with_clause, CommonTableExpressionMap &cte_map);
-	unique_ptr<QueryNode> TransformRecursiveCTE(duckdb_libpgquery::PGCommonTableExpr &node,
-	                                            CommonTableExpressionInfo &info);
+	static unique_ptr<QueryNode> TransformMaterializedCTE(unique_ptr<QueryNode> root);
+	unique_ptr<SelectStatement> TransformRecursiveCTE(duckdb_libpgquery::PGCommonTableExpr &node,
+	                                                  CommonTableExpressionInfo &info);
 
 	unique_ptr<ParsedExpression> TransformUnaryOperator(const string &op, unique_ptr<ParsedExpression> child);
 	unique_ptr<ParsedExpression> TransformBinaryOperator(string op, unique_ptr<ParsedExpression> left,
 	                                                     unique_ptr<ParsedExpression> right);
+	static bool ConstructConstantFromExpression(const ParsedExpression &expr, Value &value);
 	//===--------------------------------------------------------------------===//
 	// TableRef transform
 	//===--------------------------------------------------------------------===//
@@ -331,17 +322,16 @@ private:
 	//! Transform a VALUES list into a set of expressions
 	unique_ptr<TableRef> TransformValuesList(duckdb_libpgquery::PGList *list);
 
-	//! Transform using clause
-	vector<string> TransformUsingClause(duckdb_libpgquery::PGList &usingClause);
-
 	//! Transform a range var into a (schema) qualified name
 	QualifiedName TransformQualifiedName(duckdb_libpgquery::PGRangeVar &root);
 
 	//! Transform a Postgres TypeName string into a LogicalType (non-LIST types)
-	unique_ptr<ParsedExpression> TransformTypeExpressionInternal(duckdb_libpgquery::PGTypeName &name);
-	unique_ptr<ParsedExpression> TransformTypeExpression(duckdb_libpgquery::PGTypeName &name);
+	LogicalType TransformTypeNameInternal(duckdb_libpgquery::PGTypeName &name);
 	//! Transform a Postgres TypeName string into a LogicalType
 	LogicalType TransformTypeName(duckdb_libpgquery::PGTypeName &name);
+
+	//! Transform a list of type modifiers into a list of values
+	vector<Value> TransformTypeModifiers(duckdb_libpgquery::PGTypeName &name);
 
 	//! Transform a Postgres GROUP BY expression into a list of Expression
 	bool TransformGroupBy(optional_ptr<duckdb_libpgquery::PGList> group, SelectNode &result);
@@ -377,6 +367,8 @@ private:
 
 	unique_ptr<MacroFunction> TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &function);
 
+	void ParseGenericOptionListEntry(case_insensitive_map_t<vector<Value>> &result_options, string &name,
+	                                 duckdb_libpgquery::PGNode *arg);
 	vector<string> TransformNameList(duckdb_libpgquery::PGList &list);
 
 public:

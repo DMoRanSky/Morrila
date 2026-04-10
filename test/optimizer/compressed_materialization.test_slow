@@ -147,42 +147,10 @@ SELECT pk FROM tab3 WHERE col0 IN (SELECT col3 FROM tab3 WHERE (col1 > 93.79)) O
 ----
 0
 
-# test that we compress all-NULL (from multiple Parquet files) to utinyint too (if union_by_name is true)
-require parquet
+# and of course some tpch stuff
 
-#
 statement ok
 pragma disable_verification
-
-# one column without NULL, and two columns (varchar and bigint) that are all NULL
-statement ok
-copy (select hash(range + 1) i, null::varchar j, null::bigint k from range(100)) to '{TEST_DIR}/cm1.parquet'
-
-statement ok
-copy (select hash(range + 1) i, null::varchar j, null::bigint k from range(100,200)) to '{TEST_DIR}/cm2.parquet'
-
-# has NULL, and does not have non-NULL
-query IIII
-select sj.has_null, sj.has_no_null, sk.has_null, sk.has_no_null
-from (
-select
-    stats(j) sj,
-    stats(k) sk
-from read_parquet('{TEST_DIR}/cm*.parquet', union_by_name=true) limit 1
-)
-----
-true	false	true	false
-
-# this should lead to a plan where both all-NULL columns (varchar j and bigint k) are compressed
-statement ok
-PRAGMA explain_output = PHYSICAL_ONLY
-
-query II
-explain select * from read_parquet('{TEST_DIR}/cm*.parquet', union_by_name=true) order by i
-----
-physical_plan	<REGEX>:.*__internal_decompress.*__internal_decompress.*__internal_compress.*__internal_compress.*
-
-# and of course some tpch stuff
 
 require tpch
 

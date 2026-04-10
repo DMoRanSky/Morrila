@@ -5,12 +5,13 @@ namespace duckdb {
 
 bool ConflictInfo::ConflictTargetMatches(Index &index) const {
 	if (only_check_unique && !index.IsUnique()) {
-		// We only support ON CONFLICT for PRIMARY KEY/UNIQUE constraints.
+		// We only support checking ON CONFLICT for Unique/Primary key constraints
 		return false;
 	}
 	if (column_ids.empty()) {
 		return true;
 	}
+	// Check whether the column ids match
 	return column_ids == index.GetColumnIdSet();
 }
 

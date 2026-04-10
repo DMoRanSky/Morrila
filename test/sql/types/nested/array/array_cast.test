@@ -25,13 +25,11 @@ SELECT list_extract(array_value(1, 2, 3), 2)
 ----
 2
 
-# Should be able to implicitly cast to list with unnest
-query I
+# Should not be able to implicitly cast to list with unnest
+statement error
 SELECT * FROM UNNEST(array_value(1, 2, 3))
 ----
-1
-2
-3
+UNNEST requires a single list as input
 
 # Should be able to cast to list with unnest
 query I

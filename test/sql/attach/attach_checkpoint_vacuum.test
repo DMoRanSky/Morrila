@@ -3,7 +3,10 @@
 # group: [attach]
 
 statement ok
-ATTACH '{TEST_DIR}/attach_vacuum.db' AS db1
+PRAGMA enable_verification
+
+statement ok
+ATTACH '__TEST_DIR__/attach_vacuum.db' AS db1
 
 statement ok
 CREATE TABLE db1.integers(i INTEGER);

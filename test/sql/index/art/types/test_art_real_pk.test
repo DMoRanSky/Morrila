@@ -3,13 +3,15 @@
 # group: [types]
 
 statement ok
+PRAGMA enable_verification
+
+statement ok
 CREATE TABLE numbers(i REAL PRIMARY KEY, j INTEGER)
 
 # insert two conflicting pairs at the same time
 statement error
 INSERT INTO numbers VALUES (3.45, 4), (3.45, 5)
 ----
-<REGEX>:.*Constraint Error.*constraint violation.*
 
 # insert unique values
 statement ok
@@ -25,7 +27,6 @@ SELECT * FROM numbers
 statement error
 INSERT INTO numbers VALUES (6, 6), (3.45, 4);
 ----
-<REGEX>:.*Constraint Error.*violates primary key constraint.*
 
 # now insert just the first value
 statement ok
@@ -42,10 +43,9 @@ SELECT * FROM numbers
 statement error
 INSERT INTO numbers VALUES (NULL, 4);
 ----
-<REGEX>:.*Constraint Error.*NOT NULL constraint failed.*
 
 # update NULL is also not allowed
 statement error
 UPDATE numbers SET i=NULL;
 ----
-<REGEX>:.*Constraint Error.*NOT NULL constraint failed.*
+

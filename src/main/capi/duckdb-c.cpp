@@ -1,6 +1,5 @@
 #include "duckdb/main/capi/capi_internal.hpp"
 
-using duckdb::CClientArrowOptionsWrapper;
 using duckdb::CClientContextWrapper;
 using duckdb::Connection;
 using duckdb::DatabaseWrapper;
@@ -41,7 +40,7 @@ duckdb_state duckdb_open_internal(DBInstanceCacheWrapper *cache, const char *pat
 			if (path) {
 				path_str = path;
 			}
-			wrapper->database = cache->instance_cache->GetOrCreateInstance(path_str, *db_config);
+			wrapper->database = cache->instance_cache->GetOrCreateInstance(path_str, *db_config, true);
 		} else {
 			wrapper->database = duckdb::make_shared_ptr<DuckDB>(path, db_config);
 		}
@@ -148,26 +147,8 @@ void duckdb_connection_get_client_context(duckdb_connection connection, duckdb_c
 		return;
 	}
 	Connection *conn = reinterpret_cast<Connection *>(connection);
-	try {
-		auto wrapper = new CClientContextWrapper(*conn->context);
-		*out_context = reinterpret_cast<duckdb_client_context>(wrapper);
-	} catch (...) {
-		*out_context = nullptr;
-	}
-}
-
-void duckdb_connection_get_arrow_options(duckdb_connection connection, duckdb_arrow_options *out_arrow_options) {
-	if (!connection || !out_arrow_options) {
-		return;
-	}
-	Connection *conn = reinterpret_cast<Connection *>(connection);
-	try {
-		auto client_properties = conn->context->GetClientProperties();
-		auto wrapper = new CClientArrowOptionsWrapper(client_properties);
-		*out_arrow_options = reinterpret_cast<duckdb_arrow_options>(wrapper);
-	} catch (...) {
-		*out_arrow_options = nullptr;
-	}
+	auto wrapper = new CClientContextWrapper(*conn->context);
+	*out_context = reinterpret_cast<duckdb_client_context>(wrapper);
 }
 
 idx_t duckdb_client_context_get_connection_id(duckdb_client_context context) {
@@ -183,22 +164,10 @@ void duckdb_destroy_client_context(duckdb_client_context *context) {
 	}
 }
 
-void duckdb_destroy_arrow_options(duckdb_arrow_options *arrow_options) {
-	if (arrow_options && *arrow_options) {
-		auto wrapper = reinterpret_cast<CClientArrowOptionsWrapper *>(*arrow_options);
-		delete wrapper;
-		*arrow_options = nullptr;
-	}
-}
-
 duckdb_state duckdb_query(duckdb_connection connection, const char *query, duckdb_result *out) {
 	Connection *conn = reinterpret_cast<Connection *>(connection);
-	try {
-		auto result = conn->Query(query);
-		return DuckDBTranslateResult(std::move(result), out);
-	} catch (...) {
-		return DuckDBError;
-	}
+	auto result = conn->Query(query);
+	return DuckDBTranslateResult(std::move(result), out);
 }
 
 const char *duckdb_library_version() {
@@ -207,38 +176,26 @@ const char *duckdb_library_version() {
 
 duckdb_value duckdb_get_table_names(duckdb_connection connection, const char *query, bool qualified) {
 	Connection *conn = reinterpret_cast<Connection *>(connection);
-	try {
-		auto table_names = conn->GetTableNames(query, qualified);
+	auto table_names = conn->GetTableNames(query, qualified);
 
-		auto count = table_names.size();
-		auto ptr = malloc(count * sizeof(duckdb_value));
-		if (!ptr) {
-			return nullptr;
-		}
-		auto list_values = reinterpret_cast<duckdb_value *>(ptr);
+	auto count = table_names.size();
+	auto ptr = malloc(count * sizeof(duckdb_value));
+	auto list_values = reinterpret_cast<duckdb_value *>(ptr);
 
-		try {
-			idx_t name_ix = 0;
-			for (const auto &name : table_names) {
-				list_values[name_ix] = duckdb_create_varchar(name.c_str());
-				name_ix++;
-			}
-
-			auto varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
-			auto list_value = duckdb_create_list_value(varchar_type, list_values, count);
-
-			for (idx_t i = 0; i < count; i++) {
-				duckdb_destroy_value(&list_values[i]);
-			}
-			duckdb_free(ptr);
-			duckdb_destroy_logical_type(&varchar_type);
-
-			return list_value;
-		} catch (...) {
-			duckdb_free(ptr);
-			return nullptr;
-		}
-	} catch (...) {
-		return nullptr;
+	idx_t name_ix = 0;
+	for (const auto &name : table_names) {
+		list_values[name_ix] = duckdb_create_varchar(name.c_str());
+		name_ix++;
 	}
+
+	auto varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+	auto list_value = duckdb_create_list_value(varchar_type, list_values, count);
+
+	for (idx_t i = 0; i < count; i++) {
+		duckdb_destroy_value(&list_values[i]);
+	}
+	duckdb_free(ptr);
+	duckdb_destroy_logical_type(&varchar_type);
+
+	return list_value;
 }

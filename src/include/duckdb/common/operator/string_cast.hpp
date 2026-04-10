@@ -17,74 +17,68 @@
 
 namespace duckdb {
 
-struct date_t;
-struct timestamp_t;
-struct timestamp_ns_t;
-
 //! StringCast
-class StringHeap;
+class Vector;
 
 struct StringCast {
 	template <class SRC>
-	static inline string_t Operation(SRC input, StringHeap &heap) {
+	static inline string_t Operation(SRC input, Vector &result) {
 		throw NotImplementedException("Unimplemented type for string cast!");
 	}
 };
 
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(bool input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(bool input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(int8_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(int8_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(int16_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(int16_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(int32_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(int32_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(int64_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(int64_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(uint8_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(uint8_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(uint16_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(uint16_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(uint32_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(uint32_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(uint64_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(uint64_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(hugeint_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(hugeint_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(uhugeint_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(uhugeint_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(float input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(float input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(double input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(double input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(interval_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(interval_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(duckdb::string_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(duckdb::string_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(date_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(date_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(dtime_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(dtime_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(dtime_ns_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(timestamp_t input, Vector &result);
 template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(timestamp_t input, StringHeap &heap);
-template <>
-DUCKDB_API duckdb::string_t StringCast::Operation(timestamp_ns_t input, StringHeap &heap);
+DUCKDB_API duckdb::string_t StringCast::Operation(timestamp_ns_t input, Vector &result);
 
 //! Temporary casting for Time Zone types. TODO: turn casting into functions.
 struct StringCastTZ {
 	template <typename SRC>
-	static inline string_t Operation(SRC input, StringHeap &heap) {
-		return StringCast::Operation(input, heap);
+	static inline string_t Operation(SRC input, Vector &vector) {
+		return StringCast::Operation(input, vector);
 	}
 };
 
 template <>
-duckdb::string_t StringCastTZ::Operation(date_t input, StringHeap &heap);
+duckdb::string_t StringCastTZ::Operation(date_t input, Vector &result);
 template <>
-duckdb::string_t StringCastTZ::Operation(dtime_tz_t input, StringHeap &heap);
+duckdb::string_t StringCastTZ::Operation(dtime_tz_t input, Vector &result);
 template <>
-duckdb::string_t StringCastTZ::Operation(timestamp_t input, StringHeap &heap);
+duckdb::string_t StringCastTZ::Operation(timestamp_t input, Vector &result);
 
 } // namespace duckdb

@@ -19,7 +19,10 @@ end
     df = DataFrame(DBInterface.execute(con, "SELECT * FROM bit_table;"))
     # Currently mapped to Julia in an odd way.
     # Can reenable following https://github.com/duckdb/duckdb/issues/7065
-    @test length(df[1, :bits]) == 131073 skip = true
+    # Can't use skip = true prior to Julia 1.7
+    @static if VERSION ≥ v"1.7"
+        @test length(df[1, :bits]) == 131073 skip = true
+    end
 
     DBInterface.close!(con)
 end

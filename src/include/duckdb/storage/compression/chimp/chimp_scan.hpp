@@ -13,10 +13,15 @@
 
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/types/null_value.hpp"
+#include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include "duckdb/storage/table/column_data_checkpointer.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 
 #include "duckdb/storage/compression/chimp/algorithm/flag_buffer.hpp"
 #include "duckdb/storage/compression/chimp/algorithm/leading_zero_buffer.hpp"
@@ -180,6 +185,7 @@ public:
 	}
 
 	void LoadGroup(CHIMP_TYPE *value_buffer) {
+
 		//! FIXME: If we change the order of this to flag -> leading_zero_blocks -> packed_data
 		//! We can leave out the leading zero block count as well, because it can be derived from
 		//! Extracting all the flags and counting the 3's
@@ -187,7 +193,7 @@ public:
 		// Load the offset indicating where a groups data starts
 		metadata_ptr -= sizeof(uint32_t);
 		auto data_byte_offset = Load<uint32_t>(metadata_ptr);
-		D_ASSERT(data_byte_offset < segment.GetBlockSize());
+		D_ASSERT(data_byte_offset < segment.GetBlockManager().GetBlockSize());
 		//  Only used for point queries
 		(void)data_byte_offset;
 
@@ -246,7 +252,7 @@ public:
 };
 
 template <class T>
-unique_ptr<SegmentScanState> ChimpInitScan(const QueryContext &context, ColumnSegment &segment) {
+unique_ptr<SegmentScanState> ChimpInitScan(ColumnSegment &segment) {
 	auto result = make_uniq_base<SegmentScanState, ChimpScanState<T>>(segment);
 	return result;
 }
@@ -260,7 +266,7 @@ void ChimpScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan
 	using INTERNAL_TYPE = typename ChimpType<T>::TYPE;
 	auto &scan_state = state.scan_state->Cast<ChimpScanState<T>>();
 
-	T *result_data = FlatVector::GetDataMutable<T>(result);
+	T *result_data = FlatVector::GetData<T>(result);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	auto current_result_ptr = (INTERNAL_TYPE *)(result_data + result_offset);

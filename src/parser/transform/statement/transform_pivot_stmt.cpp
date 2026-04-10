@@ -95,7 +95,7 @@ unique_ptr<SQLStatement> Transformer::GenerateCreateEnumStmt(unique_ptr<CreatePi
 	}
 
 	auto select = make_uniq<SelectStatement>();
-	select->node = std::move(subselect);
+	select->node = TransformMaterializedCTE(std::move(subselect));
 	info->query = std::move(select);
 	info->type = LogicalType::INVALID;
 
@@ -125,8 +125,6 @@ unique_ptr<SQLStatement> Transformer::CreatePivotStatement(unique_ptr<SQLStateme
 		}
 		result->statements.push_back(GenerateCreateEnumStmt(std::move(pivot)));
 	}
-	result->stmt_location = statement->stmt_location;
-	result->stmt_length = statement->stmt_length;
 	result->statements.push_back(std::move(statement));
 	// FIXME: drop the types again!?
 	//	for(auto &pivot : pivot_entries) {
@@ -158,7 +156,7 @@ unique_ptr<QueryNode> Transformer::TransformPivotStatement(duckdb_libpgquery::PG
 				auto colref = make_uniq<ColumnRefExpression>(group);
 				select_node->select_list.push_back(colref->Copy());
 				select_node->groups.group_expressions.push_back(std::move(colref));
-				set.emplace(gr);
+				set.insert(gr);
 			}
 			select_node->groups.grouping_sets.push_back(std::move(set));
 		}

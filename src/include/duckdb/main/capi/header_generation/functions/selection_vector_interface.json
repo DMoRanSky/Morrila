@@ -1,7 +1,6 @@
 {
   "group": "selection_vector_interface",
   "deprecated": false,
-  "description": "Functions to interact with `duckdb_selection_vector`. Selection vectors define a selection on top of a vector. Lets say that a filter filters out all `VARCHAR`-rows containing `hello`. Then, instead of creating a full new copy of the filtered-out data, it is possible to use a selection vector only selecting the rows satisfying the filter.",
   "entries": [
     {
       "name": "duckdb_create_selection_vector",
@@ -13,11 +12,7 @@
         }
       ],
       "comment": {
-        "description": "Creates a new selection vector of size `size`.\nMust be destroyed with `duckdb_destroy_selection_vector`.\n\n",
-        "param_comments": {
-          "size": "The size of the selection vector."
-        },
-        "return_value": "The selection vector."
+        "description": "Creates a new selection vector of size `size`.\n"
       }
     },
     {
@@ -26,14 +21,11 @@
       "params": [
         {
           "type": "duckdb_selection_vector",
-          "name": "sel"
+          "name": "vector"
         }
       ],
       "comment": {
-        "description": "Destroys the selection vector and de-allocates its memory.\n\n",
-        "param_comments": {
-          "sel": "The selection vector."
-        }
+        "description": "Destroys a selection vector.\n"
       }
     },
     {
@@ -42,15 +34,11 @@
       "params": [
         {
           "type": "duckdb_selection_vector",
-          "name": "sel"
+          "name": "vector"
         }
       ],
       "comment": {
-        "description": "Access the data pointer of a selection vector.\n\n",
-        "param_comments": {
-          "sel": "The selection vector."
-        },
-        "return_value": "The data pointer."
+        "description": "Access the data pointer of a selection vector.\n"
       }
     }
   ]

@@ -15,7 +15,6 @@
 #include "duckdb/common/winapi.hpp"
 
 namespace duckdb {
-struct DBConfig;
 class Allocator;
 class ClientContext;
 class ExecutionContext;
@@ -140,7 +139,7 @@ public:
 	DUCKDB_API void Slice(idx_t offset, idx_t count);
 
 	//! Resets the DataChunk to its state right after the DataChunk::Initialize
-	//! function was called. This sets the count to 0, the capacity to initial_capacity and resets each member
+	//! function was called. This sets the count to 0, and resets each member
 	//! Vector to point back to the data owned by this DataChunk.
 	DUCKDB_API void Reset();
 
@@ -163,15 +162,13 @@ public:
 
 	//! Verify that the DataChunk is in a consistent, not corrupt state. DEBUG
 	//! FUNCTION ONLY!
-	DUCKDB_API void Verify(optional_ptr<DatabaseInstance> database_instance = nullptr);
+	DUCKDB_API void Verify();
 
 private:
 	//! The amount of tuples stored in the data chunk
 	idx_t count;
 	//! The amount of tuples that can be stored in the data chunk
 	idx_t capacity;
-	//! The initial capacity of this chunk set during ::Initialize, used when resetting
-	idx_t initial_capacity;
 	//! Vector caches, used to store data when ::Initialize is called
 	vector<VectorCache> vector_caches;
 };

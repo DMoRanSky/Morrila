@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/function/compression_function.hpp"
 #include "duckdb/storage/compression/alp/alp_constants.hpp"
 #include "duckdb/storage/compression/patas/patas.hpp"
 
@@ -35,6 +36,7 @@ public:
 
 public:
 	static AlpSamplingParameters GetSamplingParameters(idx_t current_vector_n_values) {
+
 		auto n_lookup_values =
 		    NumericCast<uint32_t>(MinValue(current_vector_n_values, (idx_t)AlpConstants::ALP_VECTOR_SIZE));
 		//! We sample equidistant values within a vector; to do this we jump a fixed number of values

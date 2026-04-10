@@ -47,7 +47,7 @@ Could not convert string
 statement error
 SELECT ARRAY[ARRAY[1], ARRAY['hello']]
 ----
-Binder Error: Cannot deduce template type
+explicit cast is required
 
 # array casts
 query I

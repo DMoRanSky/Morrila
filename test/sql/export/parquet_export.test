@@ -22,13 +22,13 @@ query II nosort sumresult
 SELECT SUM(i), SUM(j) FROM integers
 
 statement ok
-EXPORT DATABASE '{TEST_DIR}/export_test' (FORMAT PARQUET)
+EXPORT DATABASE '__TEST_DIR__/export_test' (FORMAT PARQUET)
 
 statement ok
 ROLLBACK
 
 statement ok
-IMPORT DATABASE '{TEST_DIR}/export_test'
+IMPORT DATABASE '__TEST_DIR__/export_test'
 
 # verify the data is still there
 query II nosort sumresult
@@ -38,7 +38,6 @@ SELECT SUM(i), SUM(j) FROM integers
 statement error
 INSERT INTO integers VALUES (NULL, NULL)
 ----
-<REGEX>:.*Constraint Error.*constraint failed.*
 
 statement ok
 DROP TABLE integers
@@ -57,13 +56,13 @@ query II nosort sumresult
 SELECT SUM(i), SUM(j) FROM integers
 
 statement ok
-EXPORT DATABASE '{TEST_DIR}/export_test' (FORMAT PARQUET, CODEC 'SNAPPY')
+EXPORT DATABASE '__TEST_DIR__/export_test' (FORMAT PARQUET, CODEC 'SNAPPY')
 
 statement ok
 ROLLBACK
 
 statement ok
-IMPORT DATABASE '{TEST_DIR}/export_test'
+IMPORT DATABASE '__TEST_DIR__/export_test'
 
 # verify the data is still there
 query II nosort sumresult
@@ -73,7 +72,6 @@ SELECT SUM(i), SUM(j) FROM integers
 statement error
 INSERT INTO integers VALUES (NULL, NULL)
 ----
-<REGEX>:.*Constraint Error.*constraint failed.*
 
 statement ok
 DROP TABLE integers
@@ -92,13 +90,13 @@ query II nosort sumresult
 SELECT SUM(i), SUM(j) FROM integers
 
 statement ok
-EXPORT DATABASE '{TEST_DIR}/export_test' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000);
+EXPORT DATABASE '__TEST_DIR__/export_test' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000);
 
 statement ok
 ROLLBACK
 
 statement ok
-IMPORT DATABASE '{TEST_DIR}/export_test'
+IMPORT DATABASE '__TEST_DIR__/export_test'
 
 # verify the data is still there
 query II nosort sumresult
@@ -108,4 +106,3 @@ SELECT SUM(i), SUM(j) FROM integers
 statement error
 INSERT INTO integers VALUES (NULL, NULL)
 ----
-<REGEX>:.*Constraint Error.*constraint failed.*

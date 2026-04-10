@@ -7,14 +7,12 @@
 
 namespace duckdb {
 
-PhysicalPerfectHashAggregate::PhysicalPerfectHashAggregate(PhysicalPlan &physical_plan, ClientContext &context,
-                                                           vector<LogicalType> types_p,
+PhysicalPerfectHashAggregate::PhysicalPerfectHashAggregate(ClientContext &context, vector<LogicalType> types_p,
                                                            vector<unique_ptr<Expression>> aggregates_p,
                                                            vector<unique_ptr<Expression>> groups_p,
                                                            const vector<unique_ptr<BaseStatistics>> &group_stats,
                                                            vector<idx_t> required_bits_p, idx_t estimated_cardinality)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::PERFECT_HASH_GROUP_BY, std::move(types_p),
-                       estimated_cardinality),
+    : PhysicalOperator(PhysicalOperatorType::PERFECT_HASH_GROUP_BY, std::move(types_p), estimated_cardinality),
       groups(std::move(groups_p)), aggregates(std::move(aggregates_p)), required_bits(std::move(required_bits_p)) {
 	D_ASSERT(groups.size() == group_stats.size());
 	group_minima.reserve(group_stats.size());
@@ -37,7 +35,7 @@ PhysicalPerfectHashAggregate::PhysicalPerfectHashAggregate(PhysicalPlan &physica
 		bindings.push_back(&aggr);
 
 		D_ASSERT(!aggr.IsDistinct());
-		D_ASSERT(aggr.function.HasStateCombineCallback());
+		D_ASSERT(aggr.function.combine);
 		for (auto &child : aggr.children) {
 			payload_types.push_back(child->return_type);
 		}
@@ -150,8 +148,8 @@ SinkResultType PhysicalPerfectHashAggregate::Sink(ExecutionContext &context, Dat
 
 	aggregate_input_chunk.SetCardinality(chunk.size());
 
-	group_chunk.Verify(context.client.db);
-	aggregate_input_chunk.Verify(context.client.db);
+	group_chunk.Verify();
+	aggregate_input_chunk.Verify();
 	D_ASSERT(aggregate_input_chunk.ColumnCount() == 0 || group_chunk.size() == aggregate_input_chunk.size());
 
 	lstate.ht->AddChunk(group_chunk, aggregate_input_chunk);
@@ -188,8 +186,8 @@ unique_ptr<GlobalSourceState> PhysicalPerfectHashAggregate::GetGlobalSourceState
 	return make_uniq<PerfectHashAggregateState>();
 }
 
-SourceResultType PhysicalPerfectHashAggregate::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                               OperatorSourceInput &input) const {
+SourceResultType PhysicalPerfectHashAggregate::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                       OperatorSourceInput &input) const {
 	auto &state = input.global_state.Cast<PerfectHashAggregateState>();
 	auto &gstate = sink_state->Cast<PerfectHashAggregateGlobalState>();
 
@@ -225,7 +223,6 @@ InsertionOrderPreservingMap<string> PhysicalPerfectHashAggregate::ParamsToString
 		}
 	}
 	result["Aggregates"] = aggregate_info;
-	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
 

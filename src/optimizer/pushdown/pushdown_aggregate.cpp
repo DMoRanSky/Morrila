@@ -9,19 +9,26 @@ namespace duckdb {
 
 using Filter = FilterPushdown::Filter;
 
-static unique_ptr<Expression> ReplaceGroupBindings(LogicalAggregate &aggr, unique_ptr<Expression> root_expr) {
-	ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
-	    root_expr, [&](BoundColumnRefExpression &colref, unique_ptr<Expression> &expr) {
-		    D_ASSERT(colref.depth == 0);
-		    // replace the binding with a copy to the expression at the referenced index
-		    expr = aggr.GetExpression(colref.binding).Copy();
-	    });
-	return root_expr;
+static unique_ptr<Expression> ReplaceGroupBindings(LogicalAggregate &proj, unique_ptr<Expression> expr) {
+	if (expr->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr->Cast<BoundColumnRefExpression>();
+		D_ASSERT(colref.binding.table_index == proj.group_index);
+		D_ASSERT(colref.binding.column_index < proj.groups.size());
+		D_ASSERT(colref.depth == 0);
+		// replace the binding with a copy to the expression at the referenced index
+		return proj.groups[colref.binding.column_index]->Copy();
+	}
+	ExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<Expression> &child) { child = ReplaceGroupBindings(proj, std::move(child)); });
+	return expr;
 }
 
-void FilterPushdown::ExtractFilterBindings(const Expression &expr, vector<ColumnBinding> &bindings) {
-	ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
-	    expr, [&](const BoundColumnRefExpression &colref) { bindings.push_back(colref.binding); });
+void FilterPushdown::ExtractFilterBindings(Expression &expr, vector<ColumnBinding> &bindings) {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr.Cast<BoundColumnRefExpression>();
+		bindings.push_back(colref.binding);
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { ExtractFilterBindings(child, bindings); });
 }
 
 unique_ptr<LogicalOperator> FilterPushdown::PushdownAggregate(unique_ptr<LogicalOperator> op) {
@@ -43,8 +50,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownAggregate(unique_ptr<Logical
 		}
 		// no aggregate! we are filtering on a group
 		// we can only push this down if the filter is in all grouping sets
-		if (aggr.groups.empty()) {
-			// empty group - we cannot pushdown the filter
+		if (aggr.grouping_sets.empty()) {
+			// empty grouping set - we cannot pushdown the filter
 			continue;
 		}
 

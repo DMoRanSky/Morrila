@@ -4,6 +4,8 @@
 
 #include "duckdb/common/bitpacking.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/operator/comparison_operators.hpp"
+#include "duckdb/common/string_map_set.hpp"
 #include "duckdb/common/types/vector_buffer.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
@@ -55,7 +57,7 @@ struct DictionaryCompressionStorage {
 	static void Compress(CompressionState &state_p, Vector &scan_vector, idx_t count);
 	static void FinalizeCompress(CompressionState &state_p);
 
-	static unique_ptr<SegmentScanState> StringInitScan(const QueryContext &context, ColumnSegment &segment);
+	static unique_ptr<SegmentScanState> StringInitScan(ColumnSegment &segment);
 	template <bool ALLOW_DICT_VECTORS>
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
@@ -87,10 +89,6 @@ idx_t DictionaryCompressionStorage::StringFinalAnalyze(AnalyzeState &state_p) {
 	auto &analyze_state = state_p.Cast<DictionaryCompressionAnalyzeState>();
 	auto &state = *analyze_state.analyze_state;
 
-	if (state.current_tuple_count != 0) {
-		state.UpdateMaxUniqueCount();
-	}
-
 	auto width = BitpackingPrimitives::MinimumBitWidth(state.current_unique_count + 1);
 	auto req_space = DictionaryCompression::RequiredSpace(state.current_tuple_count, state.current_unique_count,
 	                                                      state.current_dict_size, width);
@@ -104,10 +102,7 @@ idx_t DictionaryCompressionStorage::StringFinalAnalyze(AnalyzeState &state_p) {
 //===--------------------------------------------------------------------===//
 unique_ptr<CompressionState> DictionaryCompressionStorage::InitCompression(ColumnDataCheckpointData &checkpoint_data,
                                                                            unique_ptr<AnalyzeState> state) {
-	const auto &analyze_state = state->Cast<DictionaryCompressionAnalyzeState>();
-	auto &actual_state = *analyze_state.analyze_state;
-	return make_uniq<DictionaryCompressionCompressState>(checkpoint_data, state->info,
-	                                                     actual_state.max_unique_count_across_segments);
+	return make_uniq<DictionaryCompressionCompressState>(checkpoint_data, state->info);
 }
 
 void DictionaryCompressionStorage::Compress(CompressionState &state_p, Vector &scan_vector, idx_t count) {
@@ -123,8 +118,7 @@ void DictionaryCompressionStorage::FinalizeCompress(CompressionState &state_p) {
 //===--------------------------------------------------------------------===//
 // Scan
 //===--------------------------------------------------------------------===//
-unique_ptr<SegmentScanState> DictionaryCompressionStorage::StringInitScan(const QueryContext &context,
-                                                                          ColumnSegment &segment) {
+unique_ptr<SegmentScanState> DictionaryCompressionStorage::StringInitScan(ColumnSegment &segment) {
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.db);
 	auto state = make_uniq<CompressedStringScanState>(buffer_manager.Pin(segment.block));
 	state->Initialize(segment, true);
@@ -140,7 +134,7 @@ void DictionaryCompressionStorage::StringScanPartial(ColumnSegment &segment, Col
 	// clear any previously locked buffers and get the primary buffer handle
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
 
-	auto start = state.GetPositionInSegment();
+	auto start = segment.GetRelativeIndex(state.row_index);
 	if (!ALLOW_DICT_VECTORS || scan_count != STANDARD_VECTOR_SIZE) {
 		scan_state.ScanToFlatVector(result, result_offset, start, scan_count);
 	} else {

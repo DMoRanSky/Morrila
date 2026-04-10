@@ -8,7 +8,9 @@
 
 #pragma once
 
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/limits.hpp"
+#endif
 #include "column_reader.hpp"
 #include "reader/templated_column_reader.hpp"
 
@@ -20,7 +22,7 @@ public:
 	static constexpr const PhysicalType TYPE = PhysicalType::INT64;
 
 public:
-	RowNumberColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema);
+	RowNumberColumnReader(ParquetReader &reader, const ParquetColumnSchema &schema);
 
 public:
 	idx_t Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result) override;

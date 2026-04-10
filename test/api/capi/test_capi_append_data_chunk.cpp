@@ -1,6 +1,7 @@
 #include "capi_tester.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test casting columns in AppendDataChunk in C API", "[capi]") {
 	duckdb::vector<string> tables;

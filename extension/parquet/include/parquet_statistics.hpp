@@ -9,7 +9,9 @@
 #pragma once
 
 #include "duckdb.hpp"
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/storage/statistics/base_statistics.hpp"
+#endif
 #include "parquet_types.h"
 #include "resizable_buffer.hpp"
 
@@ -23,6 +25,7 @@ struct ParquetColumnSchema;
 class ResizeableBuffer;
 
 struct ParquetStatisticsUtils {
+
 	static unique_ptr<BaseStatistics> TransformColumnStatistics(const ParquetColumnSchema &reader,
 	                                                            const vector<ColumnChunk> &columns, bool can_have_nan);
 

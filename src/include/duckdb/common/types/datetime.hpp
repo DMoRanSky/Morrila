@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/common.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 
 #include <functional>
@@ -19,7 +20,7 @@ struct dtime_t { // NOLINT
 	int64_t micros;
 
 	dtime_t() = default;
-	explicit inline constexpr dtime_t(int64_t micros_p) : micros(micros_p) {
+	explicit inline dtime_t(int64_t micros_p) : micros(micros_p) {
 	}
 	inline dtime_t &operator=(int64_t micros_p) {
 		micros = micros_p;
@@ -92,16 +93,6 @@ struct dtime_t { // NOLINT
 	static inline dtime_t allballs() { // NOLINT
 		return dtime_t(0);
 	} // NOLINT
-};
-
-//! Type used to represent TIME_NS. dtime_ns_t holds the nanoseconds since midnight.
-struct dtime_ns_t : public dtime_t { // NOLINT
-	dtime_ns_t() = default;
-	explicit inline constexpr dtime_ns_t(const int64_t nanos) : dtime_t(nanos) {
-	}
-	inline dtime_t time() const { // NOLINT
-		return dtime_t(micros / 1000);
-	}
 };
 
 struct dtime_tz_t { // NOLINT

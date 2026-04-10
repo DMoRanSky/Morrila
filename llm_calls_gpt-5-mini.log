@@ -1,0 +1,205 @@
+2026-04-09 17:04:35 | Initialized LLMCallManager with model: gpt-5-mini
+2026-04-09 17:04:35 | PROMPT:
+Object: name: Ruler, length: 30 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:04:35 | PROMPT:
+Object: name: Pen, length: 8 cm, color: Blue. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:04:35 | PROMPT:
+Object: name: Eraser, length: 8 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:04:35 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:04:35 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:04:35 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:04:35 | [LLM_CACHE] processed=3 hits=0 hit_rate=0.000000 | entries(n)=3 key_len_sum=437 value_text_len_sum=0 sum_len=437 n_times_sum_len=1311
+2026-04-09 17:10:48 | Initialized LLMCallManager with model: gpt-5-mini
+2026-04-09 17:10:48 | PROMPT:
+Object: name: Ruler, length: 30 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:10:48 | PROMPT:
+Object: name: Pen, length: 8 cm, color: Blue. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:10:48 | PROMPT:
+Object: name: Eraser, length: 8 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:10:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:10:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:10:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:10:48 | [LLM_CACHE] processed=3 hits=0 hit_rate=0.000000 | entries(n)=3 key_len_sum=437 value_text_len_sum=0 sum_len=437 n_times_sum_len=1311
+2026-04-09 17:12:48 | Initialized LLMCallManager with model: gpt-5-mini
+2026-04-09 17:12:48 | PROMPT:
+Object: name: Ruler, length: 30 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:48 | PROMPT:
+Object: name: Pen, length: 8 cm, color: Blue. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:48 | PROMPT:
+Object: name: Eraser, length: 8 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:48 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:48 | [LLM_CACHE] processed=3 hits=0 hit_rate=0.000000 | entries(n)=3 key_len_sum=437 value_text_len_sum=0 sum_len=437 n_times_sum_len=1311
+2026-04-09 17:12:58 | Initialized LLMCallManager with model: gpt-5-mini
+2026-04-09 17:12:58 | PROMPT:
+Object: name: Ruler, length: 30 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:58 | PROMPT:
+Object: name: Pen, length: 8 cm, color: Blue. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:58 | PROMPT:
+Object: name: Eraser, length: 8 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:12:59 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:59 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:59 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:12:59 | [LLM_CACHE] processed=3 hits=0 hit_rate=0.000000 | entries(n)=3 key_len_sum=437 value_text_len_sum=0 sum_len=437 n_times_sum_len=1311
+2026-04-09 17:17:44 | Initialized LLMCallManager with model: gpt-5-mini
+2026-04-09 17:17:44 | PROMPT:
+Object: name: Ruler, length: 30 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:17:44 | PROMPT:
+Object: name: Pen, length: 8 cm, color: Blue. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:17:44 | PROMPT:
+Object: name: Eraser, length: 8 cm, color: White. Is this object 8 cm long and white?
+ Return a single yes or no, do not contain any other words.
+2026-04-09 17:17:44 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:17:44 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:17:44 | Non-retriable client error (status code 401):
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-proj-******************************************************************************************************************************************************************************ckdb. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}
+2026-04-09 17:17:44 | [LLM_CACHE] processed=3 hits=0 hit_rate=0.000000 | entries(n)=3 key_len_sum=437 value_text_len_sum=0 sum_len=437 n_times_sum_len=1311

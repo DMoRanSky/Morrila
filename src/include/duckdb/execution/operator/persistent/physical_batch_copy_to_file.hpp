@@ -22,11 +22,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::BATCH_COPY_TO_FILE;
 
 public:
-	PhysicalBatchCopyToFile(PhysicalPlan &physical_plan, vector<LogicalType> types, CopyFunction function,
-	                        unique_ptr<FunctionData> bind_data, idx_t estimated_cardinality);
-
-public:
-	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	PhysicalBatchCopyToFile(vector<LogicalType> types, CopyFunction function, unique_ptr<FunctionData> bind_data,
+	                        idx_t estimated_cardinality);
 
 	CopyFunction function;
 	unique_ptr<FunctionData> bind_data;
@@ -35,14 +32,9 @@ public:
 	CopyFunctionReturnType return_type;
 	bool write_empty_file;
 
-	//! Fine-grained control over writes
-	optional_idx batch_size;
-	optional_idx batch_size_bytes;
-
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

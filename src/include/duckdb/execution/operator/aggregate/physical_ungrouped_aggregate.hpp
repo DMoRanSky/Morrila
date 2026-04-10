@@ -24,9 +24,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::UNGROUPED_AGGREGATE;
 
 public:
-	PhysicalUngroupedAggregate(PhysicalPlan &physical_plan, vector<LogicalType> types,
-	                           vector<unique_ptr<Expression>> expressions, idx_t estimated_cardinality,
-	                           TupleDataValidityType distinct_validity);
+	PhysicalUngroupedAggregate(vector<LogicalType> types, vector<unique_ptr<Expression>> expressions,
+	                           idx_t estimated_cardinality);
 
 	//! The aggregates that have to be computed
 	vector<unique_ptr<Expression>> aggregates;
@@ -35,8 +34,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

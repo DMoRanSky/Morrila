@@ -21,8 +21,8 @@ public:
 	static bool IsStreamingFunction(ClientContext &context, unique_ptr<Expression> &expr);
 
 public:
-	PhysicalStreamingWindow(PhysicalPlan &physical_plan, vector<LogicalType> types,
-	                        vector<unique_ptr<Expression>> select_list, idx_t estimated_cardinality,
+	PhysicalStreamingWindow(vector<LogicalType> types, vector<unique_ptr<Expression>> select_list,
+	                        idx_t estimated_cardinality,
 	                        PhysicalOperatorType type = PhysicalOperatorType::STREAMING_WINDOW);
 
 	//! The projection list of the WINDOW statement
@@ -30,6 +30,7 @@ public:
 
 public:
 	unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const override;
+	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 
 	OperatorResultType Execute(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                           GlobalOperatorState &gstate, OperatorState &state) const override;
@@ -49,13 +50,13 @@ public:
 
 private:
 	void ExecuteFunctions(ExecutionContext &context, DataChunk &chunk, DataChunk &delayed,
-	                      GlobalOperatorState &gstate_p) const;
+	                      GlobalOperatorState &gstate_p, OperatorState &state_p) const;
 	void ExecuteInput(ExecutionContext &context, DataChunk &delayed, DataChunk &input, DataChunk &chunk,
-	                  GlobalOperatorState &gstate) const;
+	                  GlobalOperatorState &gstate, OperatorState &state) const;
 	void ExecuteDelayed(ExecutionContext &context, DataChunk &delayed, DataChunk &input, DataChunk &chunk,
-	                    GlobalOperatorState &gstate) const;
+	                    GlobalOperatorState &gstate, OperatorState &state) const;
 	void ExecuteShifted(ExecutionContext &context, DataChunk &delayed, DataChunk &input, DataChunk &chunk,
-	                    GlobalOperatorState &gstate) const;
+	                    GlobalOperatorState &gstate, OperatorState &state) const;
 };
 
 } // namespace duckdb

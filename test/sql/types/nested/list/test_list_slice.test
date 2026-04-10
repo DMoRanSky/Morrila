@@ -300,4 +300,3 @@ NULL
 statement error
 SELECT (1)[1:2];
 ----
-<REGEX>:.*Binder Error.*ARRAY_SLICE can only operate on LISTs and VARCHARs.*

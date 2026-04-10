@@ -27,7 +27,7 @@ LOAD NULL;
 <REGEX>:Parser Error: syntax error.*
 
 statement ok
-LOAD '{BUILD_DIRECTORY}/test/extension/loadable_extension_demo.duckdb_extension';
+LOAD '__BUILD_DIRECTORY__/test/extension/loadable_extension_demo.duckdb_extension';
 
 query I
 SELECT extension_version FROM duckdb_extensions() WHERE extension_name = 'loadable_extension_demo';
@@ -52,11 +52,10 @@ quACk QUaCk
 QUACK
 QUACK
 
-# Result depends on either PostgreSQL parser or PEG Parser used. 
 statement error
 QUAC
 ----
-<REGEX>:(.*Parser Error: Did you mean.*|.*Catalog Error: Table with name.*)
+<REGEX>:Parser Error: Did you mean.*
 
 statement error
 QUACK NOT QUACK

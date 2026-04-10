@@ -4,7 +4,6 @@
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
-constexpr idx_t SampleOptions::MAX_SAMPLE_ROWS;
 
 static SampleMethod GetSampleMethod(const string &method) {
 	auto lmethod = StringUtil::Lower(method);
@@ -45,9 +44,8 @@ unique_ptr<SampleOptions> Transformer::TransformSampleOptions(optional_ptr<duckd
 	} else {
 		// sample size is given in rows: use reservoir sampling
 		auto rows = sample_value.GetValue<int64_t>();
-		if (rows < 0 || sample_value.GetValue<uint64_t>() > SampleOptions::MAX_SAMPLE_ROWS) {
-			throw ParserException("Sample rows %lld out of range, must be between 0 and %lld", rows,
-			                      SampleOptions::MAX_SAMPLE_ROWS);
+		if (rows < 0) {
+			throw ParserException("Sample rows %lld out of range, must be bigger than or equal to 0", rows);
 		}
 		result->sample_size = Value::BIGINT(rows);
 		result->method = SampleMethod::RESERVOIR_SAMPLE;

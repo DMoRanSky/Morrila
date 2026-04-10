@@ -13,9 +13,8 @@
 
 namespace duckdb {
 
-namespace {
-
 struct TimeBucket {
+
 	// Use 2000-01-03 00:00:00 (Monday) as origin when bucket_width is days, hours, ... for TimescaleDB compatibility
 	// There are 10959 days between 1970-01-01 and 2000-01-03
 	constexpr static const int64_t DEFAULT_ORIGIN_MICROS = 10959 * Interval::MICROS_PER_DAY;
@@ -227,7 +226,7 @@ struct TimeBucket {
 };
 
 template <typename T>
-void TimeBucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void TimeBucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 2);
 
 	auto &bucket_width_arg = args.data[0];
@@ -235,7 +234,8 @@ void TimeBucketFunction(DataChunk &args, ExpressionState &state, Vector &result)
 
 	if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		if (ConstantVector::IsNull(bucket_width_arg)) {
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 		} else {
 			interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 			TimeBucket::BucketWidthType bucket_width_type = TimeBucket::ClassifyBucketWidth(bucket_width);
@@ -265,7 +265,7 @@ void TimeBucketFunction(DataChunk &args, ExpressionState &state, Vector &result)
 }
 
 template <typename T>
-void TimeBucketOffsetFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void TimeBucketOffsetFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 3);
 
 	auto &bucket_width_arg = args.data[0];
@@ -274,7 +274,8 @@ void TimeBucketOffsetFunction(DataChunk &args, ExpressionState &state, Vector &r
 
 	if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		if (ConstantVector::IsNull(bucket_width_arg)) {
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 		} else {
 			interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 			TimeBucket::BucketWidthType bucket_width_type = TimeBucket::ClassifyBucketWidth(bucket_width);
@@ -306,7 +307,7 @@ void TimeBucketOffsetFunction(DataChunk &args, ExpressionState &state, Vector &r
 }
 
 template <typename T>
-void TimeBucketOriginFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void TimeBucketOriginFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 3);
 
 	auto &bucket_width_arg = args.data[0];
@@ -317,7 +318,8 @@ void TimeBucketOriginFunction(DataChunk &args, ExpressionState &state, Vector &r
 	    origin_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		if (ConstantVector::IsNull(bucket_width_arg) || ConstantVector::IsNull(origin_arg) ||
 		    !Value::IsFinite(*ConstantVector::GetData<T>(origin_arg))) {
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 		} else {
 			interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 			TimeBucket::BucketWidthType bucket_width_type = TimeBucket::ClassifyBucketWidth(bucket_width);
@@ -348,8 +350,6 @@ void TimeBucketOriginFunction(DataChunk &args, ExpressionState &state, Vector &r
 	}
 }
 
-} // namespace
-
 ScalarFunctionSet TimeBucketFun::GetFunctions() {
 	ScalarFunctionSet time_bucket;
 	time_bucket.AddFunction(
@@ -365,7 +365,7 @@ ScalarFunctionSet TimeBucketFun::GetFunctions() {
 	time_bucket.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP},
 	                                       LogicalType::TIMESTAMP, TimeBucketOriginFunction<timestamp_t>));
 	for (auto &func : time_bucket.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return time_bucket;
 }

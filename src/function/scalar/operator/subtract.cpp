@@ -80,7 +80,6 @@ interval_t SubtractOperator::Operation(timestamp_t left, timestamp_t right) {
 //===--------------------------------------------------------------------===//
 // - [subtract] with overflow check
 //===--------------------------------------------------------------------===//
-namespace {
 struct OverflowCheckedSubtract {
 	template <class SRCTYPE, class UTYPE>
 	static inline bool Operation(SRCTYPE left, SRCTYPE right, SRCTYPE &result) {
@@ -92,7 +91,6 @@ struct OverflowCheckedSubtract {
 		return true;
 	}
 };
-} // namespace
 
 template <>
 bool TrySubtractOperator::Operation(uint8_t left, uint8_t right, uint8_t &result) {
@@ -178,7 +176,7 @@ bool TrySubtractOperator::Operation(uhugeint_t left, uhugeint_t right, uhugeint_
 // subtract decimal with overflow check
 //===--------------------------------------------------------------------===//
 template <class T, T min, T max>
-static bool TryDecimalSubtractTemplated(T left, T right, T &result) {
+bool TryDecimalSubtractTemplated(T left, T right, T &result) {
 	if (right < 0) {
 		if (max + right < left) {
 			return false;

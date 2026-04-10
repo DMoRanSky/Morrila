@@ -6,7 +6,6 @@
 
 namespace duckdb {
 
-namespace {
 struct LeastOp {
 	using OP = LessThan;
 
@@ -109,7 +108,7 @@ struct SortKeyLeastGreatest {
 };
 
 template <class T, class OP, class BASE_OP = StandardLeastGreatest<false>>
-void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	if (args.ColumnCount() == 1) {
 		// single input: nop
 		result.Reference(args.data[0]);
@@ -130,7 +129,7 @@ void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		}
 	}
 
-	auto result_data = FlatVector::GetDataMutable<T>(result_vector);
+	auto result_data = FlatVector::GetData<T>(result_vector);
 	bool result_has_value[STANDARD_VECTOR_SIZE] {false};
 	// perform the operation column-by-column
 	for (idx_t col_idx = 0; col_idx < input.ColumnCount(); col_idx++) {
@@ -140,15 +139,17 @@ void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 
-		auto entries = input.data[col_idx].template Values<T>(input.size());
+		UnifiedVectorFormat vdata;
+		input.data[col_idx].ToUnifiedFormat(input.size(), vdata);
 
-		if (entries.CanHaveNull()) {
+		auto input_data = UnifiedVectorFormat::GetData<T>(vdata);
+		if (!vdata.validity.AllValid()) {
 			// potential new null entries: have to check the null mask
 			for (idx_t i = 0; i < input.size(); i++) {
-				auto entry = entries[i];
-				if (entry.IsValid()) {
+				auto vindex = vdata.sel->get_index(i);
+				if (vdata.validity.RowIsValid(vindex)) {
 					// not a null entry: perform the operation and add to new set
-					auto ivalue = entry.value;
+					auto ivalue = input_data[vindex];
 					if (!result_has_value[i] || OP::template Operation<T>(ivalue, result_data[i])) {
 						result_has_value[i] = true;
 						result_data[i] = ivalue;
@@ -158,7 +159,9 @@ void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		} else {
 			// no new null entries: only need to perform the operation
 			for (idx_t i = 0; i < input.size(); i++) {
-				auto ivalue = entries.GetValueUnsafe(i);
+				auto vindex = vdata.sel->get_index(i);
+
+				auto ivalue = input_data[vindex];
 				if (!result_has_value[i] || OP::template Operation<T>(ivalue, result_data[i])) {
 					result_has_value[i] = true;
 					result_data[i] = ivalue;
@@ -199,36 +202,36 @@ unique_ptr<FunctionData> BindLeastGreatest(ClientContext &context, ScalarFunctio
 #ifndef DUCKDB_SMALLER_BINARY
 	case PhysicalType::BOOL:
 	case PhysicalType::INT8:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<int8_t, OP>);
+		bound_function.function = LeastGreatestFunction<int8_t, OP>;
 		break;
 	case PhysicalType::INT16:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<int16_t, OP>);
+		bound_function.function = LeastGreatestFunction<int16_t, OP>;
 		break;
 	case PhysicalType::INT32:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<int32_t, OP>);
+		bound_function.function = LeastGreatestFunction<int32_t, OP>;
 		break;
 	case PhysicalType::INT64:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<int64_t, OP>);
+		bound_function.function = LeastGreatestFunction<int64_t, OP>;
 		break;
 	case PhysicalType::INT128:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<hugeint_t, OP>);
+		bound_function.function = LeastGreatestFunction<hugeint_t, OP>;
 		break;
 	case PhysicalType::DOUBLE:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<double, OP>);
+		bound_function.function = LeastGreatestFunction<double, OP>;
 		break;
 	case PhysicalType::VARCHAR:
-		bound_function.SetFunctionCallback(LeastGreatestFunction<string_t, OP, StandardLeastGreatest<true>>);
+		bound_function.function = LeastGreatestFunction<string_t, OP, StandardLeastGreatest<true>>;
 		break;
 #endif
 	default:
 		// fallback with sort keys
-		bound_function.SetFunctionCallback(LeastGreatestFunction<string_t, OP, SortKeyLeastGreatest>);
-		bound_function.SetInitStateCallback(LeastGreatestSortKeyInit<LEAST_GREATER_OP>);
+		bound_function.function = LeastGreatestFunction<string_t, OP, SortKeyLeastGreatest>;
+		bound_function.init_local_state = LeastGreatestSortKeyInit<LEAST_GREATER_OP>;
 		break;
 	}
 	bound_function.arguments[0] = child_type;
 	bound_function.varargs = child_type;
-	bound_function.SetReturnType(child_type);
+	bound_function.return_type = child_type;
 	return nullptr;
 }
 
@@ -240,13 +243,11 @@ ScalarFunction GetLeastGreatestFunction() {
 }
 
 template <class OP>
-ScalarFunctionSet GetLeastGreatestFunctions() {
+static ScalarFunctionSet GetLeastGreatestFunctions() {
 	ScalarFunctionSet fun_set;
 	fun_set.AddFunction(GetLeastGreatestFunction<OP>());
 	return fun_set;
 }
-
-} // namespace
 
 ScalarFunctionSet LeastFun::GetFunctions() {
 	return GetLeastGreatestFunctions<LeastOp>();

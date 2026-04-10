@@ -21,10 +21,9 @@ void ReorderTableEntries(catalog_entry_vector_t &tables);
 
 using duckdb::stringstream;
 
-PhysicalExport::PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> types, CopyFunction function,
-                               unique_ptr<CopyInfo> info, idx_t estimated_cardinality,
-                               unique_ptr<BoundExportData> exported_tables)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::EXPORT, std::move(types), estimated_cardinality),
+PhysicalExport::PhysicalExport(vector<LogicalType> types, CopyFunction function, unique_ptr<CopyInfo> info,
+                               idx_t estimated_cardinality, unique_ptr<BoundExportData> exported_tables)
+    : PhysicalOperator(PhysicalOperatorType::EXPORT, std::move(types), estimated_cardinality),
       function(std::move(function)), info(std::move(info)), exported_tables(std::move(exported_tables)) {
 }
 
@@ -55,7 +54,8 @@ static void WriteStringStreamToFile(FileSystem &fs, stringstream &ss, const stri
 	handle.reset();
 }
 
-static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table) {
+static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table,
+                               CopyFunction const &function) {
 	ss << "COPY ";
 
 	//! NOTE: The catalog is explicitly not set here
@@ -68,12 +68,26 @@ static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info,
 	// write the copy options
 	ss << "FORMAT '" << info.format << "'";
 	if (info.format == "csv") {
+		// insert default csv options, if not specified
+		if (info.options.find("header") == info.options.end()) {
+			info.options["header"].push_back(Value::INTEGER(1));
+		}
+		if (info.options.find("delimiter") == info.options.end() && info.options.find("sep") == info.options.end() &&
+		    info.options.find("delim") == info.options.end()) {
+			info.options["delimiter"].push_back(Value(","));
+		}
+		if (info.options.find("quote") == info.options.end()) {
+			info.options["quote"].push_back(Value("\""));
+		}
 		info.options.erase("force_not_null");
 		for (auto &not_null_column : exported_table.not_null_columns) {
 			info.options["force_not_null"].push_back(not_null_column);
 		}
 	}
 	for (auto &copy_option : info.options) {
+		if (copy_option.first == "force_quote") {
+			continue;
+		}
 		if (copy_option.second.empty()) {
 			// empty options are interpreted as TRUE
 			copy_option.second.push_back(true);
@@ -205,8 +219,8 @@ catalog_entry_vector_t PhysicalExport::GetNaiveExportOrder(ClientContext &contex
 	return catalog_entries;
 }
 
-SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                 OperatorSourceInput &input) const {
+SourceResultType PhysicalExport::GetData(ExecutionContext &context, DataChunk &chunk,
+                                         OperatorSourceInput &input) const {
 	auto &state = input.global_state.Cast<ExportSourceState>();
 	if (state.finished) {
 		return SourceResultType::FINISHED;
@@ -234,7 +248,7 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 	stringstream load_ss;
 	for (idx_t i = 0; i < exported_tables->data.size(); i++) {
 		auto exported_table_info = exported_tables->data[i].table_data;
-		WriteCopyStatement(fs, load_ss, *info, exported_table_info);
+		WriteCopyStatement(fs, load_ss, *info, exported_table_info, function);
 	}
 	WriteStringStreamToFile(fs, load_ss, fs.JoinPath(info->file_path, "load.sql"));
 	state.finished = true;

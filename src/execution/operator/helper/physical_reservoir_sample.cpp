@@ -78,8 +78,8 @@ SinkFinalizeType PhysicalReservoirSample::Finalize(Pipeline &pipeline, Event &ev
 //===--------------------------------------------------------------------===//
 // Source
 //===--------------------------------------------------------------------===//
-SourceResultType PhysicalReservoirSample::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                          OperatorSourceInput &input) const {
+SourceResultType PhysicalReservoirSample::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                  OperatorSourceInput &input) const {
 	auto &sink = this->sink_state->Cast<SampleGlobalSinkState>();
 	lock_guard<mutex> glock(sink.lock);
 	if (!sink.sample) {
@@ -98,7 +98,6 @@ SourceResultType PhysicalReservoirSample::GetDataInternal(ExecutionContext &cont
 InsertionOrderPreservingMap<string> PhysicalReservoirSample::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
 	result["Sample Size"] = options->sample_size.ToString() + (options->is_percentage ? "%" : " rows");
-	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
 

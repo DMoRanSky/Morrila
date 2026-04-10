@@ -21,8 +21,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::TOP_N;
 
 public:
-	PhysicalTopN(PhysicalPlan &physical_plan, vector<LogicalType> types, vector<BoundOrderByNode> orders, idx_t limit,
-	             idx_t offset, shared_ptr<DynamicFilterData> dynamic_filter, idx_t estimated_cardinality);
+	PhysicalTopN(vector<LogicalType> types, vector<BoundOrderByNode> orders, idx_t limit, idx_t offset,
+	             shared_ptr<DynamicFilterData> dynamic_filter, idx_t estimated_cardinality);
 	~PhysicalTopN() override;
 
 	vector<BoundOrderByNode> orders;
@@ -36,8 +36,7 @@ public:
 	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                 GlobalSourceState &gstate) const override;
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 	OperatorPartitionData GetPartitionData(ExecutionContext &context, DataChunk &chunk, GlobalSourceState &gstate,
 	                                       LocalSourceState &lstate,
 	                                       const OperatorPartitionInfo &partition_info) const override;

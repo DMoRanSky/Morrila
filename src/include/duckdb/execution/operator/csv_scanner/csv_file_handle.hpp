@@ -13,8 +13,6 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/execution/operator/csv_scanner/encode/csv_encoder.hpp"
-#include "duckdb/main/client_context.hpp"
-
 namespace duckdb {
 class Allocator;
 class FileSystem;
@@ -53,7 +51,6 @@ public:
 	double GetProgress() const;
 
 private:
-	QueryContext context;
 	unique_ptr<FileHandle> file_handle;
 	CSVEncoder encoder;
 	const OpenFileInfo file;

@@ -6,6 +6,7 @@
 #include "duckdb.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test compatibility with windows.h", "[windows]") {
 	DuckDB db(nullptr);

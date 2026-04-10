@@ -4,8 +4,6 @@
 
 namespace duckdb {
 
-namespace {
-
 struct ZstdStreamWrapper : public StreamWrapper {
 	~ZstdStreamWrapper() override;
 
@@ -15,7 +13,7 @@ struct ZstdStreamWrapper : public StreamWrapper {
 	bool writing = false;
 
 public:
-	void Initialize(QueryContext context, CompressedFile &file, bool write) override;
+	void Initialize(CompressedFile &file, bool write) override;
 	bool Read(StreamData &stream_data) override;
 	void Write(CompressedFile &file, StreamData &stream_data, data_ptr_t buffer, int64_t nr_bytes) override;
 
@@ -30,23 +28,11 @@ ZstdStreamWrapper::~ZstdStreamWrapper() {
 	}
 	try {
 		Close();
-	} catch (std::exception &ex) {
-		if (file && file->child_handle) {
-			// FIXME: Make any log context available here.
-			ErrorData data(ex);
-			try {
-				const auto logger = file->child_handle->logger;
-				if (logger) {
-					DUCKDB_LOG_ERROR(logger, "ZstdStreamWrapper::~ZstdStreamWrapper()\t\t" + data.Message());
-				}
-			} catch (...) { // NOLINT
-			}
-		}
-	} catch (...) { // NOLINT
+	} catch (...) { // NOLINT: swallow exceptions in destructor
 	}
 }
 
-void ZstdStreamWrapper::Initialize(QueryContext context, CompressedFile &file, bool write) {
+void ZstdStreamWrapper::Initialize(CompressedFile &file, bool write) {
 	Close();
 	this->file = &file;
 	this->writing = write;
@@ -168,28 +154,23 @@ void ZstdStreamWrapper::Close() {
 	zstd_compress_ptr = nullptr;
 }
 
-struct ZStdFileSystemHolder {
-	ZStdFileSystem zstd_fs;
-};
-
-class ZStdFile : private ZStdFileSystemHolder, public CompressedFile {
+class ZStdFile : public CompressedFile {
 public:
-	ZStdFile(QueryContext context, unique_ptr<FileHandle> child_handle_p, const string &path, bool write)
+	ZStdFile(unique_ptr<FileHandle> child_handle_p, const string &path, bool write)
 	    : CompressedFile(zstd_fs, std::move(child_handle_p), path) {
-		Initialize(context, write);
+		Initialize(write);
 	}
 
 	FileCompressionType GetFileCompressionType() override {
 		return FileCompressionType::ZSTD;
 	}
+
+	ZStdFileSystem zstd_fs;
 };
 
-} // namespace
-
-unique_ptr<FileHandle> ZStdFileSystem::OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle,
-                                                          bool write) {
+unique_ptr<FileHandle> ZStdFileSystem::OpenCompressedFile(unique_ptr<FileHandle> handle, bool write) {
 	auto path = handle->path;
-	return make_uniq<ZStdFile>(context, std::move(handle), path, write);
+	return make_uniq<ZStdFile>(std::move(handle), path, write);
 }
 
 unique_ptr<StreamWrapper> ZStdFileSystem::CreateStream() {

@@ -42,21 +42,24 @@ DictionaryCompressionState::~DictionaryCompressionState() {
 }
 
 bool DictionaryCompressionState::UpdateState(Vector &scan_vector, idx_t count) {
+	UnifiedVectorFormat vdata;
+	scan_vector.ToUnifiedFormat(count, vdata);
+	auto data = UnifiedVectorFormat::GetData<string_t>(vdata);
 	Verify();
 
-	for (auto entry : scan_vector.Values<string_t>(count)) {
+	for (idx_t i = 0; i < count; i++) {
+		auto idx = vdata.sel->get_index(i);
 		idx_t string_size = 0;
 		bool new_string = false;
-		auto row_is_valid = entry.is_valid;
+		auto row_is_valid = vdata.validity.RowIsValid(idx);
 
 		if (row_is_valid) {
-			auto &str = entry.value;
-			string_size = str.GetSize();
+			string_size = data[idx].GetSize();
 			if (string_size >= StringUncompressed::GetStringBlockLimit(info.GetBlockSize())) {
 				// Big strings not implemented for dictionary compression
 				return false;
 			}
-			new_string = !LookupString(str);
+			new_string = !LookupString(data[idx]);
 		}
 
 		bool fits = CalculateSpaceRequirements(new_string, string_size);
@@ -73,7 +76,7 @@ bool DictionaryCompressionState::UpdateState(Vector &scan_vector, idx_t count) {
 		if (!row_is_valid) {
 			AddNull();
 		} else if (new_string) {
-			AddNewString(entry.value);
+			AddNewString(data[idx]);
 		} else {
 			AddLastLookup();
 		}

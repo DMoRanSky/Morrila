@@ -1,6 +1,3 @@
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/execution/operator/projection/physical_unnest.hpp"
 
 #include "duckdb/common/uhugeint.hpp"
@@ -16,6 +13,7 @@ class UnnestOperatorState : public OperatorState {
 public:
 	UnnestOperatorState(ClientContext &context, const vector<unique_ptr<Expression>> &select_list)
 	    : current_row(0), list_position(0), first_fetch(true), input_sel(STANDARD_VECTOR_SIZE), executor(context) {
+
 		// for each UNNEST in the select_list, we add the child expression to the expression executor
 		// and set the return type in the list_data chunk, which will contain the evaluated expression results
 		vector<LogicalType> list_data_types;
@@ -64,11 +62,9 @@ void UnnestOperatorState::Reset() {
 	first_fetch = true;
 }
 
-PhysicalUnnest::PhysicalUnnest(PhysicalPlan &physical_plan, vector<LogicalType> types,
-                               vector<unique_ptr<Expression>> select_list, idx_t estimated_cardinality,
-                               PhysicalOperatorType type)
-    : PhysicalOperator(physical_plan, type, std::move(types), estimated_cardinality),
-      select_list(std::move(select_list)) {
+PhysicalUnnest::PhysicalUnnest(vector<LogicalType> types, vector<unique_ptr<Expression>> select_list,
+                               idx_t estimated_cardinality, PhysicalOperatorType type)
+    : PhysicalOperator(type, std::move(types), estimated_cardinality), select_list(std::move(select_list)) {
 	D_ASSERT(!this->select_list.empty());
 }
 
@@ -79,7 +75,7 @@ void UnnestOperatorState::PrepareInput(DataChunk &input, const vector<unique_ptr
 	executor.Execute(input, list_data);
 
 	// verify incoming lists
-	list_data.Verify(executor.HasContext() ? executor.GetContext().db : nullptr);
+	list_data.Verify();
 	D_ASSERT(input.size() == list_data.size());
 	D_ASSERT(list_data.ColumnCount() == select_list.size());
 	D_ASSERT(list_vector_data.size() == list_data.ColumnCount());
@@ -141,6 +137,7 @@ OperatorResultType PhysicalUnnest::ExecuteInternal(ExecutionContext &context, Da
                                                    OperatorState &state_p,
                                                    const vector<unique_ptr<Expression>> &select_list,
                                                    bool include_input) {
+
 	auto &state = state_p.Cast<UnnestOperatorState>();
 
 	do {
@@ -239,7 +236,8 @@ OperatorResultType PhysicalUnnest::ExecuteInternal(ExecutionContext &context, Da
 			    ListVector::GetListSize(list_vector) == 0) {
 				// UNNEST(NULL) or UNNEST([])
 				// we cannot slice empty lists - but if our child list is empty we can only return NULL anyway
-				ConstantVector::SetNull(result_vector);
+				result_vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result_vector, true);
 				continue;
 			}
 			auto &child_vector = ListVector::GetEntry(list_vector);

@@ -9,13 +9,12 @@
 
 namespace duckdb {
 
-PhysicalLeftDelimJoin::PhysicalLeftDelimJoin(PhysicalPlan &physical_plan, PhysicalPlanGenerator &planner,
-                                             vector<LogicalType> types, PhysicalOperator &original_join,
-                                             PhysicalOperator &distinct,
+PhysicalLeftDelimJoin::PhysicalLeftDelimJoin(PhysicalPlanGenerator &planner, vector<LogicalType> types,
+                                             PhysicalOperator &original_join, PhysicalOperator &distinct,
                                              const vector<const_reference<PhysicalOperator>> &delim_scans,
                                              idx_t estimated_cardinality, optional_idx delim_idx)
-    : PhysicalDelimJoin(physical_plan, PhysicalOperatorType::LEFT_DELIM_JOIN, std::move(types), original_join, distinct,
-                        delim_scans, estimated_cardinality, delim_idx) {
+    : PhysicalDelimJoin(PhysicalOperatorType::LEFT_DELIM_JOIN, std::move(types), original_join, distinct, delim_scans,
+                        estimated_cardinality, delim_idx) {
 	D_ASSERT(join.children.size() == 2);
 	// now for the original join
 	// we take its left child, this is the side that we will duplicate eliminate
@@ -27,7 +26,7 @@ PhysicalLeftDelimJoin::PhysicalLeftDelimJoin(PhysicalPlan &physical_plan, Physic
 	    children[0].get().GetTypes(), PhysicalOperatorType::COLUMN_DATA_SCAN, estimated_cardinality, nullptr);
 	if (delim_idx.IsValid()) {
 		auto &cast_cached_scan = cached_scan.Cast<PhysicalColumnDataScan>();
-		cast_cached_scan.delim_index = delim_idx.GetIndex();
+		cast_cached_scan.cte_index = delim_idx.GetIndex();
 	}
 	join.children[0] = cached_scan;
 }

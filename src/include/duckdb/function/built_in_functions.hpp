@@ -53,7 +53,6 @@ private:
 	void RegisterTableFunctions();
 	void RegisterArrowFunctions();
 	void RegisterSnifferFunction();
-	void RegisterCopyFunctions();
 
 	void RegisterExtensionOverloads();
 

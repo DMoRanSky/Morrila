@@ -5,10 +5,8 @@
 statement error
 CREATE TABLE t0 ( c1 INT DEFAULT ? );
 ----
-<REGEX>:.*Binder Error.*cannot contain parameters.*
+DEFAULT values cannot contain parameters
 
-# error messages for `enable_verification`=(false|true)
 statement error
 CREATE TABLE t0 ( c1 INT CHECK (?) );
 ----
-<REGEX>:(.*Invalid Input Error: Expected 1 parameters.*|.*Binder Error.*Unexpected prepared parameter.*)

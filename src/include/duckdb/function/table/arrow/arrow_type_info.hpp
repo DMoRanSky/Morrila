@@ -21,8 +21,6 @@ namespace duckdb {
 
 class ArrowType;
 
-enum class ArrowArrayPhysicalType : uint8_t { DICTIONARY_ENCODED, RUN_END_ENCODED, DEFAULT };
-
 struct ArrowTypeInfo {
 public:
 	explicit ArrowTypeInfo() : type() {

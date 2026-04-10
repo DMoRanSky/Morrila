@@ -35,9 +35,9 @@ public:
 	uint8_t byte_pos = 0;
 };
 
-BooleanColumnWriter::BooleanColumnWriter(ParquetWriter &writer, ParquetColumnSchema &&column_schema,
-                                         vector<string> schema_path_p)
-    : PrimitiveColumnWriter(writer, std::move(column_schema), std::move(schema_path_p)) {
+BooleanColumnWriter::BooleanColumnWriter(ParquetWriter &writer, const ParquetColumnSchema &column_schema,
+                                         vector<string> schema_path_p, bool can_have_nulls)
+    : PrimitiveColumnWriter(writer, column_schema, std::move(schema_path_p), can_have_nulls) {
 }
 
 unique_ptr<ColumnWriterStatistics> BooleanColumnWriter::InitializeStatsState() {
@@ -52,7 +52,7 @@ void BooleanColumnWriter::WriteVector(WriteStream &temp_writer, ColumnWriterStat
 	const auto &mask = FlatVector::Validity(input_column);
 
 	const auto *const ptr = FlatVector::GetData<bool>(input_column);
-	if (stats.max && !stats.min && mask.CannotHaveNull()) {
+	if (stats.max && !stats.min && mask.AllValid()) {
 		// Fast path: stats have already been set, and there's no NULLs
 		for (idx_t r = chunk_start; r < chunk_end; r++) {
 			const auto &val = ptr[r];

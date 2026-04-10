@@ -3,6 +3,9 @@
 # group: [storage]
 
 statement ok
+PRAGMA enable_verification
+
+statement ok
 BEGIN TRANSACTION
 
 statement ok
@@ -18,10 +21,10 @@ statement ok
 CREATE UNIQUE INDEX tracking_key_idx ON tracking (gameId, playId, frameId, nflId)
 
 statement ok
-EXPORT DATABASE '{TEST_DIR}/index';
+EXPORT DATABASE '__TEST_DIR__/index';
 
 statement ok
 ROLLBACK
 
 statement ok
-IMPORT DATABASE '{TEST_DIR}/index'
+IMPORT DATABASE '__TEST_DIR__/index'

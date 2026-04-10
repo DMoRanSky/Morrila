@@ -19,8 +19,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::POSITIONAL_JOIN;
 
 public:
-	PhysicalPositionalJoin(PhysicalPlan &physical_plan, vector<LogicalType> types, PhysicalOperator &left,
-	                       PhysicalOperator &right, idx_t estimated_cardinality);
+	PhysicalPositionalJoin(vector<LogicalType> types, PhysicalOperator &left, PhysicalOperator &right,
+	                       idx_t estimated_cardinality);
 
 public:
 	// Operator Interface
@@ -29,8 +29,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

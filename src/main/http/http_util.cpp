@@ -1,15 +1,11 @@
 #include "duckdb/common/http_util.hpp"
-
-#include "duckdb/common/exception/http_exception.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/main/client_context.hpp"
+#include "duckdb/common/exception/http_exception.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
-#include "duckdb/main/client_data.hpp"
-#include "duckdb/main/database.hpp"
 #include "duckdb/main/database_file_opener.hpp"
-#include "duckdb/main/settings.hpp"
-
+#include "duckdb/main/client_data.hpp"
 #ifndef DISABLE_DUCKDB_REMOTE_INSTALL
 #ifndef DUCKDB_DISABLE_EXTENSION_LOAD
 #include "httplib.hpp"
@@ -88,11 +84,8 @@ const string &HTTPResponse::GetError() const {
 	return request_error.empty() ? reason : request_error;
 }
 
-HTTPUtil::HTTPUtil() {
-}
-
 HTTPUtil &HTTPUtil::Get(DatabaseInstance &db) {
-	return db.config.GetHTTPUtil();
+	return *db.config.http_util;
 }
 
 string HTTPUtil::GetName() const {
@@ -127,19 +120,16 @@ unique_ptr<HTTPResponse> HTTPUtil::Request(BaseRequest &request, unique_ptr<HTTP
 }
 
 BaseRequest::BaseRequest(RequestType type, const string &url, const HTTPHeaders &headers, HTTPParams &params)
-    : type(type), url(url), headers(MergeHeaders(headers, params)), params(params) {
+    : type(type), url(url), headers(headers), params(params) {
 	HTTPUtil::DecomposeURL(url, path, proto_host_port);
 }
 
 class HTTPLibClient : public HTTPClient {
 public:
 	HTTPLibClient(HTTPParams &http_params, const string &proto_host_port) {
-		client = make_uniq<duckdb_httplib::Client>(proto_host_port);
-		Initialize(http_params);
-	}
-	void Initialize(HTTPParams &http_params) override {
 		auto sec = static_cast<time_t>(http_params.timeout);
 		auto usec = static_cast<time_t>(http_params.timeout_usec);
+		client = make_uniq<duckdb_httplib::Client>(proto_host_port);
 		client->set_follow_location(http_params.follow_location);
 		client->set_keep_alive(http_params.keep_alive);
 		client->set_write_timeout(sec, usec);
@@ -195,6 +185,9 @@ private:
 		for (auto &entry : header_map) {
 			headers.insert(entry);
 		}
+		for (auto &entry : params.extra_headers) {
+			headers.insert(entry);
+		}
 		return headers;
 	}
 
@@ -231,28 +224,7 @@ unique_ptr<HTTPResponse> HTTPUtil::SendRequest(BaseRequest &request, unique_ptr<
 	}
 
 	std::function<unique_ptr<HTTPResponse>(void)> on_request([&]() {
-		unique_ptr<HTTPResponse> response;
-
-		// When logging is enabled, we collect request timings
-		if (request.params.logger) {
-			request.have_request_timing = request.params.logger->ShouldLog(HTTPLogType::NAME, HTTPLogType::LEVEL);
-		}
-
-		try {
-			if (request.have_request_timing) {
-				request.request_start = Timestamp::GetCurrentTimestamp();
-			}
-			response = client->Request(request);
-		} catch (...) {
-			if (request.have_request_timing) {
-				request.request_end = Timestamp::GetCurrentTimestamp();
-			}
-			LogRequest(request, nullptr);
-			throw;
-		}
-		if (request.have_request_timing) {
-			request.request_end = Timestamp::GetCurrentTimestamp();
-		}
+		auto response = client->Request(request);
 		LogRequest(request, response ? response.get() : nullptr);
 		return response;
 	});
@@ -386,9 +358,7 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 
 		try {
 			response = on_request();
-			if (response) {
-				response->url = request.url;
-			}
+			response->url = request.url;
 		} catch (IOException &e) {
 			exception_error = e.what();
 			caught_e = std::current_exception();
@@ -400,12 +370,8 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 		// Note: request errors will always be retried
 		bool should_retry = !response || response->ShouldRetry();
 		if (!should_retry) {
-			auto response_code = static_cast<uint16_t>(response->status);
-			if (response_code >= 200 && response_code < 300) {
-				response->success = true;
-				return response;
-			}
 			switch (response->status) {
+			case HTTPStatusCode::OK_200:
 			case HTTPStatusCode::NotModified_304:
 				response->success = true;
 				break;
@@ -460,16 +426,16 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 void HTTPParams::Initialize(optional_ptr<FileOpener> opener) {
 	auto db = FileOpener::TryGetDatabase(opener);
 	if (db) {
-		auto http_proxy_setting = Settings::Get<HTTPProxySetting>(*db);
-		if (!http_proxy_setting.empty()) {
+		auto &config = db->config;
+		if (!config.options.http_proxy.empty()) {
 			idx_t port;
 			string host;
-			HTTPUtil::ParseHTTPProxyHost(http_proxy_setting, host, port);
+			HTTPUtil::ParseHTTPProxyHost(config.options.http_proxy, host, port);
 			http_proxy = host;
 			http_proxy_port = port;
 		}
-		http_proxy_username = Settings::Get<HTTPProxyUsernameSetting>(*db);
-		http_proxy_password = Settings::Get<HTTPProxyPasswordSetting>(*db);
+		http_proxy_username = config.options.http_proxy_username;
+		http_proxy_password = config.options.http_proxy_password;
 	}
 
 	auto client_context = FileOpener::TryGetClientContext(opener);
@@ -516,15 +482,6 @@ unique_ptr<HTTPResponse> HTTPClient::Request(BaseRequest &request) {
 		return Post(request.Cast<PostRequestInfo>());
 	default:
 		throw InternalException("Unsupported request type");
-	}
-}
-
-bool HTTPUtil::IsHTTPProtocol(const string &url) {
-	return StringUtil::StartsWith(url, "http://");
-}
-void HTTPUtil::BumpToSecureProtocol(string &url) {
-	if (IsHTTPProtocol(url)) {
-		url = "https://" + url.substr(7);
 	}
 }
 

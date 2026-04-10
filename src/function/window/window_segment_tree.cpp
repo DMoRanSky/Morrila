@@ -15,10 +15,6 @@ bool WindowSegmentTree::CanAggregate(const BoundWindowExpression &wexpr) {
 		return false;
 	}
 
-	if (!wexpr.aggregate->CanAggregate()) {
-		return false;
-	}
-
 	return !wexpr.distinct && wexpr.arg_orders.empty();
 }
 
@@ -31,6 +27,12 @@ public:
 	using AtomicCounters = vector<std::atomic<idx_t>>;
 
 	WindowSegmentTreeGlobalState(ClientContext &context, const WindowSegmentTree &aggregator, idx_t group_count);
+
+	ArenaAllocator &CreateTreeAllocator() {
+		lock_guard<mutex> tree_lock(lock);
+		tree_allocators.emplace_back(make_uniq<ArenaAllocator>(Allocator::DefaultAllocator()));
+		return *tree_allocators.back();
+	}
 
 	//! The owning aggregator
 	const WindowSegmentTree &tree;
@@ -129,35 +131,36 @@ public:
 	vector<RightEntry> right_stack;
 };
 
-class WindowSegmentTreeLocalState : public WindowAggregatorLocalState {
+class WindowSegmentTreeState : public WindowAggregatorLocalState {
 public:
-	explicit WindowSegmentTreeLocalState(ExecutionContext &context) : WindowAggregatorLocalState(context) {
+	WindowSegmentTreeState() {
 	}
 
-	void Finalize(ExecutionContext &context, WindowAggregatorGlobalState &gastate, CollectionPtr collection) override;
-	void Evaluate(ExecutionContext &context, const WindowSegmentTreeGlobalState &gsink, const DataChunk &bounds,
-	              Vector &result, idx_t count, idx_t row_idx);
+	void Finalize(WindowAggregatorGlobalState &gastate, CollectionPtr collection) override;
+	void Evaluate(const WindowSegmentTreeGlobalState &gsink, const DataChunk &bounds, Vector &result, idx_t count,
+	              idx_t row_idx);
 	//! The left (default) segment tree part
 	unique_ptr<WindowSegmentTreePart> part;
 	//! The right segment tree part (for EXCLUDE)
 	unique_ptr<WindowSegmentTreePart> right_part;
 };
 
-void WindowSegmentTree::Finalize(ExecutionContext &context, CollectionPtr collection, const FrameStats &stats,
-                                 OperatorSinkInput &sink) {
-	WindowAggregator::Finalize(context, collection, stats, sink);
+void WindowSegmentTree::Finalize(WindowAggregatorState &gsink, WindowAggregatorState &lstate, CollectionPtr collection,
+                                 const FrameStats &stats) {
+	WindowAggregator::Finalize(gsink, lstate, collection, stats);
 
-	auto &gasink = sink.global_state.Cast<WindowSegmentTreeGlobalState>();
+	auto &gasink = gsink.Cast<WindowSegmentTreeGlobalState>();
 	++gasink.finalized;
 }
 
 WindowSegmentTreePart::WindowSegmentTreePart(ArenaAllocator &allocator, const AggregateObject &aggr,
                                              unique_ptr<WindowCursor> cursor_p, const ValidityArray &filter_mask)
     : allocator(allocator), aggr(aggr),
-      order_insensitive(aggr.function.GetOrderDependent() == AggregateOrderDependent::NOT_ORDER_DEPENDENT),
-      filter_mask(filter_mask), state_size(aggr.function.GetStateSizeCallback()(aggr.function)),
+      order_insensitive(aggr.function.order_dependent == AggregateOrderDependent::NOT_ORDER_DEPENDENT),
+      filter_mask(filter_mask), state_size(aggr.function.state_size(aggr.function)),
       state(state_size * STANDARD_VECTOR_SIZE), cursor(std::move(cursor_p)), statep(LogicalType::POINTER),
       statel(LogicalType::POINTER), statef(LogicalType::POINTER), flush_count(0) {
+
 	auto &inputs = cursor->chunk;
 	if (inputs.ColumnCount() > 0) {
 		leaves.Initialize(Allocator::DefaultAllocator(), inputs.GetTypes());
@@ -169,7 +172,7 @@ WindowSegmentTreePart::WindowSegmentTreePart(ArenaAllocator &allocator, const Ag
 	D_ASSERT(statef.GetVectorType() == VectorType::FLAT_VECTOR);
 	statef.SetVectorType(VectorType::CONSTANT_VECTOR);
 	statef.Flatten(STANDARD_VECTOR_SIZE);
-	auto fdata = FlatVector::GetDataMutable<data_ptr_t>(statef);
+	auto fdata = FlatVector::GetData<data_ptr_t>(statef);
 	for (idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
 		fdata[i] = state_ptr;
 		state_ptr += state_size;
@@ -179,14 +182,13 @@ WindowSegmentTreePart::WindowSegmentTreePart(ArenaAllocator &allocator, const Ag
 WindowSegmentTreePart::~WindowSegmentTreePart() {
 }
 
-unique_ptr<GlobalSinkState> WindowSegmentTree::GetGlobalState(ClientContext &context, idx_t group_count,
-                                                              const ValidityMask &partition_mask) const {
+unique_ptr<WindowAggregatorState> WindowSegmentTree::GetGlobalState(ClientContext &context, idx_t group_count,
+                                                                    const ValidityMask &partition_mask) const {
 	return make_uniq<WindowSegmentTreeGlobalState>(context, *this, group_count);
 }
 
-unique_ptr<LocalSinkState> WindowSegmentTree::GetLocalState(ExecutionContext &context,
-                                                            const GlobalSinkState &gstate) const {
-	return make_uniq<WindowSegmentTreeLocalState>(context);
+unique_ptr<WindowAggregatorState> WindowSegmentTree::GetLocalState(const WindowAggregatorState &gstate) const {
+	return make_uniq<WindowSegmentTreeState>();
 }
 
 void WindowSegmentTreePart::FlushStates(bool combining) {
@@ -197,12 +199,11 @@ void WindowSegmentTreePart::FlushStates(bool combining) {
 	AggregateInputData aggr_input_data(aggr.GetFunctionData(), allocator);
 	if (combining) {
 		statel.Verify(flush_count);
-		aggr.function.GetStateCombineCallback()(statel, statep, aggr_input_data, flush_count);
+		aggr.function.combine(statel, statep, aggr_input_data, flush_count);
 	} else {
 		auto &scanned = cursor->chunk;
 		leaves.Slice(scanned, filter_sel, flush_count);
-		aggr.function.GetStateUpdateCallback()(&leaves.data[0], aggr_input_data, leaves.ColumnCount(), statep,
-		                                       flush_count);
+		aggr.function.update(&leaves.data[0], aggr_input_data, leaves.ColumnCount(), statep, flush_count);
 	}
 
 	flush_count = 0;
@@ -210,7 +211,7 @@ void WindowSegmentTreePart::FlushStates(bool combining) {
 
 void WindowSegmentTreePart::Combine(WindowSegmentTreePart &other, idx_t count) {
 	AggregateInputData aggr_input_data(aggr.GetFunctionData(), allocator);
-	aggr.function.GetStateCombineCallback()(other.statef, statef, aggr_input_data, count);
+	aggr.function.combine(other.statef, statef, aggr_input_data, count);
 }
 
 void WindowSegmentTreePart::ExtractFrame(idx_t begin, idx_t end, data_ptr_t state_ptr) {
@@ -219,8 +220,8 @@ void WindowSegmentTreePart::ExtractFrame(idx_t begin, idx_t end, data_ptr_t stat
 	//	If we are not filtering,
 	//	just update the shared dictionary selection to the range
 	//	Otherwise set it to the input rows that pass the filter
-	auto states = FlatVector::GetDataMutable<data_ptr_t>(statep);
-	if (filter_mask.CannotHaveNull()) {
+	auto states = FlatVector::GetData<data_ptr_t>(statep);
+	if (filter_mask.AllValid()) {
 		const auto offset = cursor->RowOffset(begin);
 		for (idx_t i = 0; i < count; ++i) {
 			states[flush_count] = state_ptr;
@@ -266,8 +267,8 @@ void WindowSegmentTreePart::WindowSegmentValue(const WindowSegmentTreeGlobalStat
 		// find out where the states begin
 		auto begin_ptr = tree.levels_flat_native.GetStatePtr(begin + tree.levels_flat_start[l_idx - 1]);
 		// set up a vector of pointers that point towards the set of states
-		auto ldata = FlatVector::GetDataMutable<const_data_ptr_t>(statel);
-		auto pdata = FlatVector::GetDataMutable<data_ptr_t>(statep);
+		auto ldata = FlatVector::GetData<const_data_ptr_t>(statel);
+		auto pdata = FlatVector::GetData<data_ptr_t>(statep);
 		for (idx_t i = 0; i < count; i++) {
 			pdata[flush_count] = state_ptr;
 			ldata[flush_count++] = begin_ptr;
@@ -281,17 +282,18 @@ void WindowSegmentTreePart::WindowSegmentValue(const WindowSegmentTreeGlobalStat
 void WindowSegmentTreePart::Finalize(Vector &result, idx_t count) {
 	//	Finalise the result aggregates and write to result if write_result is set
 	AggregateInputData aggr_input_data(aggr.GetFunctionData(), allocator);
-	aggr.function.GetStateFinalizeCallback()(statef, aggr_input_data, result, count, 0);
+	aggr.function.finalize(statef, aggr_input_data, result, count, 0);
 
 	//	Destruct the result aggregates
-	if (aggr.function.HasStateDestructorCallback()) {
-		aggr.function.GetStateDestructorCallback()(statef, aggr_input_data, count);
+	if (aggr.function.destructor) {
+		aggr.function.destructor(statef, aggr_input_data, count);
 	}
 }
 
-WindowSegmentTreeGlobalState::WindowSegmentTreeGlobalState(ClientContext &client, const WindowSegmentTree &aggregator,
+WindowSegmentTreeGlobalState::WindowSegmentTreeGlobalState(ClientContext &context, const WindowSegmentTree &aggregator,
                                                            idx_t group_count)
-    : WindowAggregatorGlobalState(client, aggregator, group_count), tree(aggregator), levels_flat_native(client, aggr) {
+    : WindowAggregatorGlobalState(context, aggregator, group_count), tree(aggregator), levels_flat_native(aggr) {
+
 	D_ASSERT(!aggregator.wexpr.children.empty());
 
 	// compute space required to store internal nodes of segment tree
@@ -333,16 +335,15 @@ WindowSegmentTreeGlobalState::WindowSegmentTreeGlobalState(ClientContext &client
 	}
 }
 
-void WindowSegmentTreeLocalState::Finalize(ExecutionContext &context, WindowAggregatorGlobalState &gastate,
-                                           CollectionPtr collection) {
-	WindowAggregatorLocalState::Finalize(context, gastate, collection);
+void WindowSegmentTreeState::Finalize(WindowAggregatorGlobalState &gastate, CollectionPtr collection) {
+	WindowAggregatorLocalState::Finalize(gastate, collection);
 
 	//	Single part for constructing the tree
 	auto &gstate = gastate.Cast<WindowSegmentTreeGlobalState>();
 	auto cursor = make_uniq<WindowCursor>(*collection, gastate.aggregator.child_idx);
 	const auto leaf_count = collection->size();
 	auto &filter_mask = gstate.filter_mask;
-	WindowSegmentTreePart gtstate(allocator, gastate.aggr, std::move(cursor), filter_mask);
+	WindowSegmentTreePart gtstate(gstate.CreateTreeAllocator(), gastate.aggr, std::move(cursor), filter_mask);
 
 	auto &levels_flat_native = gstate.levels_flat_native;
 	const auto &levels_flat_start = gstate.levels_flat_start;
@@ -389,15 +390,15 @@ void WindowSegmentTreeLocalState::Finalize(ExecutionContext &context, WindowAggr
 	}
 }
 
-void WindowSegmentTree::Evaluate(ExecutionContext &context, const DataChunk &bounds, Vector &result, idx_t count,
-                                 idx_t row_idx, OperatorSinkInput &sink) const {
-	const auto &gtstate = sink.global_state.Cast<WindowSegmentTreeGlobalState>();
-	auto &ltstate = sink.local_state.Cast<WindowSegmentTreeLocalState>();
-	ltstate.Evaluate(context, gtstate, bounds, result, count, row_idx);
+void WindowSegmentTree::Evaluate(const WindowAggregatorState &gsink, WindowAggregatorState &lstate,
+                                 const DataChunk &bounds, Vector &result, idx_t count, idx_t row_idx) const {
+	const auto &gtstate = gsink.Cast<WindowSegmentTreeGlobalState>();
+	auto &ltstate = lstate.Cast<WindowSegmentTreeState>();
+	ltstate.Evaluate(gtstate, bounds, result, count, row_idx);
 }
 
-void WindowSegmentTreeLocalState::Evaluate(ExecutionContext &context, const WindowSegmentTreeGlobalState &gtstate,
-                                           const DataChunk &bounds, Vector &result, idx_t count, idx_t row_idx) {
+void WindowSegmentTreeState::Evaluate(const WindowSegmentTreeGlobalState &gtstate, const DataChunk &bounds,
+                                      Vector &result, idx_t count, idx_t row_idx) {
 	auto window_begin = FlatVector::GetData<const idx_t>(bounds.data[FRAME_BEGIN]);
 	auto window_end = FlatVector::GetData<const idx_t>(bounds.data[FRAME_END]);
 	auto peer_begin = FlatVector::GetData<const idx_t>(bounds.data[PEER_BEGIN]);
@@ -454,17 +455,17 @@ void WindowSegmentTreePart::Evaluate(const WindowSegmentTreeGlobalState &tree, c
 }
 
 void WindowSegmentTreePart::Initialize(idx_t count) {
-	auto fdata = FlatVector::GetDataMutable<data_ptr_t>(statef);
+	auto fdata = FlatVector::GetData<data_ptr_t>(statef);
 	for (idx_t rid = 0; rid < count; ++rid) {
 		auto state_ptr = fdata[rid];
-		aggr.function.GetStateInitCallback()(aggr.function, state_ptr);
+		aggr.function.initialize(aggr.function, state_ptr);
 	}
 }
 
 void WindowSegmentTreePart::EvaluateUpperLevels(const WindowSegmentTreeGlobalState &tree, const idx_t *begins,
                                                 const idx_t *ends, const idx_t *bounds, idx_t count, idx_t row_idx,
                                                 FramePart frame_part) {
-	auto fdata = FlatVector::GetDataMutable<data_ptr_t>(statef);
+	auto fdata = FlatVector::GetData<data_ptr_t>(statef);
 
 	const auto exclude_mode = tree.tree.exclude_mode;
 	const bool begin_on_curr_row = frame_part == FramePart::RIGHT && exclude_mode == WindowExcludeMode::CURRENT_ROW;
@@ -481,8 +482,8 @@ void WindowSegmentTreePart::EvaluateUpperLevels(const WindowSegmentTreeGlobalSta
 	//  We do this first because we want to share only tree aggregations
 	idx_t prev_begin = 1;
 	idx_t prev_end = 0;
-	auto ldata = FlatVector::GetDataMutable<data_ptr_t>(statel);
-	auto pdata = FlatVector::GetDataMutable<data_ptr_t>(statep);
+	auto ldata = FlatVector::GetData<data_ptr_t>(statel);
+	auto pdata = FlatVector::GetData<data_ptr_t>(statep);
 	data_ptr_t prev_state = nullptr;
 	for (idx_t rid = 0, cur_row = row_idx; rid < count; ++rid, ++cur_row) {
 		auto state_ptr = fdata[rid];
@@ -563,7 +564,8 @@ void WindowSegmentTreePart::EvaluateUpperLevels(const WindowSegmentTreeGlobalSta
 void WindowSegmentTreePart::EvaluateLeaves(const WindowSegmentTreeGlobalState &tree, const idx_t *begins,
                                            const idx_t *ends, const idx_t *bounds, idx_t count, idx_t row_idx,
                                            FramePart frame_part, FramePart leaf_part) {
-	auto fdata = FlatVector::GetDataMutable<data_ptr_t>(statef);
+
+	auto fdata = FlatVector::GetData<data_ptr_t>(statef);
 
 	// For order-sensitive aggregates, we have to process the ragged leaves in two pieces.
 	// The left side have to be added before the main tree followed by the ragged right sides.

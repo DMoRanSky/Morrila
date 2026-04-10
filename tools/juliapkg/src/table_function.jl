@@ -79,8 +79,14 @@ end
 
 function get_exception_info()
     error = ""
-    for (exc, bt) in current_exceptions()
-        error = string(error, sprint(showerror, exc, bt))
+    if VERSION < v"1.7"
+        for (exc, bt) in Base.catch_stack()
+            error = string(error, sprint(showerror, exc, bt))
+        end
+    else
+        for (exc, bt) in current_exceptions()
+            error = string(error, sprint(showerror, exc, bt))
+        end
     end
     return error
 end

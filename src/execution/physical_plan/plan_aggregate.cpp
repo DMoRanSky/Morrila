@@ -1,5 +1,3 @@
-#include "duckdb/main/settings.hpp"
-
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
@@ -119,6 +117,9 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 		return false;
 	}
 	idx_t perfect_hash_bits = 0;
+	if (op.group_stats.empty()) {
+		op.group_stats.resize(op.groups.size());
+	}
 	for (idx_t group_idx = 0; group_idx < op.groups.size(); group_idx++) {
 		auto &group = op.groups[group_idx];
 		auto &stats = op.group_stats[group_idx];
@@ -217,14 +218,14 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 		bits_per_group.push_back(required_bits);
 		perfect_hash_bits += required_bits;
 		// check if we have exceeded the bits for the hash
-		if (perfect_hash_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
+		if (perfect_hash_bits > ClientConfig::GetConfig(context).perfect_ht_threshold) {
 			// too many bits for perfect hash
 			return false;
 		}
 	}
 	for (auto &expression : op.expressions) {
 		auto &aggregate = expression->Cast<BoundAggregateExpression>();
-		if (aggregate.IsDistinct() || !aggregate.function.HasStateCombineCallback()) {
+		if (aggregate.IsDistinct() || !aggregate.function.combine) {
 			// distinct aggregates are not supported in perfect hash aggregates
 			return false;
 		}
@@ -236,37 +237,24 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
 	D_ASSERT(op.children.size() == 1);
 
 	reference<PhysicalOperator> plan = CreatePlan(*op.children[0]);
-	plan = ExtractAggregateExpressions(plan, op.expressions, op.groups, op.grouping_sets);
+	plan = ExtractAggregateExpressions(plan, op.expressions, op.groups);
 
 	bool can_use_simple_aggregation = true;
 	for (auto &expression : op.expressions) {
 		auto &aggregate = expression->Cast<BoundAggregateExpression>();
-		if (!aggregate.function.HasStateSimpleUpdateCallback()) {
+		if (!aggregate.function.simple_update) {
 			// unsupported aggregate for simple aggregation: use hash aggregation
 			can_use_simple_aggregation = false;
 			break;
 		}
 	}
 
-	// Check if all groups are valid
-	if (op.group_stats.empty()) {
-		op.group_stats.resize(op.groups.size());
-	}
-	auto group_validity = TupleDataValidityType::CANNOT_HAVE_NULL_VALUES;
-	for (const auto &stats : op.group_stats) {
-		if (stats && !stats->CanHaveNull()) {
-			continue;
-		}
-		group_validity = TupleDataValidityType::CAN_HAVE_NULL_VALUES;
-		break;
-	}
-
 	if (op.groups.empty() && op.grouping_sets.size() <= 1) {
 		// no groups, check if we can use a simple aggregation
 		// special case: aggregate entire columns together
 		if (can_use_simple_aggregation) {
-			auto &group_by = Make<PhysicalUngroupedAggregate>(op.types, std::move(op.expressions),
-			                                                  op.estimated_cardinality, op.distinct_validity);
+			auto &group_by =
+			    Make<PhysicalUngroupedAggregate>(op.types, std::move(op.expressions), op.estimated_cardinality);
 			group_by.children.push_back(plan);
 			return group_by;
 		}
@@ -298,15 +286,14 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
 
 	auto &group_by = Make<PhysicalHashAggregate>(context, op.types, std::move(op.expressions), std::move(op.groups),
 	                                             std::move(op.grouping_sets), std::move(op.grouping_functions),
-	                                             op.estimated_cardinality, group_validity, op.distinct_validity);
+	                                             op.estimated_cardinality);
 	group_by.children.push_back(plan);
 	return group_by;
 }
 
 PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOperator &child,
                                                                      vector<unique_ptr<Expression>> &aggregates,
-                                                                     vector<unique_ptr<Expression>> &groups,
-                                                                     optional_ptr<vector<GroupingSet>> grouping_sets) {
+                                                                     vector<unique_ptr<Expression>> &groups) {
 	vector<unique_ptr<Expression>> expressions;
 	vector<LogicalType> types;
 
@@ -315,7 +302,7 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
 		if (bound_aggr.order_bys) {
 			// sorted aggregate!
-			FunctionBinder::BindSortedAggregate(context, bound_aggr, groups, grouping_sets);
+			FunctionBinder::BindSortedAggregate(context, bound_aggr, groups);
 		}
 	}
 	for (auto &group : groups) {
@@ -326,11 +313,11 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 	}
 	for (auto &aggr : aggregates) {
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
-		for (auto &child_expr : bound_aggr.children) {
-			auto ref = make_uniq<BoundReferenceExpression>(child_expr->return_type, expressions.size());
-			types.push_back(child_expr->return_type);
-			expressions.push_back(std::move(child_expr));
-			child_expr = std::move(ref);
+		for (auto &child : bound_aggr.children) {
+			auto ref = make_uniq<BoundReferenceExpression>(child->return_type, expressions.size());
+			types.push_back(child->return_type);
+			expressions.push_back(std::move(child));
+			child = std::move(ref);
 		}
 		if (bound_aggr.filter) {
 			auto &filter = bound_aggr.filter;

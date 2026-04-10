@@ -6,6 +6,7 @@
 #include "udf_functions_to_test.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("UDF functions with arguments", "[coverage][.]") {
 	duckdb::unique_ptr<QueryResult> result;

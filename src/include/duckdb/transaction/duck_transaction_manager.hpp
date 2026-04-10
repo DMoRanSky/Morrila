@@ -14,7 +14,6 @@
 #include "duckdb/common/queue.hpp"
 
 namespace duckdb {
-class DuckTransactionManager;
 class DuckTransaction;
 struct UndoBufferProperties;
 
@@ -57,11 +56,6 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
-	transaction_t GetActiveCheckpoint() const {
-		return active_checkpoint;
-	}
-	void SetActiveCheckpoint(transaction_t checkpoint_id);
-	void ResetActiveCheckpoint();
 
 	bool IsDuckTransactionManager() override {
 		return true;
@@ -69,18 +63,13 @@ public:
 
 	//! Obtains a shared lock to the checkpoint lock
 	unique_ptr<StorageLockKey> SharedCheckpointLock();
-	//! Try to obtain an exclusive checkpoint lock
-	unique_ptr<StorageLockKey> TryGetCheckpointLock();
 	unique_ptr<StorageLockKey> TryUpgradeCheckpointLock(StorageLockKey &lock);
-	unique_ptr<StorageLockKey> SharedVacuumLock();
-	unique_ptr<StorageLockKey> TryGetVacuumLock();
 
 	//! Returns the current version of the catalog (incremented whenever anything changes, not stored between restarts)
 	DUCKDB_API idx_t GetCatalogVersion(Transaction &transaction);
 
 	void PushCatalogEntry(Transaction &transaction_p, CatalogEntry &entry, data_ptr_t extra_data = nullptr,
 	                      idx_t extra_data_size = 0);
-	void PushAttach(Transaction &transaction_p, AttachedDatabase &db);
 
 protected:
 	struct CheckpointDecision {
@@ -104,11 +93,6 @@ private:
 	//! Whether or not we can checkpoint
 	CheckpointDecision CanCheckpoint(DuckTransaction &transaction, unique_ptr<StorageLockKey> &checkpoint_lock,
 	                                 const UndoBufferProperties &properties);
-	//! Get the checkpoint type of an automatic checkpoint
-	CheckpointDecision GetCheckpointType(DuckTransaction &transaction, const UndoBufferProperties &undo_properties);
-
-	bool HasOtherTransactions(DuckTransaction &transaction);
-	void CleanupTransactions();
 
 private:
 	//! The current start timestamp used by transactions
@@ -121,20 +105,20 @@ private:
 	atomic<transaction_t> lowest_active_start;
 	//! The last commit timestamp
 	atomic<transaction_t> last_commit;
-	//! The currently active checkpoint
-	atomic<transaction_t> active_checkpoint;
 	//! Set of currently running transactions
 	vector<unique_ptr<DuckTransaction>> active_transactions;
 	//! Set of recently committed transactions
 	vector<unique_ptr<DuckTransaction>> recently_committed_transactions;
+	//! Transactions awaiting GC
+	vector<unique_ptr<DuckTransaction>> old_transactions;
 	//! The lock used for transaction operations
 	mutex transaction_lock;
 	//! The checkpoint lock
 	StorageLock checkpoint_lock;
-	//! The vacuum lock - necessary to start vacuum operations
-	StorageLock vacuum_lock;
 	//! Lock necessary to start transactions only - used by FORCE CHECKPOINT to prevent new transactions from starting
 	mutex start_transaction_lock;
+	//! Mutex used to control writes to the WAL - separate from the transaction lock
+	mutex wal_lock;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
 	idx_t last_committed_version = 0;

@@ -21,7 +21,7 @@ struct PragmaFunctions {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
-string PragmaShowTables(const string &catalog = "", const string &schema = "");
+string PragmaShowTables();
 string PragmaShowTablesExpanded();
 string PragmaShowDatabases();
 string PragmaShowVariables();

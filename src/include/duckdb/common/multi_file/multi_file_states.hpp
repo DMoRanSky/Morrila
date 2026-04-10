@@ -12,7 +12,6 @@
 #include "duckdb/common/multi_file/multi_file_options.hpp"
 #include "duckdb/common/multi_file/base_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 
 namespace duckdb {
 struct MultiFileReaderInterface;
@@ -167,11 +166,8 @@ struct MultiFileGlobalState : public GlobalTableFunctionState {
 	vector<LogicalType> scanned_types;
 	vector<ColumnIndex> column_indexes;
 	optional_ptr<TableFilterSet> filters;
-	atomic<bool> finished {false};
 
 	unique_ptr<GlobalTableFunctionState> global_state;
-
-	optional_ptr<const PhysicalOperator> op;
 
 	idx_t MaxThreads() const override {
 		return max_threads;

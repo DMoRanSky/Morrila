@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// duckdb/storage/compression/patas/patas.hpp
+// duckdb/common/patas/patas.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -9,7 +9,11 @@
 #pragma once
 
 #include "duckdb/storage/compression/patas/algorithm/patas.hpp"
+#include "duckdb/common/assert.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/function/compression_function.hpp"
 
 namespace duckdb {
 

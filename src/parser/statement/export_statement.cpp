@@ -1,5 +1,6 @@
 #include "duckdb/parser/statement/export_statement.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
+#include "duckdb/parser/query_node.hpp"
 
 namespace duckdb {
 
@@ -23,8 +24,10 @@ string ExportStatement::ToString() const {
 	}
 	auto &path = info->file_path;
 	D_ASSERT(info->is_from == false);
+	auto &options = info->options;
+	auto &format = info->format;
 	result += StringUtil::Format(" '%s'", path);
-	result += info->CopyOptionsToString();
+	result += CopyInfo::CopyOptionsToString(format, info->is_format_auto_detected, options);
 	result += ";";
 	return result;
 }

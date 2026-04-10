@@ -9,13 +9,13 @@
 #pragma once
 
 #include "duckdb/common/constants.hpp"
+#include "duckdb/common/map.hpp"
 #include "duckdb/common/types/validity_mask.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/execution/index/fixed_size_buffer.hpp"
 #include "duckdb/execution/index/index_pointer.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/index_storage_info.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 
 namespace duckdb {
@@ -30,8 +30,7 @@ public:
 
 public:
 	//! Construct a new fixed-size allocator
-	FixedSizeAllocator(const idx_t segment_size, BlockManager &block_manager,
-	                   MemoryTag memory_tag = MemoryTag::ART_INDEX);
+	FixedSizeAllocator(const idx_t segment_size, BlockManager &block_manager);
 
 	//! Block manager of the database instance
 	BlockManager &block_manager;
@@ -44,59 +43,30 @@ public:
 	//! Free the segment of the IndexPointer
 	void Free(const IndexPointer ptr);
 
-	//! Get a segment handle.
-	inline SegmentHandle GetHandle(const IndexPointer ptr) {
-		D_ASSERT(ptr.GetOffset() < available_segments_per_buffer);
-
-		auto buffer_it = buffers.find(ptr.GetBufferId());
-		D_ASSERT(buffer_it != buffers.end());
-
-		auto offset = ptr.GetOffset() * segment_size + bitmask_offset;
-		auto &buffer = *buffer_it->second;
-		return SegmentHandle(buffer, offset);
-	}
-
 	//! Returns a pointer of type T to a segment. If dirty is false, then T must be a const class.
-	//! DEPRECATED. Use segment handles.
 	template <class T>
 	inline unsafe_optional_ptr<T> Get(const IndexPointer ptr, const bool dirty = true) {
 		return (T *)Get(ptr, dirty);
 	}
 
 	//! Returns the data_ptr_t to a segment, and sets the dirty flag of the buffer containing that segment.
-	//! DEPRECATED. Use segment handles.
 	inline data_ptr_t Get(const IndexPointer ptr, const bool dirty = true) {
 		D_ASSERT(ptr.GetOffset() < available_segments_per_buffer);
+		D_ASSERT(buffers.find(ptr.GetBufferId()) != buffers.end());
 
 		auto buffer_it = buffers.find(ptr.GetBufferId());
 		D_ASSERT(buffer_it != buffers.end());
-
-		auto offset = ptr.GetOffset() * segment_size + bitmask_offset;
-		auto buffer_ptr = buffer_it->second->GetDeprecated(dirty);
-		return buffer_ptr + offset;
-	}
-
-	//! Has been loaded into a buffer-managed buffer from a persistent, file-backed block.
-	inline bool LoadedFromStorage(const IndexPointer ptr) const {
-		D_ASSERT(ptr.GetOffset() < available_segments_per_buffer);
-
-		auto buffer_it = buffers.find(ptr.GetBufferId());
-		if (buffer_it == buffers.end()) {
-			return false;
-		}
-
-		return buffer_it->second->InMemory();
+		auto buffer_ptr = buffer_it->second->Get(dirty);
+		return buffer_ptr + ptr.GetOffset() * segment_size + bitmask_offset;
 	}
 
 	//! Returns a pointer of type T to a segment, or nullptr, if the buffer is not in memory.
-	//! DEPRECATED. Use segment handles.
 	template <class T>
 	inline unsafe_optional_ptr<T> GetIfLoaded(const IndexPointer ptr) {
 		return (T *)GetIfLoaded(ptr);
 	}
 
 	//! Returns the data_ptr_t to a segment, or nullptr, if the buffer is not in memory.
-	//! DEPRECATED. Use segment handles.
 	inline data_ptr_t GetIfLoaded(const IndexPointer ptr) {
 		D_ASSERT(ptr.GetOffset() < available_segments_per_buffer);
 		D_ASSERT(buffers.find(ptr.GetBufferId()) != buffers.end());
@@ -106,7 +76,7 @@ public:
 			return nullptr;
 		}
 
-		auto buffer_ptr = buffer->GetDeprecated();
+		auto buffer_ptr = buffer->Get();
 		auto raw_ptr = buffer_ptr + ptr.GetOffset() * segment_size + bitmask_offset;
 		return raw_ptr;
 	}
@@ -165,8 +135,6 @@ public:
 	void VerifyBuffers();
 
 private:
-	//! Memory tag of memory that is allocated through the allocator
-	MemoryTag memory_tag;
 	//! Allocation size of one segment in a buffer
 	//! We only need this value to calculate bitmask_count, bitmask_offset, and
 	//! available_segments_per_buffer

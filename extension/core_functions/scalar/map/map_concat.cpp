@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/bound_expression.hpp"
@@ -22,6 +21,8 @@ struct MapKeyIndexPair {
 	idx_t key_index;
 };
 
+} // namespace
+
 vector<Value> GetListEntries(vector<Value> keys, vector<Value> values) {
 	D_ASSERT(keys.size() == values.size());
 	vector<Value> entries;
@@ -34,7 +35,7 @@ vector<Value> GetListEntries(vector<Value> keys, vector<Value> values) {
 	return entries;
 }
 
-void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	if (result.GetType().id() == LogicalTypeId::SQLNULL) {
 		// All inputs are NULL, just return NULL
 		auto &validity = FlatVector::Validity(result);
@@ -51,7 +52,8 @@ void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 		auto &map = args.data[i];
 		map.ToUnifiedFormat(count, map_formats[i]);
 	}
-	auto result_data = FlatVector::Writer<list_entry_t>(result, count);
+	auto result_data = FlatVector::GetData<list_entry_t>(result);
+
 	for (idx_t i = 0; i < count; i++) {
 		// Loop through all the maps per list
 		// we cant do better because all the entries of the child vector have to be contiguous
@@ -116,17 +118,23 @@ void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 			ListVector::PushBack(result, list_entry);
 		}
 	}
+
+	if (args.AllConstant()) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+	result.Verify(count);
 }
 
-bool IsEmptyMap(const LogicalType &map) {
+static bool IsEmptyMap(const LogicalType &map) {
 	D_ASSERT(map.id() == LogicalTypeId::MAP);
 	auto &key_type = MapType::KeyType(map);
 	auto &value_type = MapType::ValueType(map);
 	return key_type.id() == LogicalType::SQLNULL && value_type.id() == LogicalType::SQLNULL;
 }
 
-unique_ptr<FunctionData> MapConcatBind(ClientContext &context, ScalarFunction &bound_function,
-                                       vector<unique_ptr<Expression>> &arguments) {
+static unique_ptr<FunctionData> MapConcatBind(ClientContext &context, ScalarFunction &bound_function,
+                                              vector<unique_ptr<Expression>> &arguments) {
+
 	auto arg_count = arguments.size();
 	if (arg_count < 2) {
 		throw InvalidInputException("The provided amount of arguments is incorrect, please provide 2 or more maps");
@@ -135,7 +143,7 @@ unique_ptr<FunctionData> MapConcatBind(ClientContext &context, ScalarFunction &b
 	if (arguments[0]->return_type.id() == LogicalTypeId::UNKNOWN) {
 		// Prepared statement
 		bound_function.arguments.emplace_back(LogicalTypeId::UNKNOWN);
-		bound_function.SetReturnType(LogicalTypeId::SQLNULL);
+		bound_function.return_type = LogicalType(LogicalTypeId::SQLNULL);
 		return nullptr;
 	}
 
@@ -149,7 +157,7 @@ unique_ptr<FunctionData> MapConcatBind(ClientContext &context, ScalarFunction &b
 		if (map.id() == LogicalTypeId::UNKNOWN) {
 			// Prepared statement
 			bound_function.arguments.emplace_back(LogicalTypeId::UNKNOWN);
-			bound_function.SetReturnType(LogicalTypeId::SQLNULL);
+			bound_function.return_type = LogicalType(LogicalTypeId::SQLNULL);
 			return nullptr;
 		}
 		if (map.id() == LogicalTypeId::SQLNULL) {
@@ -177,16 +185,14 @@ unique_ptr<FunctionData> MapConcatBind(ClientContext &context, ScalarFunction &b
 	if (expected.id() == LogicalTypeId::SQLNULL && is_null == false) {
 		expected = LogicalType::MAP(LogicalType::SQLNULL, LogicalType::SQLNULL);
 	}
-	bound_function.SetReturnType(expected);
-	return make_uniq<VariableReturnBindData>(bound_function.GetReturnType());
+	bound_function.return_type = expected;
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
 }
-
-} // namespace
 
 ScalarFunction MapConcatFun::GetFunction() {
 	//! the arguments and return types are actually set in the binder function
 	ScalarFunction fun("map_concat", {}, LogicalTypeId::LIST, MapConcatFunction, MapConcatBind);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	fun.varargs = LogicalType::ANY;
 	return fun;
 }

@@ -16,13 +16,13 @@ unique_ptr<AttachStatement> Transformer::TransformAttach(duckdb_libpgquery::PGAt
 		duckdb_libpgquery::PGListCell *cell;
 		for_each_cell(cell, stmt.options->head) {
 			auto def_elem = PGPointerCast<duckdb_libpgquery::PGDefElem>(cell->data.ptr_value);
-			unique_ptr<ParsedExpression> expr;
+			Value val;
 			if (def_elem->arg) {
-				expr = TransformExpression(def_elem->arg);
+				val = TransformValue(*PGPointerCast<duckdb_libpgquery::PGValue>(def_elem->arg))->value;
 			} else {
-				expr = make_uniq<ConstantExpression>(Value::BOOLEAN(true));
+				val = Value::BOOLEAN(true);
 			}
-			info->parsed_options[StringUtil::Lower(def_elem->defname)] = std::move(expr);
+			info->options[StringUtil::Lower(def_elem->defname)] = std::move(val);
 		}
 	}
 	result->info = std::move(info);

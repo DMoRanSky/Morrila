@@ -3,6 +3,7 @@
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 // Dummy TableInOutFunction that:
 // - sums all INTEGER values in each row
@@ -50,7 +51,7 @@ struct ThrottlingSum {
 			local_state.row_sums.push_back(sum);
 		}
 
-		if (PhysicalOperator::SelectOperatorCachingMode(context) == OperatorCachingMode::UNORDERED) {
+		if (PhysicalOperator::OperatorCachingAllowed(context)) {
 			// Caching is allowed
 			if (local_state.current_idx < local_state.row_sums.size()) {
 				output.SetCardinality(1);

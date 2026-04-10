@@ -3,20 +3,21 @@
 #include "mbedtls_wrapper.hpp"
 #include "thrift_tools.hpp"
 
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
-#include "duckdb/common/encryption_functions.hpp"
-#include "duckdb/common/allocator.hpp"
-
-using duckdb_parquet::ColumnChunk;
+#endif
 
 namespace duckdb {
 
 ParquetKeys &ParquetKeys::Get(ClientContext &context) {
 	auto &cache = ObjectCache::GetObjectCache(context);
-	return *cache.GetOrCreate<ParquetKeys>(ParquetKeys::ObjectType());
+	if (!cache.Get<ParquetKeys>(ParquetKeys::ObjectType())) {
+		cache.Put(ParquetKeys::ObjectType(), make_shared_ptr<ParquetKeys>());
+	}
+	return *cache.Get<ParquetKeys>(ParquetKeys::ObjectType());
 }
 
 void ParquetKeys::AddKey(const string &key_name, const string &key) {
@@ -38,77 +39,6 @@ string ParquetKeys::ObjectType() {
 
 string ParquetKeys::GetObjectType() {
 	return ObjectType();
-}
-
-ParquetAdditionalAuthenticatedData::ParquetAdditionalAuthenticatedData(Allocator &allocator)
-    : AdditionalAuthenticatedData(allocator) {
-}
-
-ParquetAdditionalAuthenticatedData::~ParquetAdditionalAuthenticatedData() = default;
-
-idx_t ParquetAdditionalAuthenticatedData::GetPrefixSize() const {
-	if (!additional_authenticated_data_prefix_size.IsValid()) {
-		return 0;
-	}
-	return additional_authenticated_data_prefix_size.GetIndex();
-}
-
-void ParquetAdditionalAuthenticatedData::Rewind() const {
-	additional_authenticated_data->SetPosition(GetPrefixSize());
-}
-
-void ParquetAdditionalAuthenticatedData::WriteParquetAAD(const CryptoMetaData &crypto_meta_data) {
-	// For the parquet encryption spec, additional authenticated data (AAD) consists of:
-	// (1) a unique prefix constructed by:
-	// an optional aad-prefix (arbitrary length -- ignored for now)
-	// + a unique file identifier (default 8 bytes)
-	if (GetPrefixSize() == 0) {
-		WritePrefix(crypto_meta_data.unique_file_identifier);
-	}
-	// (2) a suffix, which length varies according to the module type, consisting of:
-	// + module type (1 byte)
-	// + row group ordinal (2 bytes, optional)
-	// + column ordinal (2 bytes, optional)
-	// + page ordinal (2 bytes, optional)
-	WriteSuffix(crypto_meta_data);
-}
-
-void ParquetAdditionalAuthenticatedData::WritePrefix(const std::string &prefix) {
-	if (prefix.empty()) {
-		throw InvalidInputException("Prefix for Additional Authenticated Data is empty");
-	}
-	WriteStringData(prefix);
-	additional_authenticated_data_prefix_size = additional_authenticated_data->GetPosition();
-}
-
-void ParquetAdditionalAuthenticatedData::WriteSuffix(const CryptoMetaData &crypto_meta_data) {
-	if (!additional_authenticated_data_prefix_size.IsValid()) {
-		throw InvalidInputException("Prefix for Parquet additional authenticated data is not set");
-	}
-
-	if (crypto_meta_data.module < 0) {
-		throw InvalidInputException("Parquet Crypto Module not initialized");
-	}
-	WriteData<int8_t>(crypto_meta_data.module);
-
-	if (crypto_meta_data.row_group_ordinal < 0) {
-		if (crypto_meta_data.module != ParquetCrypto::FOOTER) {
-			throw InvalidInputException("Parquet Encryption: Row group not initialized");
-		}
-		// Footer
-		return;
-	}
-	WriteData<int16_t>(crypto_meta_data.row_group_ordinal);
-
-	if (crypto_meta_data.column_ordinal < 0) {
-		return;
-	}
-	WriteData<int16_t>(crypto_meta_data.column_ordinal);
-
-	if (crypto_meta_data.page_ordinal < 0) {
-		return;
-	}
-	WriteData<int16_t>(crypto_meta_data.page_ordinal);
 }
 
 ParquetEncryptionConfig::ParquetEncryptionConfig() {
@@ -161,12 +91,8 @@ using duckdb_apache::thrift::transport::TTransport;
 class EncryptionTransport : public TTransport {
 public:
 	EncryptionTransport(TProtocol &prot_p, const string &key, const EncryptionUtil &encryption_util_p)
-	    : prot(prot_p), trans(*prot.getTransport()),
+	    : prot(prot_p), trans(*prot.getTransport()), aes(encryption_util_p.CreateEncryptionState(&key)),
 	      allocator(Allocator::DefaultAllocator(), ParquetCrypto::CRYPTO_BLOCK_SIZE) {
-		auto metadata = make_uniq<EncryptionStateMetadata>(EncryptionTypes::GCM, key.size(),
-		                                                   EncryptionTypes::EncryptionVersion::NONE);
-		aes = encryption_util_p.CreateEncryptionState(std::move(metadata));
-
 		Initialize(key);
 	}
 
@@ -192,8 +118,8 @@ public:
 		const uint32_t total_length = ParquetCrypto::NONCE_BYTES + ciphertext_length + ParquetCrypto::TAG_BYTES;
 
 		trans.write(const_data_ptr_cast(&total_length), ParquetCrypto::LENGTH_BYTES);
-		// Write nonce at the start of encrypted chunk
-		trans.write(nonce.data(), ParquetCrypto::NONCE_BYTES);
+		// Write nonce at beginning of encrypted chunk
+		trans.write(nonce, ParquetCrypto::NONCE_BYTES);
 
 		data_t aes_buffer[ParquetCrypto::CRYPTO_BLOCK_SIZE];
 		auto current = allocator.GetTail();
@@ -222,9 +148,9 @@ public:
 private:
 	void Initialize(const string &key) {
 		// Generate Nonce
-		aes->GenerateRandomData(nonce.data(), nonce.size());
+		aes->GenerateRandomData(nonce, ParquetCrypto::NONCE_BYTES);
 		// Initialize Encryption
-		aes->InitializeEncryption(nonce, reinterpret_cast<const_data_ptr_t>(key.data()));
+		aes->InitializeEncryption(nonce, ParquetCrypto::NONCE_BYTES, &key);
 	}
 
 private:
@@ -236,7 +162,7 @@ private:
 	shared_ptr<EncryptionState> aes;
 
 	//! Nonce created by Initialize()
-	EncryptionNonce nonce;
+	data_t nonce[ParquetCrypto::NONCE_BYTES];
 
 	//! Arena Allocator to fully materialize in memory before encrypting
 	ArenaAllocator allocator;
@@ -245,15 +171,11 @@ private:
 //! Decryption wrapper for a transport protocol
 class DecryptionTransport : public TTransport {
 public:
-	DecryptionTransport(TProtocol &prot_p, const string &key, const EncryptionUtil &encryption_util_p,
-	                    const CryptoMetaData &crypto_meta_data)
-	    : prot(prot_p), trans(*prot.getTransport()), read_buffer_size(0), read_buffer_offset(0) {
-		auto metadata = make_uniq<EncryptionStateMetadata>(EncryptionTypes::GCM, key.size(),
-		                                                   EncryptionTypes::EncryptionVersion::NONE);
-		aes = encryption_util_p.CreateEncryptionState(std::move(metadata));
-		Initialize(key, crypto_meta_data);
+	DecryptionTransport(TProtocol &prot_p, const string &key, const EncryptionUtil &encryption_util_p)
+	    : prot(prot_p), trans(*prot.getTransport()), aes(encryption_util_p.CreateEncryptionState(&key)),
+	      read_buffer_size(0), read_buffer_offset(0) {
+		Initialize(key);
 	}
-
 	uint32_t read_virt(uint8_t *buf, uint32_t len) override {
 		const uint32_t result = len;
 
@@ -275,6 +197,7 @@ public:
 	}
 
 	uint32_t Finalize() {
+
 		if (read_buffer_offset != read_buffer_size) {
 			throw InternalException("DecryptionTransport::Finalize was called with bytes remaining in read buffer: \n"
 			                        "read buffer offset: %d, read buffer size: %d",
@@ -283,7 +206,9 @@ public:
 
 		data_t computed_tag[ParquetCrypto::TAG_BYTES];
 		transport_remaining -= trans.read(computed_tag, ParquetCrypto::TAG_BYTES);
-		aes->Finalize(read_buffer, 0, computed_tag, ParquetCrypto::TAG_BYTES);
+		if (aes->Finalize(read_buffer, 0, computed_tag, ParquetCrypto::TAG_BYTES) != 0) {
+			throw InternalException("DecryptionTransport::Finalize was called with bytes remaining in AES context out");
+		}
 
 		if (transport_remaining != 0) {
 			throw InvalidInputException("Encoded ciphertext length differs from actual ciphertext length");
@@ -301,23 +226,16 @@ public:
 	}
 
 private:
-	void Initialize(const string &key, const CryptoMetaData &crypto_meta_data) {
+	void Initialize(const string &key) {
 		// Read encoded length (don't add to read_bytes)
 		data_t length_buf[ParquetCrypto::LENGTH_BYTES];
 		trans.read(length_buf, ParquetCrypto::LENGTH_BYTES);
 		total_bytes = Load<uint32_t>(length_buf);
 		transport_remaining = total_bytes;
 		// Read nonce and initialize AES
-		transport_remaining -= trans.read(nonce.data(), nonce.total_size());
+		transport_remaining -= trans.read(nonce, ParquetCrypto::NONCE_BYTES);
 		// check whether context is initialized
-		if (!crypto_meta_data.IsEmpty()) {
-			aes->InitializeDecryption(nonce, reinterpret_cast<const_data_ptr_t>(key.data()),
-			                          crypto_meta_data.additional_authenticated_data->data(),
-			                          crypto_meta_data.additional_authenticated_data->size());
-			crypto_meta_data.additional_authenticated_data->Rewind();
-		} else {
-			aes->InitializeDecryption(nonce, reinterpret_cast<const_data_ptr_t>(key.data()));
-		}
+		aes->InitializeDecryption(nonce, ParquetCrypto::NONCE_BYTES, &key);
 	}
 
 	void ReadBlock(uint8_t *buf) {
@@ -354,7 +272,7 @@ private:
 	uint32_t total_bytes;
 	uint32_t transport_remaining;
 	//! Nonce read by Initialize()
-	EncryptionNonce nonce;
+	data_t nonce[ParquetCrypto::NONCE_BYTES];
 };
 
 class SimpleReadTransport : public TTransport {
@@ -380,10 +298,10 @@ private:
 };
 
 uint32_t ParquetCrypto::Read(TBase &object, TProtocol &iprot, const string &key,
-                             const EncryptionUtil &encryption_util_p, const CryptoMetaData &crypto_meta_data) {
+                             const EncryptionUtil &encryption_util_p) {
 	TCompactProtocolFactoryT<DecryptionTransport> tproto_factory;
-	auto dprot = tproto_factory.getProtocol(
-	    duckdb_base_std::make_shared<DecryptionTransport>(iprot, key, encryption_util_p, crypto_meta_data));
+	auto dprot =
+	    tproto_factory.getProtocol(duckdb_base_std::make_shared<DecryptionTransport>(iprot, key, encryption_util_p));
 	auto &dtrans = reinterpret_cast<DecryptionTransport &>(*dprot->getTransport());
 
 	// We have to read the whole thing otherwise thrift throws an error before we realize we're decryption is wrong
@@ -414,12 +332,11 @@ uint32_t ParquetCrypto::Write(const TBase &object, TProtocol &oprot, const strin
 }
 
 uint32_t ParquetCrypto::ReadData(TProtocol &iprot, const data_ptr_t buffer, const uint32_t buffer_size,
-                                 const string &key, const EncryptionUtil &encryption_util_p,
-                                 const CryptoMetaData &crypto_meta_data) {
+                                 const string &key, const EncryptionUtil &encryption_util_p) {
 	// Create decryption protocol
 	TCompactProtocolFactoryT<DecryptionTransport> tproto_factory;
-	auto dprot = tproto_factory.getProtocol(
-	    duckdb_base_std::make_shared<DecryptionTransport>(iprot, key, encryption_util_p, crypto_meta_data));
+	auto dprot =
+	    tproto_factory.getProtocol(duckdb_base_std::make_shared<DecryptionTransport>(iprot, key, encryption_util_p));
 	auto &dtrans = reinterpret_cast<DecryptionTransport &>(*dprot->getTransport());
 
 	// Read buffer
@@ -445,73 +362,6 @@ uint32_t ParquetCrypto::WriteData(TProtocol &oprot, const const_data_ptr_t buffe
 	return etrans.Finalize();
 }
 
-int8_t ParquetCrypto::GetModuleHeader(const ColumnChunk &chunk, uint16_t page_ordinal) {
-	if (page_ordinal > 0) {
-		// always return data page header if ordinal > 0
-		return DATA_PAGE_HEADER;
-	}
-	// There is at maximum 1 dictionary, index or bf filter page header per column chunk
-	if (chunk.meta_data.__isset.dictionary_page_offset) {
-		return DICTIONARY_PAGE_HEADER;
-	} else if (chunk.meta_data.__isset.index_page_offset) {
-		return OFFSET_INDEX;
-	} else if (chunk.meta_data.__isset.bloom_filter_offset) {
-		return ParquetCrypto::BLOOM_FILTER_HEADER;
-	}
-
-	return DATA_PAGE_HEADER;
-}
-
-int8_t ParquetCrypto::GetModule(const ColumnChunk &chunk, PageType::type page_type, uint16_t page_ordinal) {
-	if (chunk.meta_data.__isset.bloom_filter_offset && page_ordinal == 0) {
-		// return bitset if it is the first page ordinal
-		return ParquetCrypto::BLOOM_FILTER_BITSET;
-	}
-
-	switch (page_type) {
-	case PageType::DATA_PAGE:
-	case PageType::DATA_PAGE_V2:
-		return DATA_PAGE;
-	case PageType::DICTIONARY_PAGE:
-		return DICTIONARY_PAGE;
-	case PageType::INDEX_PAGE:
-		if (chunk.meta_data.__isset.index_page_offset) {
-			return OFFSET_INDEX;
-		}
-		return COLUMN_INDEX;
-	default:
-		throw InvalidInputException("Module not found");
-	}
-}
-
-int16_t ParquetCrypto::GetFinalPageOrdinal(const ColumnChunk &chunk, uint8_t module, uint16_t page_ordinal) {
-	switch (module) {
-	case DATA_PAGE_HEADER:
-		if (chunk.meta_data.__isset.dictionary_page_offset) {
-			page_ordinal -= 1;
-		} else if (chunk.meta_data.__isset.index_page_offset) {
-			page_ordinal -= 1;
-		} else if (chunk.meta_data.__isset.bloom_filter_offset) {
-			page_ordinal -= 1;
-		}
-		return NumericCast<int16_t>(page_ordinal);
-	case DATA_PAGE:
-		return NumericCast<int16_t>(page_ordinal);
-	default:
-		// All modules except DataPage(Header) are -1 (absent)
-		return -1;
-	}
-}
-
-void ParquetCrypto::GenerateAdditionalAuthenticatedData(Allocator &allocator, CryptoMetaData &aad_crypto_metadata) {
-	if (aad_crypto_metadata.IsEmpty()) {
-		// no aad, old duckdb-parquet crypto implementation
-		aad_crypto_metadata.ClearAdditionalAuthenticatedData();
-		return;
-	}
-	aad_crypto_metadata.additional_authenticated_data->WriteParquetAAD(aad_crypto_metadata);
-}
-
 bool ParquetCrypto::ValidKey(const std::string &key) {
 	switch (key.size()) {
 	case 16:
@@ -523,7 +373,7 @@ bool ParquetCrypto::ValidKey(const std::string &key) {
 	}
 }
 
-static string Base64Decode(const string &key) {
+string Base64Decode(const string &key) {
 	auto result_size = Blob::FromBase64Size(key);
 	auto output = duckdb::unique_ptr<unsigned char[]>(new unsigned char[result_size]);
 	Blob::FromBase64(key, output.get(), result_size);
@@ -551,36 +401,6 @@ void ParquetCrypto::AddKey(ClientContext &context, const FunctionParameters &par
 		}
 		keys.AddKey(key_name, decoded_key);
 	}
-}
-
-CryptoMetaData::CryptoMetaData(Allocator &allocator) {
-	additional_authenticated_data = make_uniq<ParquetAdditionalAuthenticatedData>(allocator);
-}
-
-void CryptoMetaData::Initialize(const std::string &unique_file_identifier_p, int16_t row_group_ordinal_p,
-                                int16_t column_ordinal_p, int8_t module_p, int16_t page_ordinal_p) {
-	if (unique_file_identifier_p.empty()) {
-		// aad not used for encryption
-		// this happens with old duckdb-parquet encryption
-		return;
-	}
-	unique_file_identifier = unique_file_identifier_p;
-	module = module_p;
-	row_group_ordinal = row_group_ordinal_p;
-	column_ordinal = column_ordinal_p;
-	page_ordinal = page_ordinal_p;
-}
-
-void CryptoMetaData::SetModule(int8_t module_p) {
-	module = module_p;
-}
-
-void CryptoMetaData::ClearAdditionalAuthenticatedData() {
-	additional_authenticated_data = nullptr;
-}
-
-bool CryptoMetaData::IsEmpty() const {
-	return unique_file_identifier.empty();
 }
 
 } // namespace duckdb

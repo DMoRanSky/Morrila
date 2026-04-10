@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/execution/operator/helper/physical_verify_vector.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/types/hugeint.hpp"
@@ -6,10 +5,8 @@
 
 namespace duckdb {
 
-PhysicalVerifyVector::PhysicalVerifyVector(PhysicalPlan &physical_plan, PhysicalOperator &child,
-                                           DebugVectorVerification verification)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::VERIFY_VECTOR, child.GetTypes(),
-                       child.estimated_cardinality),
+PhysicalVerifyVector::PhysicalVerifyVector(PhysicalOperator &child, DebugVectorVerification verification)
+    : PhysicalOperator(PhysicalOperatorType::VERIFY_VECTOR, child.GetTypes(), child.estimated_cardinality),
       verification(verification) {
 	children.push_back(child);
 }

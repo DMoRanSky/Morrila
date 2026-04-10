@@ -1,13 +1,13 @@
 #include "duckdb/common/operator/convert_to_string.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
-#include "duckdb/common/types/string_heap.hpp"
+#include "duckdb/common/types/vector.hpp"
 
 namespace duckdb {
 
 template <class T>
 string StandardStringCast(T input) {
-	StringHeap heap;
-	return StringCast::Operation(input, heap).GetString();
+	Vector v(LogicalType::VARCHAR);
+	return StringCast::Operation(input, v).GetString();
 }
 
 template <>

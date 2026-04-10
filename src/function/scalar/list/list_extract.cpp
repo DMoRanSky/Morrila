@@ -40,9 +40,14 @@ static optional_idx TryGetChildOffset(const list_entry_t &list_entry, const int6
 
 static void ExecuteListExtract(Vector &result, Vector &list, Vector &offsets, const idx_t count) {
 	D_ASSERT(list.GetType().id() == LogicalTypeId::LIST);
+	UnifiedVectorFormat list_data;
+	UnifiedVectorFormat offsets_data;
 
-	auto list_entries = list.Values<list_entry_t>(count);
-	auto offsets_entries = offsets.Values<int64_t>(count);
+	list.ToUnifiedFormat(count, list_data);
+	offsets.ToUnifiedFormat(count, offsets_data);
+
+	const auto list_ptr = UnifiedVectorFormat::GetData<list_entry_t>(list_data);
+	const auto offsets_ptr = UnifiedVectorFormat::GetData<int64_t>(offsets_data);
 
 	UnifiedVectorFormat child_data;
 	auto &child_vector = ListVector::GetEntry(list);
@@ -54,15 +59,15 @@ static void ExecuteListExtract(Vector &result, Vector &list, Vector &offsets, co
 
 	optional_idx first_valid_child_idx;
 	for (idx_t i = 0; i < count; i++) {
-		auto list_entry = list_entries[i];
-		auto offsets_entry = offsets_entries[i];
+		const auto list_index = list_data.sel->get_index(i);
+		const auto offsets_index = offsets_data.sel->get_index(i);
 
-		if (!list_entry.IsValid() || !offsets_entry.IsValid()) {
+		if (!list_data.validity.RowIsValid(list_index) || !offsets_data.validity.RowIsValid(offsets_index)) {
 			invalid_offsets.push_back(i);
 			continue;
 		}
 
-		const auto child_offset = TryGetChildOffset(list_entry.value, offsets_entry.value);
+		const auto child_offset = TryGetChildOffset(list_ptr[list_index], offsets_ptr[offsets_index]);
 
 		if (!child_offset.IsValid()) {
 			invalid_offsets.push_back(i);
@@ -90,6 +95,13 @@ static void ExecuteListExtract(Vector &result, Vector &list, Vector &offsets, co
 	for (const auto &invalid_idx : invalid_offsets) {
 		FlatVector::SetNull(result, invalid_idx, true);
 	}
+
+	if (count == 1 || (list.GetVectorType() == VectorType::CONSTANT_VECTOR &&
+	                   offsets.GetVectorType() == VectorType::CONSTANT_VECTOR)) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+
+	result.Verify(count);
 }
 
 static void ExecuteStringExtract(Vector &result, Vector &input_vector, Vector &subscript_vector, const idx_t count) {
@@ -113,7 +125,8 @@ static void ListExtractFunction(DataChunk &args, ExpressionState &state, Vector 
 		ExecuteStringExtract(result, base, subscript, count);
 		break;
 	case LogicalTypeId::SQLNULL:
-		ConstantVector::SetNull(result);
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::SetNull(result, true);
 		break;
 	default:
 		throw NotImplementedException("Specifier type not implemented");
@@ -124,7 +137,14 @@ static unique_ptr<FunctionData> ListExtractBind(ClientContext &context, ScalarFu
                                                 vector<unique_ptr<Expression>> &arguments) {
 	D_ASSERT(bound_function.arguments.size() == 2);
 	arguments[0] = BoundCastExpression::AddArrayCastToList(context, std::move(arguments[0]));
-	return nullptr;
+
+	D_ASSERT(LogicalTypeId::LIST == arguments[0]->return_type.id());
+	// list extract returns the child type of the list as return type
+	auto child_type = ListType::GetChildType(arguments[0]->return_type);
+
+	bound_function.return_type = child_type;
+	bound_function.arguments[0] = LogicalType::LIST(child_type);
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
 }
 
 static unique_ptr<BaseStatistics> ListExtractStats(ClientContext &context, FunctionStatisticsInput &input) {
@@ -140,12 +160,12 @@ ScalarFunctionSet ListExtractFun::GetFunctions() {
 	ScalarFunctionSet list_extract_set("list_extract");
 
 	// the arguments and return types are actually set in the binder function
-	ScalarFunction lfun({LogicalType::LIST(LogicalType::TEMPLATE("T")), LogicalType::BIGINT},
-	                    LogicalType::TEMPLATE("T"), ListExtractFunction, ListExtractBind, nullptr, ListExtractStats);
+	ScalarFunction lfun({LogicalType::LIST(LogicalType::ANY), LogicalType::BIGINT}, LogicalType::ANY,
+	                    ListExtractFunction, ListExtractBind, nullptr, ListExtractStats);
 
 	ScalarFunction sfun({LogicalType::VARCHAR, LogicalType::BIGINT}, LogicalType::VARCHAR, ListExtractFunction);
-	lfun.SetFallible();
-	sfun.SetFallible();
+	BaseScalarFunction::SetReturnsError(lfun);
+	BaseScalarFunction::SetReturnsError(sfun);
 	list_extract_set.AddFunction(lfun);
 	list_extract_set.AddFunction(sfun);
 	return list_extract_set;
@@ -155,8 +175,8 @@ ScalarFunctionSet ArrayExtractFun::GetFunctions() {
 	ScalarFunctionSet array_extract_set("array_extract");
 
 	// the arguments and return types are actually set in the binder function
-	ScalarFunction lfun({LogicalType::LIST(LogicalType::TEMPLATE("T")), LogicalType::BIGINT},
-	                    LogicalType::TEMPLATE("T"), ListExtractFunction, ListExtractBind, nullptr, ListExtractStats);
+	ScalarFunction lfun({LogicalType::LIST(LogicalType::ANY), LogicalType::BIGINT}, LogicalType::ANY,
+	                    ListExtractFunction, ListExtractBind, nullptr, ListExtractStats);
 
 	ScalarFunction sfun({LogicalType::VARCHAR, LogicalType::BIGINT}, LogicalType::VARCHAR, ListExtractFunction);
 

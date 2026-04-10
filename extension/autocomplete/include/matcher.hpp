@@ -11,12 +11,8 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/reference_map.hpp"
-#include "duckdb/parser/parser_extension.hpp"
-#include "transformer/parse_result.hpp"
-#include <mutex>
 
 namespace duckdb {
-class ParseResultAllocator;
 class Matcher;
 class MatcherAllocator;
 
@@ -28,33 +24,28 @@ enum class SuggestionState : uint8_t {
 	SUGGEST_TYPE_NAME,
 	SUGGEST_COLUMN_NAME,
 	SUGGEST_FILE_NAME,
-	SUGGEST_DIRECTORY,
 	SUGGEST_VARIABLE,
 	SUGGEST_SCALAR_FUNCTION_NAME,
 	SUGGEST_TABLE_FUNCTION_NAME,
 	SUGGEST_PRAGMA_NAME,
-	SUGGEST_SETTING_NAME,
-	SUGGEST_RESERVED_VARIABLE
+	SUGGEST_SETTING_NAME
 };
 
 enum class CandidateType { KEYWORD, IDENTIFIER, LITERAL };
 
 struct AutoCompleteCandidate {
 	// NOLINTNEXTLINE: allow implicit conversion from string
-	AutoCompleteCandidate(string candidate_p, SuggestionState suggestion_type, int32_t score_bonus = 0,
+	AutoCompleteCandidate(string candidate_p, int32_t score_bonus = 0,
 	                      CandidateType candidate_type = CandidateType::IDENTIFIER)
-	    : candidate(std::move(candidate_p)), suggestion_type(suggestion_type), score_bonus(score_bonus),
-	      candidate_type(candidate_type) {
+	    : candidate(std::move(candidate_p)), score_bonus(score_bonus), candidate_type(candidate_type) {
 	}
 	// NOLINTNEXTLINE: allow implicit conversion from const char*
-	AutoCompleteCandidate(const char *candidate_p, SuggestionState suggestion_type, int32_t score_bonus = 0,
+	AutoCompleteCandidate(const char *candidate_p, int32_t score_bonus = 0,
 	                      CandidateType candidate_type = CandidateType::IDENTIFIER)
-	    : AutoCompleteCandidate(string(candidate_p), suggestion_type, score_bonus, candidate_type) {
+	    : AutoCompleteCandidate(string(candidate_p), score_bonus, candidate_type) {
 	}
 
 	string candidate;
-	//! Type being suggested
-	SuggestionState suggestion_type;
 	//! The higher the score bonus, the more likely this candidate will be chosen
 	int32_t score_bonus;
 	//! The type of candidate we are suggesting - this modifies how we handle quoting/case sensitivity
@@ -63,47 +54,38 @@ struct AutoCompleteCandidate {
 	char extra_char = '\0';
 	//! Suggestion position
 	idx_t suggestion_pos = 0;
-	//! The final score
-	optional_idx score;
 };
 
 struct AutoCompleteSuggestion {
-	AutoCompleteSuggestion(string text_p, idx_t pos, string type_p, idx_t score, char extra_char_p)
-	    : text(std::move(text_p)), pos(pos), type(std::move(type_p)), score(score), extra_char(extra_char_p) {
+	AutoCompleteSuggestion(string text_p, idx_t pos) : text(std::move(text_p)), pos(pos) {
 	}
 
 	string text;
 	idx_t pos;
-	string type;
-	idx_t score;
-	char extra_char;
 };
 
 enum class MatchResultType { SUCCESS, FAIL };
 
 enum class SuggestionType { OPTIONAL, MANDATORY };
 
+enum class TokenType { WORD };
+
 struct MatcherToken {
 	// NOLINTNEXTLINE: allow implicit conversion from text
-	MatcherToken(string text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
-	    : type(type_p), text(std::move(text_p)), offset(offset_p), unterminated(unterminated_p) {
-		length = text.length();
+	MatcherToken(string text_p) : text(std::move(text_p)) {
 	}
 
-	TokenType type;
+	TokenType type = TokenType::WORD;
 	string text;
-	idx_t offset = 0;
-	idx_t length = 0;
-	bool unterminated = false;
 };
 
 struct MatcherSuggestion {
 	// NOLINTNEXTLINE: allow implicit conversion from auto-complete candidate
-	MatcherSuggestion(AutoCompleteCandidate keyword_p) : keyword(std::move(keyword_p)), type(keyword.suggestion_type) {
+	MatcherSuggestion(AutoCompleteCandidate keyword_p)
+	    : keyword(std::move(keyword_p)), type(SuggestionState::SUGGEST_KEYWORD) {
 	}
 	// NOLINTNEXTLINE: allow implicit conversion from suggestion state
-	MatcherSuggestion(SuggestionState type, char extra_char = '\0')
-	    : keyword("", type), type(type), extra_char(extra_char) {
+	MatcherSuggestion(SuggestionState type, char extra_char = '\0') : keyword(""), type(type), extra_char(extra_char) {
 	}
 
 	//! Literal suggestion
@@ -113,34 +95,17 @@ struct MatcherSuggestion {
 };
 
 struct MatchState {
-	MatchState(vector<MatcherToken> &tokens, vector<MatcherSuggestion> &suggestions, ParseResultAllocator &allocator,
-	           idx_t &max_token_index, bool preserve_identifier_case_p = true)
-	    : tokens(tokens), suggestions(suggestions), token_index(0), allocator(allocator),
-	      max_token_index(max_token_index), preserve_identifier_case(preserve_identifier_case_p) {
+	MatchState(vector<MatcherToken> &tokens, vector<MatcherSuggestion> &suggestions)
+	    : tokens(tokens), suggestions(suggestions), token_index(0) {
 	}
 	MatchState(MatchState &state)
-	    : tokens(state.tokens), suggestions(state.suggestions), token_index(state.token_index),
-	      allocator(state.allocator), max_token_index(state.max_token_index),
-	      preserve_identifier_case(state.preserve_identifier_case) {
+	    : tokens(state.tokens), suggestions(state.suggestions), token_index(state.token_index) {
 	}
 
 	vector<MatcherToken> &tokens;
 	vector<MatcherSuggestion> &suggestions;
 	reference_set_t<const Matcher> added_suggestions;
 	idx_t token_index;
-	ParseResultAllocator &allocator;
-	idx_t &max_token_index;
-	bool preserve_identifier_case = true;
-
-	void UpdateMaxTokenIndex() {
-		if (token_index > max_token_index) {
-			max_token_index = token_index;
-		}
-	}
-
-	idx_t GetMaxTokenIndex() const {
-		return max_token_index;
-	}
 
 	void AddSuggestion(MatcherSuggestion suggestion);
 };
@@ -155,11 +120,12 @@ public:
 
 	//! Match
 	virtual MatchResultType Match(MatchState &state) const = 0;
-	virtual optional_ptr<ParseResult> MatchParseResult(MatchState &state) const = 0;
 	virtual SuggestionType AddSuggestion(MatchState &state) const;
 	virtual SuggestionType AddSuggestionInternal(MatchState &state) const = 0;
 	virtual string ToString() const = 0;
 	void Print() const;
+
+	static Matcher &RootMatcher(MatcherAllocator &allocator);
 
 	MatcherType Type() const {
 		return type;
@@ -197,36 +163,6 @@ public:
 
 private:
 	vector<unique_ptr<Matcher>> matchers;
-};
-
-class ParseResultAllocator {
-public:
-	optional_ptr<ParseResult> Allocate(unique_ptr<ParseResult> parse_result);
-
-private:
-	vector<unique_ptr<ParseResult>> parse_results;
-};
-
-struct PEGMatcher {
-	MatcherAllocator allocator;
-
-	Matcher &Root() {
-		return *root;
-	}
-
-private:
-	friend struct PEGMatcherCache;
-	optional_ptr<Matcher> root;
-};
-
-//! Per-database cache holder for the compiled PEG root matcher.
-struct PEGMatcherCache : ParserExtensionInfo {
-	shared_ptr<PEGMatcher> GetMatcher();
-	void Invalidate();
-
-private:
-	std::mutex mutex;
-	shared_ptr<PEGMatcher> matcher;
 };
 
 } // namespace duckdb

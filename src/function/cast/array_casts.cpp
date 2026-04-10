@@ -1,8 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/cast/bound_cast_data.hpp"
@@ -44,6 +39,7 @@ unique_ptr<FunctionLocalState> ArrayBoundCastData::InitArrayLocalState(CastLocal
 // ARRAY -> ARRAY
 //------------------------------------------------------------------------------
 static bool ArrayToArrayCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+
 	auto source_array_size = ArrayType::GetSize(source.GetType());
 	auto target_array_size = ArrayType::GetSize(result.GetType());
 	if (source_array_size != target_array_size) {
@@ -53,7 +49,8 @@ static bool ArrayToArrayCast(Vector &source, Vector &result, idx_t count, CastPa
 		HandleCastError::AssignError(msg, parameters);
 		if (!parameters.strict) {
 			// if this was a TRY_CAST, we know every row will fail, so just return null
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 			return false;
 		}
 	}
@@ -63,7 +60,7 @@ static bool ArrayToArrayCast(Vector &source, Vector &result, idx_t count, CastPa
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 
 		if (ConstantVector::IsNull(source)) {
-			ConstantVector::SetNull(result);
+			ConstantVector::SetNull(result, true);
 		}
 
 		auto &source_cc = ArrayVector::GetEntry(source);
@@ -109,14 +106,14 @@ static bool ArrayToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 	auto &child_validity = FlatVector::Validity(child);
 
 	auto in_data = FlatVector::GetData<string_t>(child);
-	auto result_data = FlatVector::Writer<string_t>(result, count);
+	auto out_data = FlatVector::GetData<string_t>(result);
 
 	static constexpr const idx_t SEP_LENGTH = 2;
 	static constexpr const idx_t NULL_LENGTH = 4;
 
 	for (idx_t i = 0; i < count; i++) {
 		if (!validity.RowIsValid(i)) {
-			result_data.SetInvalid(i);
+			FlatVector::SetNull(result, i, true);
 			continue;
 		}
 
@@ -131,8 +128,8 @@ static bool ArrayToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 			array_varchar_length += child_validity.RowIsValid(elem_idx) ? elem.GetSize() : NULL_LENGTH;
 		}
 
-		auto &out_str = result_data[i].EmptyString(array_varchar_length);
-		auto dataptr = out_str.GetDataWriteable();
+		out_data[i] = StringVector::EmptyString(result, array_varchar_length);
+		auto dataptr = out_data[i].GetDataWriteable();
 		idx_t offset = 0;
 		dataptr[offset++] = '[';
 
@@ -154,7 +151,7 @@ static bool ArrayToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 			}
 		}
 		dataptr[offset++] = ']';
-		out_str.Finalize();
+		out_data[i].Finalize();
 	}
 
 	if (is_constant) {
@@ -185,16 +182,21 @@ static bool ArrayToListCast(Vector &source, Vector &result, idx_t count, CastPar
 	CastParameters child_parameters(parameters, cast_data.child_cast_info.cast_data, parameters.local_state);
 	bool all_ok = cast_data.child_cast_info.function(source_child, result_child, child_count, child_parameters);
 
-	auto list_data = FlatVector::Writer<list_entry_t>(result, count);
+	auto list_data = ListVector::GetData(result);
 	for (idx_t i = 0; i < count; i++) {
 		if (FlatVector::IsNull(source, i)) {
-			list_data.SetInvalid(i);
+			FlatVector::SetNull(result, i, true);
 			continue;
 		}
 
 		list_data[i].offset = i * array_size;
 		list_data[i].length = array_size;
 	}
+
+	if (count == 1) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+
 	return all_ok;
 }
 

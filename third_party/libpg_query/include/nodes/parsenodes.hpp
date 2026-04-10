@@ -1095,7 +1095,7 @@ typedef struct PGCommonTableExpr {
 	int location;     /* token location, or -1 if unknown */
 	/* These fields are set during parse analysis: */
 	bool cterecursive;        /* is this CTE actually recursive? */
-	PGList *using_key_list; /* USING KEY clause, if any */
+	PGList *recursive_keys;
 	int cterefcount;          /* number of RTEs referencing this CTE
 								 * (excluding internal self-references) */
 	PGList *ctecolnames;      /* list of output column names */
@@ -1489,7 +1489,7 @@ typedef enum PGAlterTableType {
 	PG_AT_SetIdentity,               /* SET identity column options */
 	AT_DropIdentity,                 /* DROP IDENTITY */
 	PG_AT_SetPartitionedBy,          /* SET PARTITIONED BY */
-	PG_AT_SetSortedBy,               /* SET SORTED BY */
+	PG_AT_SetSortedBy                /* SET SORTED BY */
 } PGAlterTableType;
 
 typedef struct PGAlterTableCmd /* one subcommand of an ALTER TABLE */
@@ -1499,8 +1499,7 @@ typedef struct PGAlterTableCmd /* one subcommand of an ALTER TABLE */
 	char *name;               /* column, constraint, or trigger to act on,
 								 * or tablespace */
 	PGNode *def;              /* definition of new column, index, * constraint, or parent table */
-	PGList *def_list;         /* e.g. expression list for partitioned by or sorted by */
-	PGList *options;          /* set table options e.g. SET ('foo'='bar'); RESET ('foo'='bar') */
+	PGList *def_list;         /* e.g. expression list for partitioned by */
 	PGDropBehavior behavior;  /* RESTRICT or CASCADE for DROP cases */
 	bool missing_ok;          /* skip error if missing? */
 } PGAlterTableCmd;
@@ -1536,7 +1535,7 @@ typedef struct PGCopyStmt {
 								 * for all columns */
 	bool is_from;         /* TO or FROM */
 	bool is_program;      /* is 'filename' a program to popen? */
-	PGNode *filename;     /* filename */
+	char *filename;       /* filename, or NULL for STDIN/STDOUT */
 	PGList *options;      /* PGList of PGDefElem nodes */
 } PGCopyStmt;
 
@@ -1617,8 +1616,6 @@ typedef struct PGCreateStmt {
 	PGTypeName *ofTypename;               /* OF typename */
 	PGList *constraints;                  /* constraints (list of PGConstraint nodes) */
 	PGList *options;                      /* options from WITH clause */
-	PGList *partition_list;               /* e.g. expression list for partitioned by */
-	PGList *sort_list;                    /* e.g. expression list for sort by */
 	PGOnCommitAction oncommit;            /* what do we do at COMMIT? */
 	char *tablespacename;                 /* table space to use, or NULL */
 	PGOnCreateConflict onconflict;        /* what to do on create conflict */
@@ -1985,10 +1982,10 @@ typedef struct PGExplainStmt {
  */
 typedef struct PGCreateTableAsStmt {
 	PGNodeTag type;
-	PGNode *query;			/* the query (see comments above) */
-	PGIntoClause *into;		/* destination table */
-	PGObjectType relkind;	/* PG_OBJECT_TABLE or PG_OBJECT_MATVIEW */
-	bool is_select_into;	/* it was written as SELECT INTO */
+	PGNode *query;        /* the query (see comments above) */
+	PGIntoClause *into;   /* destination table */
+	PGObjectType relkind; /* PG_OBJECT_TABLE or PG_OBJECT_MATVIEW */
+	bool is_select_into;  /* it was written as SELECT INTO */
 	PGOnCreateConflict onconflict;        /* what to do on create conflict */
 } PGCreateTableAsStmt;
 
@@ -2088,18 +2085,6 @@ typedef struct PGCopyDatabaseStmt {
 	const char *to_database;
 	const char *copy_database_flag;
 } PGCopyDatabaseStmt;
-
-typedef enum PGAlterDatabaseType {
-	PG_ALTER_DATABASE_RENAME
-} PGAlterDatabaseType;
-
-typedef struct PGAlterDatabaseStmt {
-	PGNodeTag type;
-	const char *dbname;
-	const char *new_name;
-	PGAlterDatabaseType alter_type;
-	bool missing_ok;
-} PGAlterDatabaseStmt;
 
 /* ----------------------
  *		Interval Constant
@@ -2270,60 +2255,5 @@ typedef struct PGCommentOnStmt {
 	PGNode *value;				/* the comment: a string or NULL*/
 	PGNode *column_expr;
 } PGCommentOnStmt;
-
-/* ----------------------
- *		Merge Into Statement
- * ----------------------
- */
-
-typedef struct PGMergeIntoStmt {
-	PGNodeTag type;
-	PGRangeVar *targetTable;     /* relation to merge into */
-	PGNode *source;              /* source table or query */
-	PGNode *joinCondition;       /* qualifications */
-	PGList *usingClause;         /* optional using clause for more tables */
-	PGList *matchActions;        /* list of match actions */
-	PGWithClause *withClause;    /* WITH clause */
-	PGList *returningList;       /* return-values list (of PGTargetEntry) */
-} PGMergeIntoStmt;
-
-typedef enum {
-	MERGE_ACTION_WHEN_MATCHED,		 			/* WHEN MATCHED */
-	MERGE_ACTION_WHEN_NOT_MATCHED_BY_TARGET,  	/* WHEN NOT MATCHED [BY TARGET] */
-	MERGE_ACTION_WHEN_NOT_MATCHED_BY_SOURCE,    /* WHEN NOT MATCHED BY SOURCE */
-} PGMergeAction;
-
-typedef enum {
-	MERGE_ACTION_TYPE_UPDATE,		/* DO UPDATE SET */
-	MERGE_ACTION_TYPE_DELETE,		/* DELETE */
-	MERGE_ACTION_TYPE_INSERT,		/* INSERT */
-	MERGE_ACTION_TYPE_DO_NOTHING,	/* DO NOTHING */
-	MERGE_ACTION_TYPE_ERROR     	/* ABORT */
-} PGMergeActionType;
-
-typedef struct PGMatchAction {
-	PGNodeTag type;
-	PGMergeAction when;                      /* WHEN MATCHED or WHEN NOT MATCHED */
-	PGNode *andClause;                       /* AND condition, if any */
-	PGMergeActionType actionType;            /* UPDATE, DELETE, etc */
-	PGList *updateTargets;                   /* the target list for UPDATE */
-	PGInsertColumnOrder insert_column_order; /* BY NAME or BY POSITION */
-	PGList *insertCols;                      /* optional: names of the target columns for insert */
-	PGList *insertValues;                    /* values for insert */
-	PGNode *errorMessage;                    /* Expression to generate the error message, if any */
-	bool defaultValues;                      /* DEFAULT VALUES */
-} PGMatchAction;
-
-/* ----------------------
- *		Function Parameter
- * ----------------------
- */
-
-typedef struct PGFunctionParameter {
-	PGNodeTag type;
-	char *name;                   /* name of parameter */
-	PGTypeName *typeName;         /* type of parameter (optional) */
-	PGExpr *defaultValue;		  /* default value of parameter (optional) */
-} PGFunctionParameter;
 
 }

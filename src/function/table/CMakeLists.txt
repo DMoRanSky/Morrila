@@ -7,7 +7,6 @@ add_library_unity(
   arrow.cpp
   arrow_conversion.cpp
   checkpoint.cpp
-  direct_file_reader.cpp
   glob.cpp
   query_function.cpp
   range.cpp
@@ -15,7 +14,6 @@ add_library_unity(
   repeat_row.cpp
   copy_csv.cpp
   read_csv.cpp
-  read_duckdb.cpp
   sniff_csv.cpp
   read_file.cpp
   system_functions.cpp

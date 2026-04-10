@@ -15,15 +15,13 @@
 
 namespace duckdb {
 
-static void GetColumnIndex(const unique_ptr<Expression> &expr, idx_t &index, string &alias) {
+static void GetColumnIndex(unique_ptr<Expression> &expr, idx_t &index) {
 	if (expr->type == ExpressionType::BOUND_REF) {
 		auto &bound_ref = expr->Cast<BoundReferenceExpression>();
 		index = bound_ref.index;
-		alias = bound_ref.alias;
 		return;
 	}
-	ExpressionIterator::EnumerateChildren(*expr,
-	                                      [&](unique_ptr<Expression> &child) { GetColumnIndex(child, index, alias); });
+	ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) { GetColumnIndex(child, index); });
 }
 
 FilterPropagateResult StatisticsPropagator::PropagateTableFilter(ColumnBinding stats_binding, BaseStatistics &stats,
@@ -34,32 +32,26 @@ FilterPropagateResult StatisticsPropagator::PropagateTableFilter(ColumnBinding s
 		// get physical storage index of the filter
 		// since it is a table filter, every storage index is the same
 		idx_t physical_index = DConstants::INVALID_INDEX;
-		string column_alias;
-		GetColumnIndex(expr_filter.expr, physical_index, column_alias);
+		GetColumnIndex(expr_filter.expr, physical_index);
 		D_ASSERT(physical_index != DConstants::INVALID_INDEX);
 
-		auto column_ref = make_uniq<BoundColumnRefExpression>(column_alias, stats.GetType(), stats_binding);
+		auto column_ref = make_uniq<BoundColumnRefExpression>(stats.GetType(), stats_binding);
 		auto filter_expr = expr_filter.ToExpression(*column_ref);
 		// handle the filter before updating the statistics
 		// otherwise the filter can be pruned by the updated statistics
 		auto propagate_result = HandleFilter(filter_expr);
-		auto colref = make_uniq<BoundReferenceExpression>(column_alias, stats.GetType(), physical_index);
+		auto colref = make_uniq<BoundReferenceExpression>(stats.GetType(), physical_index);
 		UpdateFilterStatistics(*filter_expr);
 
 		// replace BoundColumnRefs with BoundRefs
 		ExpressionFilter::ReplaceExpressionRecursive(filter_expr, *colref, ExpressionType::BOUND_COLUMN_REF);
 		expr_filter.expr = std::move(filter_expr);
-
-		// If we were able to prune solely based on the expression, return that result
-		if (propagate_result != FilterPropagateResult::NO_PRUNING_POSSIBLE) {
-			return propagate_result;
-		}
-		// Otherwise, check the statistics
+		return propagate_result;
 	}
 	return filter.CheckStatistics(stats);
 }
 
-void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &input, const TableFilter &filter) {
+void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &input, TableFilter &filter) {
 	// FIXME: update stats...
 	switch (filter.filter_type) {
 	case TableFilterType::CONJUNCTION_AND: {
@@ -79,7 +71,7 @@ void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &input, const T
 	}
 }
 
-static bool IsConstantOrNullFilter(const TableFilter &table_filter) {
+static bool IsConstantOrNullFilter(TableFilter &table_filter) {
 	if (table_filter.filter_type != TableFilterType::EXPRESSION_FILTER) {
 		return false;
 	}
@@ -91,7 +83,7 @@ static bool IsConstantOrNullFilter(const TableFilter &table_filter) {
 	return ConstantOrNull::IsConstantOrNull(func, Value::BOOLEAN(true));
 }
 
-static bool CanReplaceConstantOrNull(const TableFilter &table_filter) {
+static bool CanReplaceConstantOrNull(TableFilter &table_filter) {
 	if (!IsConstantOrNullFilter(table_filter)) {
 		throw InternalException("CanReplaceConstantOrNull() called on unexepected Table Filter");
 	}
@@ -119,35 +111,37 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalGet 
 	if (get.function.cardinality) {
 		node_stats = get.function.cardinality(context, get.bind_data.get());
 	}
-	if (!get.function.statistics && !get.function.statistics_extended) {
+	if (!get.function.statistics) {
 		// no column statistics to get
 		return std::move(node_stats);
 	}
 	auto &column_ids = get.GetColumnIds();
 	for (idx_t i = 0; i < column_ids.size(); i++) {
-		unique_ptr<BaseStatistics> stats;
-		if (get.function.statistics_extended) {
-			TableFunctionGetStatisticsInput input(get.bind_data.get(), column_ids[i]);
-			stats = get.function.statistics_extended(context, input);
-		} else {
-			stats = get.function.statistics(context, get.bind_data.get(), column_ids[i].GetPrimaryIndex());
-		}
-
+		auto stats = get.function.statistics(context, get.bind_data.get(), column_ids[i].GetPrimaryIndex());
 		if (stats) {
-			ColumnBinding binding(get.table_index, ProjectionIndex(i));
+			ColumnBinding binding(get.table_index, i);
 			statistics_map.insert(make_pair(binding, std::move(stats)));
 		}
 	}
 	// push table filters into the statistics
-	vector<ProjectionIndex> filter_columns;
-	filter_columns.reserve(get.table_filters.FilterCount());
-	for (auto &kv : get.table_filters) {
-		filter_columns.push_back(kv.GetIndex());
+	vector<idx_t> column_indexes;
+	column_indexes.reserve(get.table_filters.filters.size());
+	for (auto &kv : get.table_filters.filters) {
+		column_indexes.push_back(kv.first);
 	}
 
-	for (auto &table_filter_column : filter_columns) {
+	for (auto &table_filter_column : column_indexes) {
+		idx_t column_index;
+		for (column_index = 0; column_index < column_ids.size(); column_index++) {
+			if (column_ids[column_index].GetPrimaryIndex() == table_filter_column) {
+				break;
+			}
+		}
+		D_ASSERT(column_index < column_ids.size());
+		D_ASSERT(column_ids[column_index].GetPrimaryIndex() == table_filter_column);
+
 		// find the stats
-		ColumnBinding stats_binding(get.table_index, table_filter_column);
+		ColumnBinding stats_binding(get.table_index, column_index);
 		auto entry = statistics_map.find(stats_binding);
 		if (entry == statistics_map.end()) {
 			// no stats for this entry
@@ -156,20 +150,22 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalGet 
 		auto &stats = *entry->second;
 
 		// fetch the table filter
-		auto &filter = get.table_filters.GetFilterByColumnIndexMutable(table_filter_column);
-		auto propagate_result = PropagateTableFilter(stats_binding, stats, filter);
+		D_ASSERT(get.table_filters.filters.count(table_filter_column) > 0);
+		auto &filter = get.table_filters.filters[table_filter_column];
+		auto propagate_result = PropagateTableFilter(stats_binding, stats, *filter);
 		switch (propagate_result) {
 		case FilterPropagateResult::FILTER_ALWAYS_TRUE:
 			// filter is always true; it is useless to execute it
 			// erase this condition
-			get.table_filters.RemoveFilterByColumnIndex(table_filter_column);
+			get.table_filters.filters.erase(table_filter_column);
 			break;
 		case FilterPropagateResult::FILTER_TRUE_OR_NULL: {
-			if (IsConstantOrNullFilter(filter) && !CanReplaceConstantOrNull(filter)) {
+			if (IsConstantOrNullFilter(*get.table_filters.filters[table_filter_column]) &&
+			    !CanReplaceConstantOrNull(*get.table_filters.filters[table_filter_column])) {
 				break;
 			}
 			// filter is true or null; we can replace this with a not null filter
-			get.table_filters.SetFilterByColumnIndex(table_filter_column, make_uniq<IsNotNullFilter>());
+			get.table_filters.filters[table_filter_column] = make_uniq<IsNotNullFilter>();
 			break;
 		}
 		case FilterPropagateResult::FILTER_FALSE_OR_NULL:
@@ -179,7 +175,7 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalGet 
 			return make_uniq<NodeStatistics>(0U, 0U);
 		default:
 			// general case: filter can be true or false, update this columns' statistics
-			UpdateFilterStatistics(stats, filter);
+			UpdateFilterStatistics(stats, *filter);
 			break;
 		}
 	}

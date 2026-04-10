@@ -28,9 +28,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::UPDATE_EXTENSIONS;
 
 public:
-	explicit PhysicalUpdateExtensions(PhysicalPlan &physical_plan, unique_ptr<UpdateExtensionsInfo> info,
-	                                  idx_t estimated_cardinality)
-	    : PhysicalOperator(physical_plan, PhysicalOperatorType::UPDATE_EXTENSIONS,
+	explicit PhysicalUpdateExtensions(unique_ptr<UpdateExtensionsInfo> info, idx_t estimated_cardinality)
+	    : PhysicalOperator(PhysicalOperatorType::UPDATE_EXTENSIONS,
 	                       {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                        LogicalType::VARCHAR},
 	                       estimated_cardinality),
@@ -43,8 +42,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

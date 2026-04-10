@@ -8,57 +8,37 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // String Column Reader
 //===--------------------------------------------------------------------===//
-StringColumnReader::StringColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema)
-    : ColumnReader(reader, schema), string_column_type(GetStringColumnType(Type())) {
+StringColumnReader::StringColumnReader(ParquetReader &reader, const ParquetColumnSchema &schema)
+    : ColumnReader(reader, schema) {
 	fixed_width_string_length = 0;
 	if (schema.parquet_type == Type::FIXED_LEN_BYTE_ARRAY) {
 		fixed_width_string_length = schema.type_length;
 	}
 }
 
-bool StringColumnReader::IsValid(const char *str_data, uint32_t str_len, const bool is_varchar) {
+void StringColumnReader::VerifyString(const char *str_data, uint32_t str_len, const bool is_varchar) {
 	if (!is_varchar) {
-		return true;
+		return;
 	}
 	// verify if a string is actually UTF8, and if there are no null bytes in the middle of the string
 	// technically Parquet should guarantee this, but reality is often disappointing
 	UnicodeInvalidReason reason;
 	size_t pos;
 	auto utf_type = Utf8Proc::Analyze(str_data, str_len, &reason, &pos);
-	return utf_type != UnicodeType::INVALID;
-}
-
-bool StringColumnReader::IsValid(const string &str, bool is_varchar) {
-	return IsValid(str.c_str(), str.size(), is_varchar);
-}
-void StringColumnReader::VerifyString(const char *str_data, uint32_t str_len, const bool is_varchar) const {
-	if (!IsValid(str_data, str_len, is_varchar)) {
-		throw InvalidInputException(
-		    "Invalid string encoding found in Parquet file \"%s\": value \"%s\" is not valid UTF8!",
-		    reader.GetFileName(), Blob::ToString(string_t(str_data, str_len)));
+	if (utf_type == UnicodeType::INVALID) {
+		throw InvalidInputException("Invalid string encoding found in Parquet file: value \"" +
+		                            Blob::ToString(string_t(str_data, str_len)) + "\" is not valid UTF8!");
 	}
 }
 
-void StringColumnReader::VerifyString(const char *str_data, uint32_t str_len) const {
-	switch (string_column_type) {
-	case StringColumnType::VARCHAR:
-		VerifyString(str_data, str_len, true);
-		break;
-	case StringColumnType::JSON: {
-		const auto error = StringUtil::ValidateJSON(str_data, str_len);
-		if (!error.empty()) {
-			throw InvalidInputException("Invalid JSON found in Parquet file: %s", error);
-		}
-		break;
-	}
-	default:
-		break;
-	}
+void StringColumnReader::VerifyString(const char *str_data, uint32_t str_len) {
+	VerifyString(str_data, str_len, Type().id() == LogicalTypeId::VARCHAR);
 }
 
-class ParquetStringVectorBuffer : public AuxiliaryDataHolder {
+class ParquetStringVectorBuffer : public VectorBuffer {
 public:
-	explicit ParquetStringVectorBuffer(shared_ptr<ResizeableBuffer> buffer_p) : buffer(std::move(buffer_p)) {
+	explicit ParquetStringVectorBuffer(shared_ptr<ResizeableBuffer> buffer_p)
+	    : VectorBuffer(VectorBufferType::OPAQUE_BUFFER), buffer(std::move(buffer_p)) {
 	}
 
 private:
@@ -66,7 +46,7 @@ private:
 };
 
 void StringColumnReader::ReferenceBlock(Vector &result, shared_ptr<ResizeableBuffer> &block) {
-	StringVector::AddAuxiliaryData(result, make_uniq<ParquetStringVectorBuffer>(block));
+	StringVector::AddBuffer(result, make_buffer<ParquetStringVectorBuffer>(block));
 }
 
 void StringColumnReader::Plain(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,

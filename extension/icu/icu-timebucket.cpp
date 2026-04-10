@@ -6,7 +6,7 @@
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -16,6 +16,7 @@
 namespace duckdb {
 
 struct ICUTimeBucket : public ICUDateFunc {
+
 	// Use 2000-01-03 00:00:00 (Monday) as origin when bucket_width is days, hours, ... for TimescaleDB compatibility
 	// There are 10959 days between 1970-01-01 and 2000-01-03
 	constexpr static const int64_t DEFAULT_ORIGIN_MICROS_1 = 10959 * Interval::MICROS_PER_DAY;
@@ -376,7 +377,8 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 				BucketWidthType bucket_width_type = ClassifyBucketWidth(bucket_width);
@@ -431,7 +433,8 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 				BucketWidthType bucket_width_type = ClassifyBucketWidth(bucket_width);
@@ -496,7 +499,8 @@ struct ICUTimeBucket : public ICUDateFunc {
 		    origin_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg) || ConstantVector::IsNull(origin_arg) ||
 			    !Value::IsFinite(*ConstantVector::GetData<timestamp_t>(origin_arg))) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 				BucketWidthType bucket_width_type = ClassifyBucketWidth(bucket_width);
@@ -560,7 +564,8 @@ struct ICUTimeBucket : public ICUDateFunc {
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    tz_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg) || ConstantVector::IsNull(tz_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				interval_t bucket_width = *ConstantVector::GetData<interval_t>(bucket_width_arg);
 				SetTimeZone(calendar.GetICUCalendar(), *ConstantVector::GetData<string_t>(tz_arg));
@@ -614,7 +619,7 @@ struct ICUTimeBucket : public ICUDateFunc {
 		}
 	}
 
-	static void AddTimeBucketFunction(ExtensionLoader &loader) {
+	static void AddTimeBucketFunction(DatabaseInstance &db) {
 		ScalarFunctionSet set("time_bucket");
 		set.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::TIMESTAMP_TZ}, LogicalType::TIMESTAMP_TZ,
 		                               ICUTimeBucketFunction, Bind));
@@ -625,14 +630,14 @@ struct ICUTimeBucket : public ICUDateFunc {
 		set.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::TIMESTAMP_TZ, LogicalType::VARCHAR},
 		                               LogicalType::TIMESTAMP_TZ, ICUTimeBucketTimeZoneFunction, Bind));
 		for (auto &func : set.functions) {
-			func.SetFallible();
+			BaseScalarFunction::SetReturnsError(func);
 		}
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
-void RegisterICUTimeBucketFunctions(ExtensionLoader &loader) {
-	ICUTimeBucket::AddTimeBucketFunction(loader);
+void RegisterICUTimeBucketFunctions(DatabaseInstance &db) {
+	ICUTimeBucket::AddTimeBucketFunction(db);
 }
 
 } // namespace duckdb

@@ -8,14 +8,14 @@
 
 #pragma once
 
-#include "duckdb/storage/storage_lock.hpp"
+#include "duckdb/common/atomic.hpp"
+#include "duckdb/common/common.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
+#include "duckdb/storage/storage_lock.hpp"
 
 namespace duckdb {
-class AttachedDatabase;
 class DatabaseInstance;
 class TableIOManager;
-class RowGroupCollection;
 
 struct DataTableInfo {
 	friend class DataTable;
@@ -23,9 +23,9 @@ struct DataTableInfo {
 public:
 	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, string schema, string table);
 
-	//! Bind unknown indexes throwing an exception if binding fails.
-	//! Only binds the specified index type, or all, if nullptr.
-	void BindIndexes(ClientContext &context, const char *index_type = nullptr);
+	//! Initialize any unknown indexes whose types might now be present after an extension load, optionally throwing an
+	//! exception if an index can't be initialized
+	void InitializeIndexes(ClientContext &context, const char *index_type = nullptr);
 
 	//! Whether or not the table is temporary
 	bool IsTemporary() const;
@@ -41,14 +41,12 @@ public:
 	TableIndexList &GetIndexes() {
 		return indexes;
 	}
-	//! Find and move out an IndexStorageInfo by name from the stored collection.
-	IndexStorageInfo ExtractIndexStorageInfo(const string &name);
+	const vector<IndexStorageInfo> &GetIndexStorageInfo() const {
+		return index_storage_infos;
+	}
 	unique_ptr<StorageLockKey> GetSharedLock() {
 		return checkpoint_lock.GetSharedLock();
 	}
-	bool AppendRequiresNewRowGroup(RowGroupCollection &collection, transaction_t checkpoint_id);
-	optional_idx CheckpointRowGroupCount(const CheckpointOptions &options) const;
-	void VerifyIndexBuffers();
 
 	string GetSchemaName();
 	string GetTableName();
@@ -71,10 +69,6 @@ private:
 	vector<IndexStorageInfo> index_storage_infos;
 	//! Lock held while checkpointing
 	StorageLock checkpoint_lock;
-	//! The last seen checkpoint while doing a concurrent operation, if any
-	optional_idx last_seen_checkpoint;
-	//! The amount of row groups the checkpoint is processing
-	optional_idx checkpoint_row_group_count;
 };
 
 } // namespace duckdb

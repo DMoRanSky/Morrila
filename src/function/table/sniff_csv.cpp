@@ -133,9 +133,9 @@ static void CSVSniffFunction(ClientContext &context, TableFunctionInput &data_p,
 		return;
 	}
 	const CSVSniffFunctionData &data = data_p.bind_data->Cast<CSVSniffFunctionData>();
+	auto &fs = duckdb::FileSystem::GetFileSystem(context);
 
-	auto &fs = FileSystem::GetFileSystem(context);
-	auto files = fs.GlobFiles(data.path, FileGlobOptions::DISALLOW_EMPTY);
+	auto files = fs.GlobFiles(data.path, context, FileGlobOptions::DISALLOW_EMPTY);
 	if (files.size() > 1) {
 		throw NotImplementedException("sniff_csv does not operate on more than one file yet");
 	}
@@ -165,6 +165,7 @@ static void CSVSniffFunction(ClientContext &context, TableFunctionInput &data_p,
 			} else if (i < sniffer_options.sql_type_list.size()) {
 				continue;
 			}
+			D_ASSERT(sniffer_result.return_types[i].id() == LogicalTypeId::BOOLEAN);
 			// we default to varchar if all files are empty or only have a header after all the sniffing
 			sniffer_result.return_types[i] = LogicalType::VARCHAR;
 		}

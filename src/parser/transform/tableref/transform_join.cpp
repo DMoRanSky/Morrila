@@ -8,17 +8,6 @@
 
 namespace duckdb {
 
-vector<string> Transformer::TransformUsingClause(duckdb_libpgquery::PGList &usingClause) {
-	vector<string> result;
-	for (auto node = usingClause.head; node != nullptr; node = node->next) {
-		auto target = PGPointerCast<duckdb_libpgquery::PGNode>(node->data.ptr_value);
-		D_ASSERT(target->type == duckdb_libpgquery::T_PGString);
-		auto value = PGCast<duckdb_libpgquery::PGValue>(*target.get());
-		result.push_back(string(value.val.str));
-	}
-	return result;
-}
-
 unique_ptr<TableRef> Transformer::TransformJoin(duckdb_libpgquery::PGJoinExpr &root) {
 	auto result = make_uniq<JoinRef>(JoinRefType::REGULAR);
 	switch (root.jointype) {
@@ -72,7 +61,12 @@ unique_ptr<TableRef> Transformer::TransformJoin(duckdb_libpgquery::PGJoinExpr &r
 	SetQueryLocation(*result, root.location);
 	if (root.usingClause && root.usingClause->length > 0) {
 		// usingClause is a list of strings.
-		result->using_columns = TransformUsingClause(*root.usingClause);
+		for (auto node = root.usingClause->head; node != nullptr; node = node->next) {
+			auto target = PGPointerCast<duckdb_libpgquery::PGNode>(node->data.ptr_value);
+			D_ASSERT(target->type == duckdb_libpgquery::T_PGString);
+			auto value = PGCast<duckdb_libpgquery::PGValue>(*target.get());
+			result->using_columns.push_back(string(value.val.str));
+		}
 		return std::move(result);
 	}
 

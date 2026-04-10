@@ -56,9 +56,9 @@ if [ "$OVERRIDE_GIT_DESCRIBE" ]; then
   TARGET="$TARGET/$OVERRIDE_GIT_DESCRIBE"
 fi
 
-python3 -m pip install --break-system-packages awscli
+python3 -m pip install awscli
 
 for var in "${@: 2}"
 do
-    aws s3 cp $var s3://duckdb-staging/$TARGET/$GITHUB_REPOSITORY/$FOLDER/ $DRY_RUN_PARAM
+    aws s3 cp $var s3://duckdb-staging/$TARGET/$GITHUB_REPOSITORY/$FOLDER/ $DRY_RUN_PARAM --region us-east-2
 done

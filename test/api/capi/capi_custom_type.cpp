@@ -2,6 +2,7 @@
 #include <cstdio>
 
 using namespace duckdb;
+using namespace std;
 
 static void CAPIRegisterCustomType(duckdb_connection connection, const char *name, duckdb_type duckdb_type,
                                    duckdb_state expected_outcome) {

@@ -14,7 +14,6 @@ CREATE TABLE unit (
 	amount_sold AS (price) UNIQUE,
 );
 ----
-<REGEX>:.*Binder Error.*not supported yet.*
 
 # Also not as a column list
 statement error
@@ -24,7 +23,6 @@ CREATE TABLE unit (
 	UNIQUE (amount_sold),
 );
 ----
-<REGEX>:.*Binder Error.*not supported yet.*
 
 # Show that proper UNIQUE constraints still work when mixed in when generated columns
 statement ok
@@ -41,4 +39,3 @@ INSERT INTO tbl VALUES (5);
 statement error
 INSERT INTO tbl VALUES (5);
 ----
-<REGEX>:.*Constraint Error.*Duplicate key.*

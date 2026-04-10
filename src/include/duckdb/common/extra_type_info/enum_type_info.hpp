@@ -3,7 +3,6 @@
 #include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/string_map_set.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 
 namespace duckdb {
 
@@ -32,13 +31,10 @@ struct EnumTypeInfoTemplated : public EnumTypeInfo {
 
 	static shared_ptr<EnumTypeInfoTemplated> Deserialize(Deserializer &deserializer, uint32_t size) {
 		Vector values_insert_order(LogicalType::VARCHAR, size);
-		auto strings = FlatVector::Writer<string_t>(values_insert_order, size);
+		auto strings = FlatVector::GetData<string_t>(values_insert_order);
 
 		deserializer.ReadList(201, "values", [&](Deserializer::List &list, idx_t i) {
-			if (i >= size) {
-				throw SerializationException("Failed to deserialize enum: string value out of range");
-			}
-			strings[i] = list.ReadElement<string>();
+			strings[i] = StringVector::AddStringOrBlob(values_insert_order, list.ReadElement<string>());
 		});
 		return make_shared_ptr<EnumTypeInfoTemplated>(values_insert_order, size);
 	}

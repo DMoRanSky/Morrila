@@ -4,25 +4,19 @@
 
 namespace duckdb {
 
-namespace {
-
-static void ErrorFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	for (auto entry : args.data[0].Values<string_t>(args.size())) {
-		if (!entry.IsValid()) {
-			FlatVector::SetNull(result, entry.index, true);
-			continue;
-		}
-		throw InvalidInputException(entry.value.GetString());
+struct ErrorOperator {
+	template <class TA, class TR>
+	static inline TR Operation(const TA &input) {
+		throw InvalidInputException(input.GetString());
 	}
-}
-
-} // namespace
+};
 
 ScalarFunction ErrorFun::GetFunction() {
-	auto fun = ScalarFunction("error", {LogicalType::VARCHAR}, LogicalType::SQLNULL, ErrorFunction);
+	auto fun = ScalarFunction("error", {LogicalType::VARCHAR}, LogicalType::SQLNULL,
+	                          ScalarFunction::UnaryFunction<string_t, int32_t, ErrorOperator>);
 	// Set the function with side effects to avoid the optimization.
-	fun.SetVolatile();
-	fun.SetFallible();
+	fun.stability = FunctionStability::VOLATILE;
+	BaseScalarFunction::SetReturnsError(fun);
 	return fun;
 }
 

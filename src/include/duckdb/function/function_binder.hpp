@@ -9,10 +9,11 @@
 #pragma once
 
 #include "duckdb/function/function.hpp"
+#include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/aggregate_function.hpp"
-#include "duckdb/function/window_function.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/error_data.hpp"
 
 namespace duckdb {
@@ -48,9 +49,6 @@ public:
 	//! Bind a pragma function from the set of functions and input arguments
 	DUCKDB_API optional_idx BindFunction(const string &name, PragmaFunctionSet &functions, vector<Value> &parameters,
 	                                     ErrorData &error);
-	//! Bind a window function from the set of functions and input arguments
-	DUCKDB_API optional_idx BindFunction(const string &name, WindowFunctionSet &functions,
-	                                     const vector<LogicalType> &arguments, ErrorData &error);
 
 	DUCKDB_API unique_ptr<Expression> BindScalarFunction(const string &schema, const string &name,
 	                                                     vector<unique_ptr<Expression>> children, ErrorData &error,
@@ -72,20 +70,11 @@ public:
 	                      AggregateType aggr_type = AggregateType::NON_DISTINCT);
 
 	DUCKDB_API static void BindSortedAggregate(ClientContext &context, BoundAggregateExpression &expr,
-	                                           const vector<unique_ptr<Expression>> &groups,
-	                                           optional_ptr<vector<GroupingSet>> grouping_sets);
+	                                           const vector<unique_ptr<Expression>> &groups);
 	DUCKDB_API static void BindSortedAggregate(ClientContext &context, BoundWindowExpression &expr);
-
-	DUCKDB_API unique_ptr<BoundWindowExpression>
-	BindWindowFunction(WindowFunction bound_function, vector<unique_ptr<Expression>> children,
-	                   vector<OrderByNode> &orders, vector<OrderByNode> &arg_orders,
-	                   AggregateType aggr_type = AggregateType::NON_DISTINCT);
 
 	//! Cast a set of expressions to the arguments of this function
 	void CastToFunctionArguments(SimpleFunction &function, vector<unique_ptr<Expression>> &children);
-
-	void ResolveTemplateTypes(BaseScalarFunction &bound_function, const vector<unique_ptr<Expression>> &children);
-	void CheckTemplateTypesResolved(const BaseScalarFunction &bound_function);
 
 private:
 	optional_idx BindVarArgsFunctionCost(const SimpleFunction &func, const vector<LogicalType> &arguments);

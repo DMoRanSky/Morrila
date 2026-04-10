@@ -4275,7 +4275,7 @@ jemalloc_constructor(void) {
 	if (cpu_count == 0) {
 		cpu_count = duckdb_malloc_ncpus();
 	}
-	unsigned long long narenas = cpu_count;
+	unsigned long long narenas = cpu_count / 2;
 	if (narenas == 0) {
 	    narenas = 1;
 	}

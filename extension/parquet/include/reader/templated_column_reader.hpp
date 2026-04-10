@@ -48,8 +48,7 @@ public:
 	static constexpr const PhysicalType TYPE = PhysicalType::INVALID;
 
 public:
-	TemplatedColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema)
-	    : ColumnReader(reader, schema) {
+	TemplatedColumnReader(ParquetReader &reader, const ParquetColumnSchema &schema) : ColumnReader(reader, schema) {
 	}
 
 	shared_ptr<ResizeableBuffer> dict;
@@ -80,6 +79,7 @@ public:
 template <class PARQUET_PHYSICAL_TYPE, class DUCKDB_PHYSICAL_TYPE,
           DUCKDB_PHYSICAL_TYPE (*FUNC)(const PARQUET_PHYSICAL_TYPE &input)>
 struct CallbackParquetValueConversion {
+
 	template <bool CHECKED>
 	static DUCKDB_PHYSICAL_TYPE PlainRead(ByteBuffer &plain_data, ColumnReader &reader) {
 		if (CHECKED) {

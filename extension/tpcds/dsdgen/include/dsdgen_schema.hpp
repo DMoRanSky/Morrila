@@ -2,6 +2,8 @@
 #pragma once
 
 #include "duckdb.hpp"
+
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -12,6 +14,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/binder.hpp"
+#endif
 
 namespace tpcds {
 
@@ -41,11 +44,11 @@ const char *CallCenterInfo::Columns[] = {
     "cc_country",        "cc_gmt_offset",     "cc_tax_percentage"};
 
 const LogicalType CallCenterInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR,       LogicalType::DATE,         LogicalType::DATE,
-    LogicalType::BIGINT,  LogicalType::BIGINT,        LogicalType::VARCHAR,      LogicalType::VARCHAR,
-    LogicalType::BIGINT,  LogicalType::BIGINT,        LogicalType::VARCHAR,      LogicalType::VARCHAR,
-    LogicalType::BIGINT,  LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
-    LogicalType::BIGINT,  LogicalType::VARCHAR,       LogicalType::BIGINT,       LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR,       LogicalType::DATE,         LogicalType::DATE,
+    LogicalType::INTEGER, LogicalType::INTEGER,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::INTEGER,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR,       LogicalType::INTEGER,      LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::DECIMAL(5, 2), LogicalType::DECIMAL(5, 2)};
@@ -68,9 +71,9 @@ const char *CatalogPageInfo::Columns[] = {"cp_catalog_page_sk",     "cp_catalog_
                                           "cp_end_date_sk",         "cp_department",      "cp_catalog_number",
                                           "cp_catalog_page_number", "cp_description",     "cp_type"};
 
-const LogicalType CatalogPageInfo::Types[] = {LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,
-                                              LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,
-                                              LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR};
+const LogicalType CatalogPageInfo::Types[] = {LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER,
+                                              LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER,
+                                              LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
 const char *CatalogPageInfo::PrimaryKeyColumns[] = {"cp_catalog_page_sk"};
 
@@ -115,11 +118,11 @@ const char *CatalogReturnsInfo::Columns[] = {"cr_returned_date_sk",
                                              "cr_net_loss"};
 
 const LogicalType CatalogReturnsInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2)};
 
@@ -173,11 +176,11 @@ const char *CatalogSalesInfo::Columns[] = {"cs_sold_date_sk",
                                            "cs_net_profit"};
 
 const LogicalType CatalogSalesInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
@@ -208,9 +211,9 @@ const char *CustomerInfo::Columns[] = {"c_customer_sk",         "c_customer_id",
                                        "c_email_address",       "c_last_review_date_sk"};
 
 const LogicalType CustomerInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-    LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER};
 
 const char *CustomerInfo::PrimaryKeyColumns[] = {"c_customer_sk"};
@@ -233,7 +236,7 @@ const char *CustomerAddressInfo::Columns[] = {
     "ca_country",      "ca_gmt_offset", "ca_location_type"};
 
 const LogicalType CustomerAddressInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR,       LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR,       LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR,       LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::DECIMAL(5, 2), LogicalType::VARCHAR};
 
@@ -256,8 +259,8 @@ const char *CustomerDemographicsInfo::Columns[] = {
     "cd_credit_rating", "cd_dep_count", "cd_dep_employed_count", "cd_dep_college_count"};
 
 const LogicalType CustomerDemographicsInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,
-    LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::INTEGER};
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
+    LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER};
 
 const char *CustomerDemographicsInfo::PrimaryKeyColumns[] = {"cd_demo_sk"};
 
@@ -303,11 +306,11 @@ const char *DateDimInfo::Columns[] = {"d_date_sk",
                                       "d_current_year"};
 
 const LogicalType DateDimInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::VARCHAR,
-    LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR,
+    LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
 const char *DateDimInfo::PrimaryKeyColumns[] = {"d_date_sk"};
@@ -328,7 +331,7 @@ const char *HouseholdDemographicsInfo::Columns[] = {"hd_demo_sk", "hd_income_ban
                                                     "hd_dep_count", "hd_vehicle_count"};
 
 const LogicalType HouseholdDemographicsInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::INTEGER};
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER};
 
 const char *HouseholdDemographicsInfo::PrimaryKeyColumns[] = {"hd_demo_sk"};
 
@@ -346,7 +349,7 @@ struct IncomeBandInfo {
 
 const char *IncomeBandInfo::Columns[] = {"ib_income_band_sk", "ib_lower_bound", "ib_upper_bound"};
 
-const LogicalType IncomeBandInfo::Types[] = {LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::INTEGER};
+const LogicalType IncomeBandInfo::Types[] = {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER};
 
 const char *IncomeBandInfo::PrimaryKeyColumns[] = {"ib_income_band_sk"};
 
@@ -364,7 +367,7 @@ struct InventoryInfo {
 
 const char *InventoryInfo::Columns[] = {"inv_date_sk", "inv_item_sk", "inv_warehouse_sk", "inv_quantity_on_hand"};
 
-const LogicalType InventoryInfo::Types[] = {LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,
+const LogicalType InventoryInfo::Types[] = {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
                                             LogicalType::INTEGER};
 
 const char *InventoryInfo::PrimaryKeyColumns[] = {"inv_date_sk", "inv_item_sk", "inv_warehouse_sk"};
@@ -388,12 +391,12 @@ const char *ItemInfo::Columns[] = {
     "i_units",          "i_container",   "i_manager_id",     "i_product_name"};
 
 const LogicalType ItemInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR,       LogicalType::DATE,          LogicalType::DATE,
-    LogicalType::VARCHAR, LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::BIGINT,
-    LogicalType::VARCHAR, LogicalType::BIGINT,        LogicalType::VARCHAR,       LogicalType::BIGINT,
-    LogicalType::VARCHAR, LogicalType::BIGINT,        LogicalType::VARCHAR,       LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR,       LogicalType::DATE,          LogicalType::DATE,
+    LogicalType::VARCHAR, LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::INTEGER,
+    LogicalType::VARCHAR, LogicalType::INTEGER,       LogicalType::VARCHAR,       LogicalType::INTEGER,
+    LogicalType::VARCHAR, LogicalType::INTEGER,       LogicalType::VARCHAR,       LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR,       LogicalType::VARCHAR,       LogicalType::VARCHAR,
-    LogicalType::BIGINT,  LogicalType::VARCHAR};
+    LogicalType::INTEGER, LogicalType::VARCHAR};
 
 const char *ItemInfo::PrimaryKeyColumns[] = {"i_item_sk"};
 
@@ -416,8 +419,8 @@ const char *PromotionInfo::Columns[] = {"p_promo_sk",        "p_promo_id",      
                                         "p_channel_details", "p_purpose",       "p_discount_active"};
 
 const LogicalType PromotionInfo::Types[] = {
-    LogicalType::BIGINT,         LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::DECIMAL(15, 2), LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER,        LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::DECIMAL(15, 2), LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,        LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,        LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
@@ -437,7 +440,7 @@ struct ReasonInfo {
 
 const char *ReasonInfo::Columns[] = {"r_reason_sk", "r_reason_id", "r_reason_desc"};
 
-const LogicalType ReasonInfo::Types[] = {LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR};
+const LogicalType ReasonInfo::Types[] = {LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
 const char *ReasonInfo::PrimaryKeyColumns[] = {"r_reason_sk"};
 
@@ -456,7 +459,7 @@ struct ShipModeInfo {
 const char *ShipModeInfo::Columns[] = {"sm_ship_mode_sk", "sm_ship_mode_id", "sm_type",
                                        "sm_code",         "sm_carrier",      "sm_contract"};
 
-const LogicalType ShipModeInfo::Types[] = {LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR,
+const LogicalType ShipModeInfo::Types[] = {LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR,
                                            LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
 const char *ShipModeInfo::PrimaryKeyColumns[] = {"sm_ship_mode_sk"};
@@ -482,11 +485,11 @@ const char *StoreInfo::Columns[] = {
     "s_zip",           "s_country",          "s_gmt_offset",     "s_tax_percentage"};
 
 const LogicalType StoreInfo::Types[] = {
-    LogicalType::BIGINT,       LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::DATE,
-    LogicalType::BIGINT,       LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::VARCHAR,
-    LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::VARCHAR,
-    LogicalType::BIGINT,       LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER,      LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::DATE,
+    LogicalType::INTEGER,      LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR,
+    LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR,
+    LogicalType::INTEGER,      LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::DECIMAL(5, 2),
     LogicalType::DECIMAL(5, 2)};
@@ -512,9 +515,9 @@ const char *StoreReturnsInfo::Columns[] = {
     "sr_return_ship_cost", "sr_refunded_cash",  "sr_reversed_charge", "sr_store_credit",       "sr_net_loss"};
 
 const LogicalType StoreReturnsInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2)};
 
@@ -541,9 +544,9 @@ const char *StoreSalesInfo::Columns[] = {
     "ss_net_paid",           "ss_net_paid_inc_tax", "ss_net_profit"};
 
 const LogicalType StoreSalesInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2)};
@@ -566,8 +569,8 @@ const char *TimeDimInfo::Columns[] = {"t_time_sk", "t_time_id", "t_time",  "t_ho
                                       "t_second",  "t_am_pm",   "t_shift", "t_sub_shift", "t_meal_time"};
 
 const LogicalType TimeDimInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 
 const char *TimeDimInfo::PrimaryKeyColumns[] = {"t_time_sk"};
 
@@ -589,7 +592,7 @@ const char *WarehouseInfo::Columns[] = {"w_warehouse_sk",  "w_warehouse_id", "w_
                                         "w_country",       "w_gmt_offset"};
 
 const LogicalType WarehouseInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,       LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,      LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,      LogicalType::VARCHAR,
     LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::DECIMAL(5, 2)};
 
@@ -613,9 +616,9 @@ const char *WebPageInfo::Columns[] = {
     "wp_char_count",     "wp_link_count",   "wp_image_count",    "wp_max_ad_count"};
 
 const LogicalType WebPageInfo::Types[] = {
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::DATE,    LogicalType::BIGINT,
-    LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::BIGINT,  LogicalType::VARCHAR, LogicalType::VARCHAR,
-    LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::BIGINT,  LogicalType::INTEGER};
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::DATE,    LogicalType::DATE,    LogicalType::INTEGER,
+    LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER};
 
 const char *WebPageInfo::PrimaryKeyColumns[] = {"wp_web_page_sk"};
 
@@ -657,10 +660,10 @@ const char *WebReturnsInfo::Columns[] = {"wr_returned_date_sk",
                                          "wr_net_loss"};
 
 const LogicalType WebReturnsInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2)};
 
@@ -714,11 +717,11 @@ const char *WebSalesInfo::Columns[] = {"ws_sold_date_sk",
                                        "ws_net_profit"};
 
 const LogicalType WebSalesInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,
-    LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::BIGINT,        LogicalType::DECIMAL(7, 2),
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,
+    LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::INTEGER,       LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
     LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2), LogicalType::DECIMAL(7, 2),
@@ -749,10 +752,10 @@ const char *WebSiteInfo::Columns[] = {"web_site_sk",        "web_site_id",      
                                       "web_gmt_offset",     "web_tax_percentage"};
 
 const LogicalType WebSiteInfo::Types[] = {
-    LogicalType::BIGINT,        LogicalType::VARCHAR,      LogicalType::DATE,    LogicalType::DATE,
-    LogicalType::VARCHAR,       LogicalType::BIGINT,       LogicalType::BIGINT,  LogicalType::VARCHAR,
-    LogicalType::VARCHAR,       LogicalType::BIGINT,       LogicalType::VARCHAR, LogicalType::VARCHAR,
-    LogicalType::VARCHAR,       LogicalType::BIGINT,       LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::INTEGER,       LogicalType::VARCHAR,      LogicalType::DATE,    LogicalType::DATE,
+    LogicalType::VARCHAR,       LogicalType::INTEGER,      LogicalType::INTEGER, LogicalType::VARCHAR,
+    LogicalType::VARCHAR,       LogicalType::INTEGER,      LogicalType::VARCHAR, LogicalType::VARCHAR,
+    LogicalType::VARCHAR,       LogicalType::INTEGER,      LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::VARCHAR,       LogicalType::VARCHAR,      LogicalType::VARCHAR, LogicalType::VARCHAR,
     LogicalType::DECIMAL(5, 2), LogicalType::DECIMAL(5, 2)};

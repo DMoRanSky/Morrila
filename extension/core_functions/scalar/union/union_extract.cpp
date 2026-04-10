@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/union_vector.hpp"
 #include "core_functions/scalar/union_functions.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -6,8 +5,6 @@
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 
 namespace duckdb {
-
-namespace {
 
 struct UnionExtractBindData : public FunctionData {
 	UnionExtractBindData(string key, idx_t index, LogicalType type)
@@ -28,7 +25,7 @@ public:
 	}
 };
 
-void UnionExtractFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void UnionExtractFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.bind_info->Cast<UnionExtractBindData>();
 
@@ -42,8 +39,8 @@ void UnionExtractFunction(DataChunk &args, ExpressionState &state, Vector &resul
 	result.Verify(args.size());
 }
 
-unique_ptr<FunctionData> UnionExtractBind(ClientContext &context, ScalarFunction &bound_function,
-                                          vector<unique_ptr<Expression>> &arguments) {
+static unique_ptr<FunctionData> UnionExtractBind(ClientContext &context, ScalarFunction &bound_function,
+                                                 vector<unique_ptr<Expression>> &arguments) {
 	D_ASSERT(bound_function.arguments.size() == 2);
 	if (arguments[0]->return_type.id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
@@ -98,11 +95,9 @@ unique_ptr<FunctionData> UnionExtractBind(ClientContext &context, ScalarFunction
 		throw BinderException("Could not find key \"%s\" in union\n%s", key, message);
 	}
 
-	bound_function.SetReturnType(return_type);
+	bound_function.return_type = return_type;
 	return make_uniq<UnionExtractBindData>(key, key_index, return_type);
 }
-
-} // namespace
 
 ScalarFunction UnionExtractFun::GetFunction() {
 	// the arguments and return types are actually set in the binder function

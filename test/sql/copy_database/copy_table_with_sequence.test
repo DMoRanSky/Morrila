@@ -1,11 +1,13 @@
 # name: test/sql/copy_database/copy_table_with_sequence.test
 # group: [copy_database]
 
+require noforcestorage
+
 statement ok
 pragma enable_verification;
 
 statement ok
-attach '{TEST_DIR}/backup.db';
+attach '__TEST_DIR__/backup.db';
 
 ## Only specifying a sequence name
 
@@ -102,6 +104,5 @@ copy from database memory to backup;
 statement ok
 drop sequence memory.backup.seq cascade;
 
-query IIIIIIIIIIIIIIII
-from duckdb_sequences()
-----
+statement ok
+drop sequence backup.backup.seq cascade;

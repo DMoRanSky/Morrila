@@ -1,5 +1,4 @@
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
@@ -8,6 +7,7 @@
 namespace duckdb {
 
 unique_ptr<ParsedExpression> Transformer::TransformArrayAccess(duckdb_libpgquery::PGAIndirection &indirection_node) {
+
 	// Transform the source expression.
 	unique_ptr<ParsedExpression> result;
 	result = TransformExpression(indirection_node.arg);

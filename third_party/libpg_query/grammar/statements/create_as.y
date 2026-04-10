@@ -58,22 +58,13 @@ opt_with_data:
 
 
 create_as_target:
-			qualified_name opt_column_list OptPartitionSortedOptions OptWith OnCommitOption
+			qualified_name opt_column_list OptWith OnCommitOption
 				{
 					$$ = makeNode(PGIntoClause);
 					$$->rel = $1;
 					$$->colNames = $2;
-					PGListCell *lc;
-					foreach(lc, $3) {
-						PGDefElem *de = (PGDefElem *) lfirst(lc);
-						if (strcmp(de->defname, "partitioned_by") == 0) {
-							$$->partition_list = (PGList *)de->arg;
-						} else if (strcmp(de->defname, "sorted_by") == 0) {
-							$$->sort_list = (PGList *)de->arg;
-						}
-					}
-					$$->options = $4;
-					$$->onCommit = $5;
+					$$->options = $3;
+					$$->onCommit = $4;
 					$$->viewQuery = NULL;
 					$$->skipData = false;		/* might get changed later */
 				}

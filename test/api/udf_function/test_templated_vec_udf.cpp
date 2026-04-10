@@ -3,6 +3,7 @@
 #include "udf_functions_to_test.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Vectorized UDF functions using templates", "[coverage][.]") {
 	duckdb::unique_ptr<QueryResult> result;

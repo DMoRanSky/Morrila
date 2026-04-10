@@ -2,8 +2,7 @@
 # description: Test the memory usage of the ART for various workloads
 # group: [memory]
 
-# FIXME: Fails with non-default vector sizes.
-require exact_vector_size 2048
+require noforcestorage
 
 require skip_reload
 

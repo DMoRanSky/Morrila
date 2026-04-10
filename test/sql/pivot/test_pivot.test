@@ -266,7 +266,7 @@ SELECT *
       AS p
   ORDER BY EMPID;
 ----
-Parser Error: syntax error at or near ")"
+
 
 # star
 statement error
@@ -276,7 +276,7 @@ SELECT *
       AS p
   ORDER BY EMPID;
 ----
-Binder Error: STAR expression is not supported here
+must contain columns or lists of columns
 
 query I
 FROM

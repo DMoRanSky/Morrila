@@ -29,35 +29,25 @@ else
 fi
 
 script_dir="$(dirname "$(readlink -f "$0")")"
-private_key_file=""
-
-cleanup() {
-  if [ -n "$private_key_file" ]; then
-    rm -f "$private_key_file"
-  fi
-}
-
-trap cleanup EXIT
 
 # calculate SHA256 hash of extension binary
 cat $ext > $ext.append
 
-( command -v truncate >/dev/null 2>&1 && truncate -s -256 $ext.append ) || ( command -v gtruncate >/dev/null 2>&1 && gtruncate -s -256 $ext.append ) || exit 1
+( command -v truncate && truncate -s -256 $ext.append ) || ( command -v gtruncate && gtruncate -s -256 $ext.append ) || exit 1
 
 # (Optionally) Sign binary
 if [ "$DUCKDB_EXTENSION_SIGNING_PK" != "" ]; then
-  private_key_file=$(mktemp "${TMPDIR:-/tmp}/duckdb-extension-signing.XXXXXX.pem")
-  echo "$DUCKDB_EXTENSION_SIGNING_PK" > "$private_key_file"
+  echo "$DUCKDB_EXTENSION_SIGNING_PK" > private.pem
   $script_dir/compute-extension-hash.sh $ext.append > $ext.hash
-  openssl pkeyutl -sign -in $ext.hash -inkey "$private_key_file" -pkeyopt digest:sha256 -out $ext.sign
+  openssl pkeyutl -sign -in $ext.hash -inkey private.pem -pkeyopt digest:sha256 -out $ext.sign
+  rm -f private.pem
 else
   # Default to 256 zeros
-  dd if=/dev/zero of=$ext.sign bs=256 count=1 status=none
+  dd if=/dev/zero of=$ext.sign bs=256 count=1
 fi
 
 # append signature to extension binary
 cat $ext.sign >> $ext.append
-rm $ext.sign
 
 # compress extension binary
 if [[ $4 == wasm_* ]]; then
@@ -65,14 +55,12 @@ if [[ $4 == wasm_* ]]; then
 else
   gzip < $ext.append > "$ext.compressed"
 fi
-rm $ext.append
 
 set -e
 
 # Abort if AWS key is not set
 if [ -z "$AWS_ACCESS_KEY_ID" ]; then
     echo "No AWS key found, skipping.."
-    rm "$ext.compressed"
     exit 0
 fi
 
@@ -86,7 +74,6 @@ fi
 if [[ $7 = 'true' ]]; then
   if [ -z "$3" ]; then
     echo "extension-upload-single.sh called with upload_versioned=true but no extension version was passed"
-    rm "$ext.compressed"
     exit 1
   fi
 
@@ -105,6 +92,3 @@ if [[ $6 = 'true' ]]; then
     aws s3 cp $ext.compressed s3://$5/$3/$4/$1.duckdb_extension.gz $DRY_RUN_PARAM --acl public-read
   fi
 fi
-
-# clean up
-rm "$ext.compressed"

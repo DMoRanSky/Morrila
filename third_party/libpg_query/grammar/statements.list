@@ -1,4 +1,3 @@
-AlterDatabaseStmt
 AlterObjectSchemaStmt
 AlterSeqStmt
 AlterTableStmt
@@ -27,7 +26,6 @@ ImportStmt
 IndexStmt
 InsertStmt
 LoadStmt
-MergeIntoStmt
 PragmaStmt
 PrepareStmt
 RenameStmt

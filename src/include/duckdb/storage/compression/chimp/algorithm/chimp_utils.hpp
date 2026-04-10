@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include <cstdint>
+#include "duckdb.h"
 
 namespace duckdb {
 

@@ -71,8 +71,8 @@ static void CheckEnumParameter(const Expression &expr) {
 	}
 }
 
-static unique_ptr<FunctionData> BindEnumFunction(ClientContext &context, ScalarFunction &bound_function,
-                                                 vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> BindEnumFunction(ClientContext &context, ScalarFunction &bound_function,
+                                          vector<unique_ptr<Expression>> &arguments) {
 	CheckEnumParameter(*arguments[0]);
 	if (arguments[0]->return_type.id() != LogicalTypeId::ENUM) {
 		throw BinderException("This function needs an ENUM as an argument");
@@ -80,8 +80,8 @@ static unique_ptr<FunctionData> BindEnumFunction(ClientContext &context, ScalarF
 	return nullptr;
 }
 
-static unique_ptr<FunctionData> BindEnumCodeFunction(ClientContext &context, ScalarFunction &bound_function,
-                                                     vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> BindEnumCodeFunction(ClientContext &context, ScalarFunction &bound_function,
+                                              vector<unique_ptr<Expression>> &arguments) {
 	CheckEnumParameter(*arguments[0]);
 	if (arguments[0]->return_type.id() != LogicalTypeId::ENUM) {
 		throw BinderException("This function needs an ENUM as an argument");
@@ -90,16 +90,16 @@ static unique_ptr<FunctionData> BindEnumCodeFunction(ClientContext &context, Sca
 	auto phy_type = EnumType::GetPhysicalType(arguments[0]->return_type);
 	switch (phy_type) {
 	case PhysicalType::UINT8:
-		bound_function.SetReturnType(LogicalType(LogicalTypeId::UTINYINT));
+		bound_function.return_type = LogicalType(LogicalTypeId::UTINYINT);
 		break;
 	case PhysicalType::UINT16:
-		bound_function.SetReturnType(LogicalType(LogicalTypeId::USMALLINT));
+		bound_function.return_type = LogicalType(LogicalTypeId::USMALLINT);
 		break;
 	case PhysicalType::UINT32:
-		bound_function.SetReturnType(LogicalType(LogicalTypeId::UINTEGER));
+		bound_function.return_type = LogicalType(LogicalTypeId::UINTEGER);
 		break;
 	case PhysicalType::UINT64:
-		bound_function.SetReturnType(LogicalType(LogicalTypeId::UBIGINT));
+		bound_function.return_type = LogicalType(LogicalTypeId::UBIGINT);
 		break;
 	default:
 		throw InternalException("Unsupported Enum Internal Type");
@@ -108,8 +108,8 @@ static unique_ptr<FunctionData> BindEnumCodeFunction(ClientContext &context, Sca
 	return nullptr;
 }
 
-static unique_ptr<FunctionData> BindEnumRangeBoundaryFunction(ClientContext &context, ScalarFunction &bound_function,
-                                                              vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> BindEnumRangeBoundaryFunction(ClientContext &context, ScalarFunction &bound_function,
+                                                       vector<unique_ptr<Expression>> &arguments) {
 	CheckEnumParameter(*arguments[0]);
 	CheckEnumParameter(*arguments[1]);
 	if (arguments[0]->return_type.id() != LogicalTypeId::ENUM && arguments[0]->return_type != LogicalType::SQLNULL) {
@@ -131,33 +131,33 @@ static unique_ptr<FunctionData> BindEnumRangeBoundaryFunction(ClientContext &con
 
 ScalarFunction EnumFirstFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY}, LogicalType::VARCHAR, EnumFirstFunction, BindEnumFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 
 ScalarFunction EnumLastFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY}, LogicalType::VARCHAR, EnumLastFunction, BindEnumFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 
 ScalarFunction EnumCodeFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY}, LogicalType::ANY, EnumCodeFunction, BindEnumCodeFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 
 ScalarFunction EnumRangeFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY}, LogicalType::LIST(LogicalType::VARCHAR), EnumRangeFunction,
 	                          BindEnumFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 
 ScalarFunction EnumRangeBoundaryFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY, LogicalType::ANY}, LogicalType::LIST(LogicalType::VARCHAR),
 	                          EnumRangeBoundaryFunction, BindEnumRangeBoundaryFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 

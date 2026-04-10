@@ -1,7 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/bound_cast_data.hpp"
@@ -37,7 +33,7 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 	key_str.Flatten(ListVector::GetListSize(source));
 	val_str.Flatten(ListVector::GetListSize(source));
 
-	auto list_data = FlatVector::GetData<list_entry_t>(varchar_map);
+	auto list_data = ListVector::GetData(varchar_map);
 	auto key_data = FlatVector::GetData<string_t>(key_str);
 	auto val_data = FlatVector::GetData<string_t>(val_str);
 	auto &key_validity = FlatVector::Validity(key_str);
@@ -65,13 +61,13 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 	auto value_write_func =
 	    value_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
 
-	auto result_data = FlatVector::Writer<string_t>(result, count);
+	auto result_data = FlatVector::GetData<string_t>(result);
 	unsafe_unique_array<bool> key_needs_quotes;
 	unsafe_unique_array<bool> value_needs_quotes;
-	idx_t needs_quotes_length = DConstants::INVALID_INDEX;
+	idx_t needs_quotes_length;
 	for (idx_t i = 0; i < count; i++) {
 		if (!validity.RowIsValid(i)) {
-			result_data.SetInvalid(i);
+			FlatVector::SetNull(result, i, true);
 			continue;
 		}
 
@@ -107,8 +103,8 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 				string_length += NULL_LENGTH;
 			}
 		}
-		auto &result_str = result_data[i].EmptyString(string_length);
-		auto dataptr = result_str.GetDataWriteable();
+		result_data[i] = StringVector::EmptyString(result, string_length);
+		auto dataptr = result_data[i].GetDataWriteable();
 		idx_t offset = 0;
 
 		dataptr[offset++] = '{';
@@ -140,7 +136,7 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 			}
 		}
 		dataptr[offset++] = '}';
-		result_str.Finalize();
+		result_data[i].Finalize();
 	}
 
 	if (constant) {

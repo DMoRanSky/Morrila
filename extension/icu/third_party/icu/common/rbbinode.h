@@ -71,7 +71,7 @@ class RBBINode : public UMemory {
         int           fLastPos;             //  Last position in the rule source string
                                             //    of any text associated with this node.
                                             //    If there's a right child, this will be the same
-                                            //    as that child's last position.
+                                            //    as that child's last postion.
 
         UBool         fNullable;            // See Aho.
         int32_t       fVal;                 // For leafChar nodes, the value.
@@ -79,7 +79,7 @@ class RBBINode : public UMemory {
                                             //   corresponds to columns in the final
                                             //   state transition table.
 
-        UBool         fLookAheadEnd;        // For endMark nodes, set true if
+        UBool         fLookAheadEnd;        // For endMark nodes, set TRUE if
                                             //   marking the end of a look-ahead rule.
 
         UBool         fRuleRoot;            // True if this node is the root of a rule.
@@ -91,14 +91,13 @@ class RBBINode : public UMemory {
         UVector       *fFollowPos;
 
 
-        RBBINode(NodeType t, UErrorCode& status);
-        RBBINode(const RBBINode &other, UErrorCode& status);
+        RBBINode(NodeType t);
+        RBBINode(const RBBINode &other);
         ~RBBINode();
-        static void  NRDeleteNode(RBBINode *node);
         
-        RBBINode    *cloneTree(UErrorCode &status, int depth=0);
-        RBBINode    *flattenVariables(UErrorCode &status, int depth=0);
-        void         flattenSets(UErrorCode &status, int depth=0);
+        RBBINode    *cloneTree();
+        RBBINode    *flattenVariables();
+        void         flattenSets();
         void         findNodes(UVector *dest, RBBINode::NodeType kind, UErrorCode &status);
 
 #ifdef RBBI_DEBUG
@@ -109,7 +108,7 @@ class RBBINode : public UMemory {
 
     private:
         RBBINode &operator = (const RBBINode &other); // No defs.
-        bool operator == (const RBBINode &other);     // Private, so these functions won't accidentally be used.
+        bool operator == (const RBBINode &other);    // Private, so these functions won't accidently be used.
 
 #ifdef RBBI_DEBUG
     public:

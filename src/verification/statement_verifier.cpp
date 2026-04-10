@@ -1,9 +1,5 @@
 #include "duckdb/verification/statement_verifier.hpp"
 
-#include "duckdb/parser/query_node/select_node.hpp"
-#include "duckdb/parser/query_node/set_operation_node.hpp"
-#include "duckdb/parser/query_node/cte_node.hpp"
-
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -15,28 +11,14 @@
 #include "duckdb/verification/unoptimized_statement_verifier.hpp"
 #include "duckdb/verification/no_operator_caching_verifier.hpp"
 #include "duckdb/verification/fetch_row_verifier.hpp"
-#include "duckdb/verification/explain_statement_verifier.hpp"
 
 namespace duckdb {
 
-const vector<unique_ptr<ParsedExpression>> &StatementVerifier::GetSelectList(QueryNode &node) {
-	switch (node.type) {
-	case QueryNodeType::SELECT_NODE:
-		return node.Cast<SelectNode>().select_list;
-	case QueryNodeType::SET_OPERATION_NODE:
-		return GetSelectList(*node.Cast<SetOperationNode>().children[0]);
-	default:
-		return empty_select_list;
-	}
-}
-
 StatementVerifier::StatementVerifier(VerificationType type, string name, unique_ptr<SQLStatement> statement_p,
                                      optional_ptr<case_insensitive_map_t<BoundParameterData>> parameters_p)
-    : type(type), name(std::move(name)), statement(std::move(statement_p)),
-      select_statement(statement->type == StatementType::SELECT_STATEMENT ? &statement->Cast<SelectStatement>()
-                                                                          : nullptr),
-      parameters(parameters_p),
-      select_list(select_statement ? GetSelectList(*select_statement->node) : empty_select_list) {
+    : type(type), name(std::move(name)),
+      statement(unique_ptr_cast<SQLStatement, SelectStatement>(std::move(statement_p))), parameters(parameters_p),
+      select_list(statement->node->GetSelectList()) {
 }
 
 StatementVerifier::StatementVerifier(unique_ptr<SQLStatement> statement_p,
@@ -65,8 +47,6 @@ StatementVerifier::Create(VerificationType type, const SQLStatement &statement_p
 		return PreparedStatementVerifier::Create(statement_p, parameters);
 	case VerificationType::EXTERNAL:
 		return ExternalStatementVerifier::Create(statement_p, parameters);
-	case VerificationType::EXPLAIN:
-		return ExplainStatementVerifier::Create(statement_p, parameters);
 	case VerificationType::FETCH_ROW_AS_SCAN:
 		return FetchRowVerifier::Create(statement_p, parameters);
 	case VerificationType::INVALID:
@@ -80,8 +60,8 @@ void StatementVerifier::CheckExpressions(const StatementVerifier &other) const {
 	D_ASSERT(type == VerificationType::ORIGINAL);
 
 	// Check equality
-	if (other.RequireEquality() && select_statement) {
-		D_ASSERT(select_statement->Equals(*other.select_statement));
+	if (other.RequireEquality()) {
+		D_ASSERT(statement->Equals(*other.statement));
 	}
 
 #ifdef DEBUG
@@ -132,7 +112,7 @@ bool StatementVerifier::Run(
                                                 optional_ptr<case_insensitive_map_t<BoundParameterData>>)> &run) {
 	bool failed = false;
 
-	context.interrupt_state = ClientInterruptState::NOT_INTERRUPTED;
+	context.interrupted = false;
 	context.config.enable_optimizer = !DisableOptimizer();
 	context.config.enable_caching_operators = !DisableOperatorCaching();
 	context.config.force_external = ForceExternal();
@@ -147,7 +127,7 @@ bool StatementVerifier::Run(
 		failed = true;
 		materialized_result = make_uniq<MaterializedQueryResult>(ErrorData(ex));
 	}
-	context.interrupt_state = ClientInterruptState::NOT_INTERRUPTED;
+	context.interrupted = false;
 
 	return failed;
 }

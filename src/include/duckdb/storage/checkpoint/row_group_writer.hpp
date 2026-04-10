@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/storage/checkpoint_manager.hpp"
-#include "duckdb/common/serializer/memory_stream.hpp"
 
 namespace duckdb {
 struct ColumnCheckpointState;
@@ -19,45 +18,28 @@ class ColumnSegment;
 class RowGroup;
 class BaseStatistics;
 class SegmentStatistics;
-class MetadataWriter;
 
 // Writes data for an entire row group.
 class RowGroupWriter {
 public:
-	RowGroupWriter(TableCatalogEntry &table, PartialBlockManager &partial_block_manager);
+	RowGroupWriter(TableCatalogEntry &table, PartialBlockManager &partial_block_manager)
+	    : table(table), partial_block_manager(partial_block_manager) {
+	}
 	virtual ~RowGroupWriter() {
 	}
 
-	const vector<CompressionType> &GetCompressionTypes() const {
-		return compression_types;
-	}
+	CompressionType GetColumnCompressionType(idx_t i);
 
-	virtual CheckpointOptions GetCheckpointOptions() const = 0;
-	virtual WriteStream &GetPayloadWriter() = 0;
-	virtual MetaBlockPointer GetMetaBlockPointer() = 0;
-	virtual optional_ptr<MetadataManager> GetMetadataManager() = 0;
-	virtual void StartWritingColumns(vector<MetaBlockPointer> &column_metadata) {
-	}
-	virtual void FinishWritingColumns() {
-	}
+	virtual CheckpointType GetCheckpointType() const = 0;
+	virtual MetadataWriter &GetPayloadWriter() = 0;
 
-	DatabaseInstance &GetDatabase();
-	AttachedDatabase &GetAttachedDatabase();
 	PartialBlockManager &GetPartialBlockManager() {
 		return partial_block_manager;
-	}
-	void SetHasUnloadedColumn(idx_t column_idx) {
-		has_unloaded_columns.insert(column_idx);
-	}
-	unordered_set<idx_t> GetUnloadedColumns() const {
-		return has_unloaded_columns;
 	}
 
 protected:
 	TableCatalogEntry &table;
 	PartialBlockManager &partial_block_manager;
-	vector<CompressionType> compression_types;
-	unordered_set<idx_t> has_unloaded_columns;
 };
 
 // Writes data for an entire row group.
@@ -67,12 +49,8 @@ public:
 	                         TableDataWriter &writer, MetadataWriter &table_data_writer);
 
 public:
-	CheckpointOptions GetCheckpointOptions() const override;
-	WriteStream &GetPayloadWriter() override;
-	MetaBlockPointer GetMetaBlockPointer() override;
-	optional_ptr<MetadataManager> GetMetadataManager() override;
-	void StartWritingColumns(vector<MetaBlockPointer> &column_metadata) override;
-	void FinishWritingColumns() override;
+	CheckpointType GetCheckpointType() const override;
+	MetadataWriter &GetPayloadWriter() override;
 
 private:
 	//! Underlying writer object

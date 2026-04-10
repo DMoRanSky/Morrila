@@ -746,8 +746,8 @@ static void exp_mod_precompute_window(const mbedtls_mpi_uint *A,
 }
 
 #if defined(MBEDTLS_TEST_HOOKS) && !defined(MBEDTLS_THREADING_C)
-void (*mbedtls_safe_codepath_hook)(void) = NULL;
-void (*mbedtls_unsafe_codepath_hook)(void) = NULL;
+// Set to a default that is neither MBEDTLS_MPI_IS_PUBLIC nor MBEDTLS_MPI_IS_SECRET
+int mbedtls_mpi_optionally_safe_codepath = MBEDTLS_MPI_IS_PUBLIC + MBEDTLS_MPI_IS_SECRET + 1;
 #endif
 
 /*
@@ -757,7 +757,7 @@ void (*mbedtls_unsafe_codepath_hook)(void) = NULL;
  * Warning! If the parameter E_public has MBEDTLS_MPI_IS_PUBLIC as its value,
  * this function is not constant time with respect to the exponent (parameter E).
  */
-static inline void exp_mod_calc_first_bit_optionally_safe(const mbedtls_mpi_uint *E,
+inline void exp_mod_calc_first_bit_optionally_safe(const mbedtls_mpi_uint *E,
                                                           size_t E_limbs,
                                                           int E_public,
                                                           size_t *E_limb_index,
@@ -780,9 +780,7 @@ static inline void exp_mod_calc_first_bit_optionally_safe(const mbedtls_mpi_uint
         *E_bit_index = E_bits % biL;
 
 #if defined(MBEDTLS_TEST_HOOKS) && !defined(MBEDTLS_THREADING_C)
-        if (mbedtls_unsafe_codepath_hook != NULL) {
-            mbedtls_unsafe_codepath_hook();
-        }
+        mbedtls_mpi_optionally_safe_codepath = MBEDTLS_MPI_IS_PUBLIC;
 #endif
     } else {
         /*
@@ -792,8 +790,9 @@ static inline void exp_mod_calc_first_bit_optionally_safe(const mbedtls_mpi_uint
         *E_limb_index = E_limbs;
         *E_bit_index = 0;
 #if defined(MBEDTLS_TEST_HOOKS) && !defined(MBEDTLS_THREADING_C)
-        if (mbedtls_safe_codepath_hook != NULL) {
-            mbedtls_safe_codepath_hook();
+        // Only mark the codepath safe if there wasn't an unsafe codepath before
+        if (mbedtls_mpi_optionally_safe_codepath != MBEDTLS_MPI_IS_PUBLIC) {
+            mbedtls_mpi_optionally_safe_codepath = MBEDTLS_MPI_IS_SECRET;
         }
 #endif
     }
@@ -804,7 +803,7 @@ static inline void exp_mod_calc_first_bit_optionally_safe(const mbedtls_mpi_uint
  * not constant time with respect to the window parameter and consequently the exponent of the
  * exponentiation (parameter E of mbedtls_mpi_core_exp_mod_optionally_safe).
  */
-static inline void exp_mod_table_lookup_optionally_safe(mbedtls_mpi_uint *Wselect,
+inline void exp_mod_table_lookup_optionally_safe(mbedtls_mpi_uint *Wselect,
                                                         mbedtls_mpi_uint *Wtable,
                                                         size_t AN_limbs, size_t welem,
                                                         mbedtls_mpi_uint window,
@@ -813,9 +812,7 @@ static inline void exp_mod_table_lookup_optionally_safe(mbedtls_mpi_uint *Wselec
     if (window_public == MBEDTLS_MPI_IS_PUBLIC) {
         memcpy(Wselect, Wtable + window * AN_limbs, AN_limbs * ciL);
 #if defined(MBEDTLS_TEST_HOOKS) && !defined(MBEDTLS_THREADING_C)
-        if (mbedtls_unsafe_codepath_hook != NULL) {
-            mbedtls_unsafe_codepath_hook();
-        }
+        mbedtls_mpi_optionally_safe_codepath = MBEDTLS_MPI_IS_PUBLIC;
 #endif
     } else {
         /* Select Wtable[window] without leaking window through
@@ -823,8 +820,9 @@ static inline void exp_mod_table_lookup_optionally_safe(mbedtls_mpi_uint *Wselec
         mbedtls_mpi_core_ct_uint_table_lookup(Wselect, Wtable,
                                               AN_limbs, welem, window);
 #if defined(MBEDTLS_TEST_HOOKS) && !defined(MBEDTLS_THREADING_C)
-        if (mbedtls_safe_codepath_hook != NULL) {
-            mbedtls_safe_codepath_hook();
+        // Only mark the codepath safe if there wasn't an unsafe codepath before
+        if (mbedtls_mpi_optionally_safe_codepath != MBEDTLS_MPI_IS_PUBLIC) {
+            mbedtls_mpi_optionally_safe_codepath = MBEDTLS_MPI_IS_SECRET;
         }
 #endif
     }
@@ -858,8 +856,8 @@ static void mbedtls_mpi_core_exp_mod_optionally_safe(mbedtls_mpi_uint *X,
     /* We'll process the bits of E from most significant
      * (limb_index=E_limbs-1, E_bit_index=biL-1) to least significant
      * (limb_index=0, E_bit_index=0). */
-    size_t E_limb_index = E_limbs;
-    size_t E_bit_index = 0;
+    size_t E_limb_index;
+    size_t E_bit_index;
     exp_mod_calc_first_bit_optionally_safe(E, E_limbs, E_public,
                                            &E_limb_index, &E_bit_index);
 

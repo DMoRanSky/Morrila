@@ -30,7 +30,6 @@ struct SumState {
 
 	void Initialize() {
 		this->isset = false;
-		this->value = 0;
 	}
 
 	void Combine(const SumState<T> &other) {
@@ -183,6 +182,7 @@ struct BaseSumOperation {
 		STATEOP::template AddValues<STATE>(state, count);
 		ADDOP::template AddConstant<STATE, INPUT_TYPE>(state, input, count);
 	}
+
 	static bool IgnoreNull() {
 		return true;
 	}

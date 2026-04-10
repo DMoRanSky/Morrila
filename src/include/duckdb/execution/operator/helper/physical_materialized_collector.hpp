@@ -16,12 +16,12 @@ namespace duckdb {
 
 class PhysicalMaterializedCollector : public PhysicalResultCollector {
 public:
-	PhysicalMaterializedCollector(PhysicalPlan &physical_plan, PreparedStatementData &data, bool parallel);
+	PhysicalMaterializedCollector(PreparedStatementData &data, bool parallel);
 
 	bool parallel;
 
 public:
-	unique_ptr<QueryResult> GetResult(GlobalSinkState &state) const override;
+	unique_ptr<QueryResult> GetResult(GlobalSinkState &state) override;
 
 public:
 	// Sink interface
@@ -33,6 +33,22 @@ public:
 
 	bool ParallelSink() const override;
 	bool SinkOrderDependent() const override;
+};
+
+//===--------------------------------------------------------------------===//
+// Sink
+//===--------------------------------------------------------------------===//
+class MaterializedCollectorGlobalState : public GlobalSinkState {
+public:
+	mutex glock;
+	unique_ptr<ColumnDataCollection> collection;
+	shared_ptr<ClientContext> context;
+};
+
+class MaterializedCollectorLocalState : public LocalSinkState {
+public:
+	unique_ptr<ColumnDataCollection> collection;
+	ColumnDataAppendState append_state;
 };
 
 } // namespace duckdb

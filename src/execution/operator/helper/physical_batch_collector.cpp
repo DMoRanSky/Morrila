@@ -6,8 +6,7 @@
 
 namespace duckdb {
 
-PhysicalBatchCollector::PhysicalBatchCollector(PhysicalPlan &physical_plan, PreparedStatementData &data)
-    : PhysicalResultCollector(physical_plan, data) {
+PhysicalBatchCollector::PhysicalBatchCollector(PreparedStatementData &data) : PhysicalResultCollector(data) {
 }
 
 SinkResultType PhysicalBatchCollector::Sink(ExecutionContext &context, DataChunk &chunk,
@@ -47,7 +46,7 @@ unique_ptr<GlobalSinkState> PhysicalBatchCollector::GetGlobalSinkState(ClientCon
 	return make_uniq<BatchCollectorGlobalState>(context, *this);
 }
 
-unique_ptr<QueryResult> PhysicalBatchCollector::GetResult(GlobalSinkState &state) const {
+unique_ptr<QueryResult> PhysicalBatchCollector::GetResult(GlobalSinkState &state) {
 	auto &gstate = state.Cast<BatchCollectorGlobalState>();
 	D_ASSERT(gstate.result);
 	return std::move(gstate.result);

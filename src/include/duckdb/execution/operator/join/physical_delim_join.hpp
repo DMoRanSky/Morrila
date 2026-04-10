@@ -18,10 +18,9 @@ class PhysicalHashAggregate;
 //! PhysicalColumnDataScan in the other side. Implementations are PhysicalLeftDelimJoin and PhysicalRightDelimJoin
 class PhysicalDelimJoin : public PhysicalOperator {
 public:
-	PhysicalDelimJoin(PhysicalPlan &physical_plan, PhysicalOperatorType type, vector<LogicalType> types,
-	                  PhysicalOperator &original_join, PhysicalOperator &distinct,
-	                  const vector<const_reference<PhysicalOperator>> &delim_scans, idx_t estimated_cardinality,
-	                  optional_idx delim_idx);
+	PhysicalDelimJoin(PhysicalOperatorType type, vector<LogicalType> types, PhysicalOperator &original_join,
+	                  PhysicalOperator &distinct, const vector<const_reference<PhysicalOperator>> &delim_scans,
+	                  idx_t estimated_cardinality, optional_idx delim_idx);
 
 	PhysicalOperator &join;
 	PhysicalHashAggregate &distinct;

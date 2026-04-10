@@ -3,9 +3,7 @@
 
 namespace duckdb {
 
-namespace {
-
-void CastToTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void CastToTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	throw InternalException("CastToType function cannot be executed directly");
 }
 
@@ -21,11 +19,10 @@ unique_ptr<Expression> BindCastToTypeFunction(FunctionBindExpressionInput &input
 	return BoundCastExpression::AddCastToType(input.context, std::move(input.children[0]), return_type);
 }
 
-} // namespace
 ScalarFunction CastToTypeFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::ANY, LogicalType::ANY}, LogicalType::ANY, CastToTypeFunction);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
-	fun.SetBindExpressionCallback(BindCastToTypeFunction);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	fun.bind_expression = BindCastToTypeFunction;
 	return fun;
 }
 

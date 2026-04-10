@@ -1,10 +1,12 @@
 # fmt: off
 
-import os
-import re
-
 import pytest
+import subprocess
+import sys
+from typing import List
 from conftest import ShellTest
+import os
+from pathlib import Path
 
 
 def test_basic(shell):
@@ -14,11 +16,7 @@ def test_basic(shell):
 
 
 def test_range(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".mode csv")
-        .statement("select * from range(10000)")
-    )
+    test = ShellTest(shell).statement("select * from range(10000)")
     result = test.run()
     result.check_stdout("9999")
 
@@ -33,7 +31,7 @@ def test_import(shell, generated_file):
     )
 
     result = test.run()
-    result.check_stdout("col_1,col_2\r\n1,2\r\n10,20")
+    result.check_stdout("col_1,col_2\n1,2\n10,20")
 
 
 @pytest.mark.parametrize('generated_file', ["42\n84"], indirect=True)
@@ -95,6 +93,11 @@ def test_invalid_cast(shell):
     result = test.run()
     result.check_stderr("Could not convert")
 
+def test_invalid_backup(shell, random_filepath):
+    test = ShellTest(shell).statement(f'.backup {random_filepath.as_posix()}')
+    result = test.run()
+    result.check_stderr("unsupported in the current version of the CLI")
+
 def test_newline_in_value(shell):
     test = (
         ShellTest(shell)
@@ -115,111 +118,31 @@ world" """)
     result = test.run()
     result.check_stdout("hello\\nworld")
 
-def test_bail_on_stops_after_error(shell):
+# FIXME: this test was underspecified, no expected result was provided
+def test_bailing_mechanism(shell):
     test = (
         ShellTest(shell)
         .statement(".bail on")
-        .statement("invalid sql;")
-        .statement("select 'should not reach here'")
-    )
-
-    result = test.run()
-    assert result.status_code == 1
-    assert result.stdout == ""
-
-
-def test_bail_off_continues_after_error(shell):
-    test = (
-        ShellTest(shell)
         .statement(".bail off")
-        .statement("invalid sql;")
-        .statement("select 'reached here'")
+        .statement(".binary on")
+        .statement("SELECT 42")
+        .statement(".binary off")
+        .statement("SELECT 42")
     )
 
     result = test.run()
-    result.check_stderr("Parser Error: syntax error at or near \"invalid\"")
-    assert "reached here" in str(result.stdout)
+    result.check_stdout("42")
 
-def test_bail_on_missing_init(shell):
-    test = (
-        ShellTest(shell, ['-init', '___thisfiledoesnotexist'])
-        .statement("select 'reached here'")
-    )
-
-    result = test.run()
-    result.check_stderr("___thisfiledoesnotexist")
-    assert "reached here" not in str(result.stdout)
-
-@pytest.mark.parametrize('generated_file', ["selec 42;"], indirect=True)
-def test_bail_within_init(shell, generated_file):
-    test = (
-        ShellTest(shell, ['-init', generated_file.as_posix()])
-        .statement("select 'reached here'")
-    )
-
-    result = test.run()
-    result.check_stderr("selec")
-    assert "reached here" not in str(result.stdout)
-
-@pytest.mark.parametrize('generated_file', ["selec 42;\nselect 'reached here'"], indirect=True)
-def test_bail_within_read(shell, generated_file):
-    test = (
-        ShellTest(shell)
-        .statement(".read \"" + generated_file.as_posix() + "\"")
-    )
-
-    result = test.run()
-    result.check_stderr("selec")
-    assert "reached here" not in str(result.stdout)
-@pytest.mark.parametrize('generated_file', [".bail off\nselec 42;"], indirect=True)
-def test_explicit_bail_within_init(shell, generated_file):
-    test = (
-        ShellTest(shell, ['-init', generated_file.as_posix()])
-        .statement("select 'reached here'")
-    )
-
-    result = test.run()
-    result.check_stderr("selec")
-    assert "reached here" in str(result.stdout)
-
-@pytest.mark.parametrize('generated_file', ["selec 42;\nselect 'reached here'"], indirect=True)
-def test_explicit_bail_within_read(shell, generated_file):
-    test = (
-        ShellTest(shell)
-        .statement(".bail off")
-        .statement(".read \"" + generated_file.as_posix() + "\"")
-    )
-
-    result = test.run()
-    result.check_stderr("selec")
-    assert "reached here" in str(result.stdout)
-
-@pytest.mark.skipif(os.name == 'nt', reason="Skipped on windows")
-def test_shell_command(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".shell echo quack")
-    )
-    result = test.run()
-    result.check_stdout("quack")
-
+# FIXME: no verification at all?
 def test_cd(shell, tmp_path):
-    pwd_dir = os.getcwd()
+    current_dir = Path(os.getcwd())
 
-    pwd_test = (
-        ShellTest(shell)
-        .statement(".shell pwd")
-    )
-    pwd_result = pwd_test.run()
-    pwd_result.check_stdout('duckdb')
-
-    random_dir_test = (
+    test = (
         ShellTest(shell)
         .statement(f".cd {tmp_path.as_posix()}")
+        .statement(f".cd {current_dir.as_posix()}")
     )
-    random_dir_result = random_dir_test.run()
-    random_dir_result.check_not_exist(pwd_dir)
-    random_dir_result.check_stderr(None)
+    result = test.run()
 
 def test_changes_on(shell):
     test = (
@@ -243,8 +166,7 @@ def test_changes_off(shell):
         .statement("DROP TABLE a;")
     )
     result = test.run()
-    result.check_not_exist("changes:")
-    result.check_stdout(None)
+    result.check_stdout("")
 
 def test_echo(shell):
     test = (
@@ -255,22 +177,13 @@ def test_echo(shell):
     result = test.run()
     result.check_stdout("SELECT 42")
 
-def test_invalid_sql(shell):
-    test = ShellTest(shell).statement("invalid command;")
-    result = test.run()
-    assert result.status_code == 1
-    result.check_stderr("Parser Error: syntax error at or near \"invalid\"")
-
 @pytest.mark.parametrize("alias", ["exit", "quit"])
 def test_exit(shell, alias):
-    test = ShellTest(shell).statement(f".{alias}").statement("invalid command;")
+    test = ShellTest(shell).statement(f".{alias}")
     result = test.run()
-    # Shows that the exit & quit dot commands exit the shell prior to the error
-    # Still indirect but ensures a failure if they do not work as expected
-    assert result.status_code == 0
 
 def test_exit_rc(shell):
-    test = ShellTest(shell).statement(".exit 17")
+    test = ShellTest(shell).statement(f".exit 17")
     result = test.run()
     assert result.status_code == 17
 
@@ -282,7 +195,6 @@ def test_print(shell):
 def test_headers(shell):
     test = (
         ShellTest(shell)
-        .statement(".mode csv")
         .statement(".headers on")
         .statement("SELECT 42 as wilbur")
     )
@@ -301,8 +213,8 @@ def test_regexp_matches(shell):
 
 def test_help(shell):
     test = (
-        ShellTest(shell)
-        .statement(".help")
+        ShellTest(shell).
+        statement(".help")
     )
     result = test.run()
     result.check_stdout("Show help text for PATTERN")
@@ -420,19 +332,44 @@ def test_show_basic(shell):
     result = test.run()
     result.check_stdout("rowseparator")
 
+def test_timeout(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".timeout")
+    )
+    result = test.run()
+    result.check_stderr("unsupported in the current version of the CLI")
+
+
+def test_save(shell, random_filepath):
+    test = (
+        ShellTest(shell)
+        .statement(f".save {random_filepath.as_posix()}")
+    )
+    result = test.run()
+    result.check_stderr("unsupported in the current version of the CLI")
+
+def test_restore(shell, random_filepath):
+    test = (
+        ShellTest(shell)
+        .statement(f".restore {random_filepath.as_posix()}")
+    )
+    result = test.run()
+    result.check_stderr("unsupported in the current version of the CLI")
+
 @pytest.mark.parametrize("cmd", [
-    "vfsinfo",
-    "vfsname",
-    "vfslist",
+    ".vfsinfo",
+    ".vfsname",
+    ".vfslist"
 ])
 def test_volatile_commands(shell, cmd):
+    # The original comment read: don't crash plz
     test = (
         ShellTest(shell)
         .statement(f".{cmd}")
     )
     result = test.run()
-    assert result.status_code == 1
-    result.check_stderr("Unknown Command Error")
+    result.check_stderr("")
 
 @pytest.mark.parametrize("pattern", [
     "test",
@@ -454,10 +391,10 @@ def test_schema_indent(shell):
     test = (
         ShellTest(shell)
         .statement("create table test (a int, b varchar, c int, d int, k int, primary key(a, b));")
-        .statement(".schema -indent")
+        .statement(f".schema -indent")
     )
     result = test.run()
-    result.check_stdout("CREATE TABLE test(\n")
+    result.check_stdout("CREATE TABLE test(")
 
 def test_tables(shell):
     test = (
@@ -468,9 +405,7 @@ def test_tables(shell):
         .statement(".tables")
     )
     result = test.run()
-    result.check_stdout("asda")
-    result.check_stdout("bsdf")
-    result.check_stdout("csda")
+    result.check_stdout("asda  bsdf  csda")
 
 def test_tables_pattern(shell):
     test = (
@@ -481,63 +416,7 @@ def test_tables_pattern(shell):
         .statement(".tables %da")
     )
     result = test.run()
-    result.check_stdout("asda")
-    result.check_stdout("csda")
-
-def test_tables_schema_disambiguation(shell):
-    test = (
-        ShellTest(shell)
-        .statement("CREATE SCHEMA a;")
-        .statement("CREATE SCHEMA b;")
-        .statement("CREATE TABLE a.foobar(name VARCHAR);")
-        .statement("CREATE TABLE b.foobar(name VARCHAR);")
-        .statement(".tables")
-    )
-    result = test.run()
-    result.check_stdout("foobar")
-
-def test_tables_schema_filtering(shell):
-    test = (
-        ShellTest(shell)
-        .statement("CREATE SCHEMA a;")
-        .statement("CREATE SCHEMA b;")
-        .statement("CREATE TABLE a.foobar(name VARCHAR);")
-        .statement("CREATE TABLE b.foobar(name VARCHAR);")
-        .statement("CREATE TABLE a.unique_table(x INTEGER);")
-        .statement("CREATE TABLE b.other_table(y INTEGER);")
-        .statement(".tables a.%")
-    )
-    result = test.run()
-    result.check_stdout("foobar")
-    result.check_stdout("unique_table")
-
-def test_tables_backward_compatibility(shell):
-    test = (
-        ShellTest(shell)
-        .statement("CREATE TABLE main_table(i INTEGER);")
-        .statement("CREATE TABLE unique_table(x INTEGER);")
-        .statement(".tables")
-    )
-    result = test.run()
-    result.check_stdout("main_table")
-    result.check_stdout("unique_table")
-
-def test_tables_with_views(shell):
-    test = (
-        ShellTest(shell)
-        .statement("CREATE SCHEMA a;")
-        .statement("CREATE SCHEMA b;")
-        .statement("CREATE TABLE a.foobar(name VARCHAR);")
-        .statement("CREATE TABLE b.foobar(name VARCHAR);")
-        .statement("CREATE VIEW a.test_view AS SELECT 1 AS x;")
-        .statement("CREATE VIEW b.test_view AS SELECT 2 AS y;")
-        .statement(".tables")
-    )
-    result = test.run()
-    result.check_stdout("foobar")
-    result.check_stdout("test_view")
-    result.check_stdout("foobar")
-    result.check_stdout("test_view")
+    result.check_stdout("asda  csda")
 
 def test_indexes(shell):
     test = (
@@ -552,12 +431,10 @@ def test_indexes(shell):
 def test_schema_pattern_no_result(shell):
     test = (
         ShellTest(shell)
-        .statement("create table testp (a integer)")
-        .statement("create table test_p (b integer)")
-        .statement(".schema %z%")
+        .statement(".schema %p%")
     )
     result = test.run()
-    result.check_not_exist("CREATE TABLE")
+    result.check_stdout("")
 
 def test_schema_pattern(shell):
     test = (
@@ -590,7 +467,7 @@ def test_clone_error(shell):
         .statement(".clone")
     )
     result = test.run()
-    result.check_stderr('Unrecognized command')
+    result.check_stderr('Error: unknown command or invalid arguments:  "clone". Enter ".help" for help')
 
 def test_sha3sum(shell):
     test = (
@@ -598,7 +475,7 @@ def test_sha3sum(shell):
         .statement(".sha3sum")
     )
     result = test.run()
-    result.check_stderr('Unknown Command Error')
+    result.check_stderr('')
 
 def test_jsonlines(shell):
     test = (
@@ -609,15 +486,7 @@ def test_jsonlines(shell):
     result = test.run()
     result.check_stdout('{"42":42,"43":43}')
 
-def test_jsonlines_cmdline(shell):
-    test = (
-        ShellTest(shell, ['-jsonlines'])
-        .statement("SELECT 42,43;")
-    )
-    result = test.run()
-    result.check_stdout('{"42":42,"43":43}')
-
-def test_nested_jsonlines(shell):
+def test_nested_jsonlines(shell, json_extension):
     test = (
         ShellTest(shell)
         .statement(".mode jsonlines")
@@ -656,20 +525,14 @@ def test_output_csv_mode(shell, random_filepath):
     result.stdout = open(random_filepath, 'rb').read()
     result.check_stdout(b'42')
 
-def test_issue_6204(shell, random_filepath):
+def test_issue_6204(shell):
     test = (
         ShellTest(shell)
-        .statement(f".output {random_filepath.as_posix()}")
+        .statement(".output foo.txt")
         .statement("select * from range(2049);")
     )
     result = test.run()
-    result.check_stdout(None)
-
-    with open(random_filepath, 'r', encoding='utf-8') as f:
-        output = f.read()
-        nums = set(int(x) for x in re.findall(r'\d+', output))
-
-        assert all(i in nums for i in range(2049))
+    result.check_stdout("")
 
 def test_once(shell, random_filepath):
     test = (
@@ -681,82 +544,38 @@ def test_once(shell, random_filepath):
     result.stdout = open(random_filepath, 'rb').read()
     result.check_stdout(b'43')
 
-def test_output_off_no_error(shell):
-    # .output off should suppress output without printing an error to stderr
+def test_log(shell, random_filepath):
     test = (
         ShellTest(shell)
-        .statement(".output off")
+        .statement(f".log {random_filepath.as_posix()}")
+        .statement("SELECT 42;")
+        .statement(".log off")
     )
     result = test.run()
-    assert "Error" not in result.stderr
+    result.check_stdout('')
 
-def test_output_invalid_path_error(shell, tmp_path):
-    # .output to an invalid path should print an error to stderr
-    invalid_path = (tmp_path / "nonexistent_dir" / "file.txt").as_posix()
+def test_mode_ascii(shell):
     test = (
         ShellTest(shell)
-        .statement(f".output {invalid_path}")
-    )
-    result = test.run()
-    result.check_stderr("Error: cannot write to")
-
-def test_once_temp_file_cleanup(shell, tmp_path):
-    # Verify that temp files created by .once are cleaned up
-    # when a new temp file is created via NewTempFile -> ClearTempFile
-    filepath1 = tmp_path / "first.txt"
-    filepath2 = tmp_path / "second.txt"
-    test = (
-        ShellTest(shell)
-        .statement(f".once {filepath1.as_posix()}")
-        .statement("SELECT 'first'")
-        .statement(f".once {filepath2.as_posix()}")
-        .statement("SELECT 'second'")
-        .statement(".output stdout")
-        .statement("SELECT 'done'")
-    )
-    result = test.run()
-    result.check_stdout("done")
-    assert filepath2.exists()
-    result.stdout = open(filepath2, 'rb').read()
-    result.check_stdout(b'second')
-
-@pytest.mark.parametrize("dot_command", [
-    ".mode ascii",
-    ""
-])
-def test_mode_ascii(shell, dot_command):
-    args = ['-ascii'] if len(dot_command) == 0 else []
-    test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        .statement(".mode ascii")
         .statement("SELECT NULL, 42, 'fourty-two', 42.0;")
     )
     result = test.run()
     result.check_stdout('fourty-two')
 
-@pytest.mark.parametrize("dot_command", [
-    ".mode csv",
-    ""
-])
-def test_mode_csv(shell, dot_command):
-    args = ['-csv'] if len(dot_command) == 0 else []
+def test_mode_csv(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode csv")
         .statement("SELECT NULL, 42, 'fourty-two', 42.0;")
     )
     result = test.run()
     result.check_stdout(',fourty-two,')
 
-@pytest.mark.parametrize("dot_command", [
-    ".mode column",
-    ""
-])
-def test_mode_column(shell, dot_command):
-    args = ['-column'] if len(dot_command) == 0 else []
+def test_mode_column(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode column")
         .statement("SELECT NULL, 42, 'fourty-two', 42.0;")
     )
     result = test.run()
@@ -771,15 +590,10 @@ def test_mode_html(shell):
     result = test.run()
     result.check_stdout('<td>fourty-two</td>')
 
-@pytest.mark.parametrize("dot_command", [
-    ".mode html",
-    ""
-])
-def test_mode_html_escapes(shell, dot_command):
-    args = ['-html'] if len(dot_command) == 0 else []
+def test_mode_html_escapes(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode html")
         .statement("SELECT '<&>\"\'\'' AS \"&><\"\"\'\";")
     )
     result = test.run()
@@ -803,20 +617,14 @@ def test_mode_csv_escapes(shell):
     result = test.run()
     result.check_stdout('"BEGINHEADER"",\nENDHEADER"\r\n"BEGINVAL,\n""ENDVAL"')
 
-
-@pytest.mark.parametrize("dot_command", [
-    ".mode json",
-    ""
-])
-def test_mode_json_infinity(shell, dot_command):
-    args = ['-json'] if len(dot_command) == 0 else []
+def test_mode_json_infinity(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode json")
         .statement("SELECT 'inf'::DOUBLE AS inf, '-inf'::DOUBLE AS ninf, 'nan'::DOUBLE AS nan, '-nan'::DOUBLE AS nnan;")
     )
     result = test.run()
-    result.check_stdout('[{"inf":Infinity,"ninf":-Infinity,"nan":NaN,"nnan":NaN}]')
+    result.check_stdout('[{"inf":1e999,"ninf":-1e999,"nan":null,"nnan":null}]')
 
 def test_mode_insert(shell):
     test = (
@@ -842,45 +650,29 @@ def test_mode_insert_table(shell):
     result = test.run()
     result.check_stdout('my_table')
 
-@pytest.mark.parametrize("dot_command", [
-    ".mode line",
-    ""
-])
-def test_mode_line(shell, dot_command):
-    args = ['-line'] if len(dot_command) == 0 else []
+def test_mode_line(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode line")
         .statement("SELECT NULL, 42, 'fourty-two' x, 42.0;")
     )
     result = test.run()
     result.check_stdout('x = fourty-two')
 
-@pytest.mark.parametrize("dot_command", [
-    ".mode list",
-    ""
-])
-def test_mode_list(shell, dot_command):
-    args = ['-list'] if len(dot_command) == 0 else []
+def test_mode_list(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode list")
         .statement("SELECT NULL, 42, 'fourty-two' x, 42.0;")
     )
     result = test.run()
     result.check_stdout('|fourty-two|')
 
 # Original comment: FIXME sqlite3_column_blob and %! format specifier
-
-@pytest.mark.parametrize("dot_command", [
-    ".mode quote",
-    ""
-])
-def test_mode_quote(shell, dot_command):
-    args = ['-quote'] if len(dot_command) == 0 else []
+def test_mode_quote(shell):
     test = (
-        ShellTest(shell, args)
-        .statement(dot_command)
+        ShellTest(shell)
+        .statement(".mode quote")
         .statement("SELECT NULL, 42, 'fourty-two' x, 42.0;")
     )
     result = test.run()
@@ -927,7 +719,7 @@ def test_enable_profiling(shell):
         .statement("PRAGMA enable_profiling")
     )
     result = test.run()
-    result.check_stderr(None)
+    result.check_stderr('')
 
 def test_profiling_select(shell):
     test = (
@@ -939,7 +731,6 @@ def test_profiling_select(shell):
     result.check_stderr('Query Profiling Information')
     result.check_stdout('42')
 
-@pytest.mark.skipif(os.name == 'nt', reason="echo does not exist on Windows")
 @pytest.mark.parametrize("command", [
     "system",
     "shell"
@@ -951,14 +742,6 @@ def test_echo_command(shell, command):
     )
     result = test.run()
     result.check_stdout('42')
-
-def test_system_pwd_command(shell):
-    test = (
-        ShellTest(shell)
-        .statement(f".sh pwd")
-    )
-    result = test.run()
-    result.check_stdout('duckdb')
 
 def test_profiling_optimizer(shell):
     test = (
@@ -1004,21 +787,82 @@ def test_eqp(shell):
     result = test.run()
     result.check_stdout('DUMMY_SCAN')
 
+def test_clone(shell, random_filepath):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE TABLE a (I INTEGER)")
+        .statement("INSERT INTO a VALUES (42)")
+        .statement(f".clone {random_filepath.as_posix()}")
+    )
+    result = test.run()
+    result.check_stderr('unknown command or invalid arguments')
+
+
 def test_databases(shell):
     test = (
         ShellTest(shell)
-        .statement("ATTACH ':memory:' AS xx")
         .statement(".databases")
     )
     result = test.run()
     result.check_stdout('memory')
-    result.check_stdout('xx')
+
+
+def test_dump_create(shell):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE TABLE a (i INTEGER);")
+        .statement(".changes off")
+        .statement("INSERT INTO a VALUES (42);")
+        .statement(".dump")
+    )
+    result = test.run()
+    result.check_stdout('CREATE TABLE a(i INTEGER)')
+    result.check_stdout('COMMIT')
+
+@pytest.mark.parametrize("pattern", [
+    "a",
+    "a%"
+])
+def test_dump_specific(shell, pattern):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE TABLE a (i INTEGER);")
+        .statement(".changes off")
+        .statement("INSERT INTO a VALUES (42);")
+        .statement(f".dump {pattern}")
+    )
+    result = test.run()
+    result.check_stdout('CREATE TABLE a(i INTEGER)')
+
+# Original comment: more types, tables and views
+def test_dump_mixed(shell):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE TABLE a (d DATE, k FLOAT, t TIMESTAMP);")
+        .statement("CREATE TABLE b (c INTEGER);")
+        .statement(".changes off")
+        .statement("INSERT INTO a VALUES (DATE '1992-01-01', 0.3, NOW());")
+        .statement("INSERT INTO b SELECT * FROM range(0,10);")
+        .statement(".dump")
+    )
+    result = test.run()
+    result.check_stdout('CREATE TABLE a(d DATE, k FLOAT, t TIMESTAMP);')
+
+def test_dump_blobs(shell):
+    test = (
+        ShellTest(shell)
+        .statement("create table test(t VARCHAR, b BLOB);")
+        .statement(".changes off")
+        .statement("insert into test values('literal blob', '\\x07\\x08\\x09');")
+        .statement(".dump")
+    )
+    result = test.run()
+    result.check_stdout("'\\x07\\x08\\x09'")
 
 def test_invalid_csv(shell, tmp_path):
-    # import ignores errors
     file = tmp_path / 'nonsencsv.csv'
     with open(file, 'wb+') as f:
-        f.write(b'\xFF\n42\n')
+        f.write(b'\xFF\n')
     test = (
         ShellTest(shell)
         .statement(".nullvalue NULL")
@@ -1027,7 +871,7 @@ def test_invalid_csv(shell, tmp_path):
         .statement("SELECT * FROM test;")
     )
     result = test.run()
-    result.check_stdout('42')
+    result.check_stdout('NULL')
 
 def test_mode_latex(shell):
     test = (
@@ -1048,7 +892,7 @@ def test_mode_trash(shell):
         .statement("select 1")
     )
     result = test.run()
-    result.check_stdout(None)
+    result.check_stdout('')
 
 def test_sqlite_comments(shell):
     # Using /* <comment> */
@@ -1141,29 +985,6 @@ def test_columnar_mode(shell):
     result = test.run()
     result.check_stdout('Row 1')
 
-def test_columnar_mode_truncate(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".col")
-        .statement(".maxwidth 100")
-        .statement("select * from range(100,200);")
-    )
-    result = test.run()
-    result.check_stdout('Row 98')
-    result.check_stdout('198')
-
-def test_empty_result(shell):
-    test = (
-        ShellTest(shell)
-        .statement("select 42 empty_result where 1=0;")
-    )
-    result = test.run()
-    result.check_stdout('''┌──────────────┐
-│ empty_result │
-│    int32     │
-└──────────────┘
-     0 rows''')
-
 def test_columnar_mode_constant(shell):
     columns = ','.join(["'MyValue" + str(x) + "'" for x in range(100)])
     test = (
@@ -1246,116 +1067,5 @@ def test_shell_csv_file(shell):
     )
     result = test.run()
     result.check_stdout("2008-08-10")
-
-def test_tables_invalid_pattern_handling(shell):
-    test = (
-        ShellTest(shell)
-        .statement("CREATE TABLE test_table(i INTEGER);")
-        .statement(".tables \"invalid\"pattern\"")
-    )
-    result = test.run()
-    # Should show usage message for invalid pattern
-    result.check_stderr("Usage")
-
-def test_help_prints_to_stdout(shell):
-    test = ShellTest(shell, ["--help"])
-    result = test.run()
-    result.check_stdout("OPTIONS")
-
-def test_open_with_sql(shell, random_filepath):
-    test = (
-        ShellTest(shell)
-        .env_var("MY_DB", str(random_filepath))
-        .statement(".open -sql \"select getenv('MY_DB');\"")
-        .statement("show databases;")
-    )
-    result = test.run()
-    result.check_stdout("random_import_file")
-    result.check_stderr(None)
-
-def test_open_with_multiple_sql_flags(shell, random_filepath):
-    test = (
-        ShellTest(shell)
-        .env_var("MY_DB", str(random_filepath))
-        .statement(".open -sql \"select getenv('MY_DB');\" -sql \"select 42;\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: --sql provided multiple times")
-
-def test_open_with_sql_and_no_query(shell, random_filepath):
-    test = (
-        ShellTest(shell)
-        .env_var("MY_DB", str(random_filepath))
-        .statement(".open -sql")
-    )
-    result = test.run()
-    result.check_stderr("Error: missing SQL query after --sql")
-
-def test_open_with_sql_and_file(shell, random_filepath):
-    test = (
-        ShellTest(shell)
-        .env_var("MY_DB", str(random_filepath))
-        .statement(".open -sql \"select getenv('MY_DB');\" \"test.db\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: cannot use both --sql and a FILE argument")
-
-def test_open_with_sql_and_multiple_columns(shell, random_filepath):
-    test = (
-        ShellTest(shell)
-        .env_var("MY_DB", str(random_filepath))
-        .statement(".open -sql \"select getenv('MY_DB'), 42;\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: --sql query returned multiple columns, expected single value")
-
-def test_open_with_sql_and_multiple_rows(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".open -sql \"select unnest(generate_series(1,2));\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: --sql query returned multiple rows, expected single value")
-
-def test_open_with_sql_w_db_error(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".open -sql \"select 'test'::int;\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: failed to evaluate --sql query")
-
-def test_open_with_sql_and_no_return(shell):
-    test = (
-        ShellTest(shell)
-        .statement("create table a (i integer);")
-        .statement(".open -sql \"from a where 1=0;\"")
-    )
-    result = test.run()
-    result.check_stderr("Error")
-
-def test_open_with_sql_and_dml(shell):
-    test = (
-        ShellTest(shell)
-        .statement("create table test(i integer);")
-        .statement(".open -sql \"insert into test values (1);\"")
-    )
-    result = test.run()
-    result.check_stderr("Error")
-
-def test_open_with_sql_and_null_return(shell):
-    test = (
-        ShellTest(shell)
-        .statement(".open -sql \"select NULL;\"")
-    )
-    result = test.run()
-    result.check_stderr("Error: --sql query returned a null value")
-
-
-def test_about(shell):
-    test = ShellTest(shell).statement(".about")
-
-    result = test.run()
-    result.check_stdout("DuckDB is an in-process analytical database management system designed for fast ")
 
 # fmt: on

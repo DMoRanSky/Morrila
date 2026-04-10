@@ -1,8 +1,8 @@
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
 
 namespace duckdb {
 
@@ -78,14 +78,6 @@ void ColumnDefinition::SetComment(const Value &comment) {
 	this->comment = comment;
 }
 
-const InsertionOrderPreservingMap<string> &ColumnDefinition::Tags() const {
-	return tags;
-}
-
-void ColumnDefinition::SetTags(InsertionOrderPreservingMap<string> new_tags) {
-	this->tags = std::move(new_tags);
-}
-
 const duckdb::CompressionType &ColumnDefinition::CompressionType() const {
 	return compression_type;
 }
@@ -130,13 +122,16 @@ bool ColumnDefinition::Generated() const {
 // Generated Columns (VIRTUAL)
 //===--------------------------------------------------------------------===//
 
-static void VerifyColumnRefs(const ParsedExpression &expr) {
-	ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(expr, [&](const ColumnRefExpression &column_ref) {
+static void VerifyColumnRefs(ParsedExpression &expr) {
+	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+		auto &column_ref = expr.Cast<ColumnRefExpression>();
 		if (column_ref.IsQualified()) {
 			throw ParserException(
 			    "Qualified (tbl.name) column references are not allowed inside of generated column expressions");
 		}
-	});
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { VerifyColumnRefs((ParsedExpression &)child); });
 }
 
 static void InnerGetListOfDependencies(ParsedExpression &expr, vector<string> &dependencies) {

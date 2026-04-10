@@ -7,12 +7,11 @@
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
-SourceResultType PhysicalTransaction::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                      OperatorSourceInput &input) const {
+SourceResultType PhysicalTransaction::GetData(ExecutionContext &context, DataChunk &chunk,
+                                              OperatorSourceInput &input) const {
 	auto &client = context.client;
 
 	auto type = info->type;
@@ -29,16 +28,15 @@ SourceResultType PhysicalTransaction::GetDataInternal(ExecutionContext &context,
 			// prevent it from being closed after this query, hence
 			// preserving the transaction context for the next query
 			client.transaction.SetAutoCommit(false);
+			auto &config = DBConfig::GetConfig(context.client);
 			if (info->modifier == TransactionModifierType::TRANSACTION_READ_ONLY) {
 				client.transaction.SetReadOnly();
 			}
-			client.transaction.SetInvalidationPolicy(info->invalidation_policy);
-			client.transaction.SetAutoRollback(info->auto_rollback);
-			if (Settings::Get<ImmediateTransactionModeSetting>(context.client)) {
+			if (config.options.immediate_transaction_mode) {
 				// if immediate transaction mode is enabled then start all transactions immediately
 				auto databases = DatabaseManager::Get(client).GetDatabases(client);
-				for (auto &db : databases) {
-					context.client.transaction.ActiveTransaction().GetTransaction(*db);
+				for (auto db : databases) {
+					context.client.transaction.ActiveTransaction().GetTransaction(db.get());
 				}
 			}
 		} else {
@@ -52,12 +50,6 @@ SourceResultType PhysicalTransaction::GetDataInternal(ExecutionContext &context,
 		} else {
 			// explicitly commit the current transaction
 			client.transaction.Commit();
-			// Suppress further interrupts for the remainder of this query.
-			// A committed transaction is irreversible. If a concurrent Interrupt()
-			// arrives after the physical commit, it must be silently discarded —
-			// otherwise the caller sees a failed COMMIT even though the data
-			// is already durably committed.
-			client.SuppressInterrupts();
 		}
 		break;
 	}

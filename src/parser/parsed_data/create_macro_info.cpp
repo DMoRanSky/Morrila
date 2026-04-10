@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 
@@ -17,16 +18,26 @@ CreateMacroInfo::CreateMacroInfo(CatalogType type, unique_ptr<MacroFunction> fun
 }
 
 string CreateMacroInfo::ToString() const {
-	auto prefix = GetCreatePrefix("MACRO");
-	prefix += QualifierToString(temporary ? "" : catalog, schema, name) + " ";
-	string definitions;
+	string result;
 	for (auto &function : macros) {
-		if (!definitions.empty()) {
-			definitions += ", ";
+		if (!result.empty()) {
+			result += ", ";
 		}
-		definitions += function->ToSQL();
+		result += function->ToSQL();
 	}
-	return prefix + definitions + ";";
+	// prefix with CREATE MACRO
+	string prefix = "CREATE MACRO ";
+	if (!catalog.empty()) {
+		prefix += KeywordHelper::WriteOptionallyQuoted(catalog);
+		prefix += ".";
+	}
+	if (!schema.empty()) {
+		prefix += KeywordHelper::WriteOptionallyQuoted(schema);
+		prefix += ".";
+	}
+	prefix += KeywordHelper::WriteOptionallyQuoted(name);
+	result = prefix + " " + result + ";";
+	return result;
 }
 
 unique_ptr<CreateInfo> CreateMacroInfo::Copy() const {

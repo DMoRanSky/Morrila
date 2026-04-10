@@ -2,7 +2,7 @@
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/timestamp.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "include/icu-datefunc.hpp"
@@ -207,7 +207,7 @@ struct ICUTableRange {
 				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
 			idx_t size = 0;
-			auto data = FlatVector::GetDataMutable<timestamp_t>(output.data[0]);
+			auto data = FlatVector::GetData<timestamp_t>(output.data[0]);
 			while (true) {
 				if (state.Finished(state.current_state)) {
 					break;
@@ -229,15 +229,14 @@ struct ICUTableRange {
 		}
 	}
 
-	static void AddICUTableRangeFunction(ExtensionLoader &loader) {
+	static void AddICUTableRangeFunction(DatabaseInstance &db) {
 		TableFunctionSet range("range");
 		TableFunction range_function({LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ, LogicalType::INTERVAL},
 		                             nullptr, Bind<false>, nullptr, RangeDateTimeLocalInit);
 		range_function.in_out_function = ICUTableRangeFunction<false>;
 		range_function.cardinality = Cardinality;
 		range.AddFunction(range_function);
-
-		loader.RegisterFunction(range);
+		ExtensionUtil::RegisterFunction(db, range);
 
 		// generate_series: similar to range, but inclusive instead of exclusive bounds on the RHS
 		TableFunctionSet generate_series("generate_series");
@@ -247,13 +246,12 @@ struct ICUTableRange {
 		generate_series_function.in_out_function = ICUTableRangeFunction<true>;
 		generate_series_function.cardinality = Cardinality;
 		generate_series.AddFunction(generate_series_function);
-
-		loader.RegisterFunction(generate_series);
+		ExtensionUtil::RegisterFunction(db, generate_series);
 	}
 };
 
-void RegisterICUTableRangeFunctions(ExtensionLoader &loader) {
-	ICUTableRange::AddICUTableRangeFunction(loader);
+void RegisterICUTableRangeFunctions(DatabaseInstance &db) {
+	ICUTableRange::AddICUTableRangeFunction(db);
 }
 
 } // namespace duckdb

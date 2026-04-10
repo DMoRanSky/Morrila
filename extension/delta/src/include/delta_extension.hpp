@@ -6,7 +6,7 @@ namespace duckdb {
 
 class DeltaExtension : public Extension {
 public:
-	void Load(ExtensionLoader &loader) override;
+	void Load(DuckDB &db) override;
 	std::string Name() override;
 };
 

@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// duckdb/common/storage/compression/patas/patas_scan.hpp
+// duckdb/common/storage/compression/chimp/chimp_scan.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -9,16 +9,18 @@
 #pragma once
 
 #include "duckdb/storage/compression/chimp/chimp.hpp"
-#include "duckdb/storage/compression/chimp/algorithm/packed_data.hpp"
-#include "duckdb/storage/compression/chimp/algorithm/byte_reader.hpp"
-#include "duckdb/storage/compression/patas/shared.hpp"
-#include "duckdb/storage/compression/patas/algorithm/patas.hpp"
-#include "duckdb/storage/compression/patas/patas.hpp"
+#include "duckdb/storage/compression/chimp/algorithm/chimp_utils.hpp"
 
+#include "duckdb/common/limits.hpp"
+#include "duckdb/common/types/null_value.hpp"
+#include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include "duckdb/storage/table/column_data_checkpointer.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 
 namespace duckdb {
@@ -154,7 +156,7 @@ public:
 		// Load the offset indicating where a groups data starts
 		metadata_ptr -= sizeof(uint32_t);
 		auto data_byte_offset = Load<uint32_t>(metadata_ptr);
-		D_ASSERT(data_byte_offset < segment.GetBlockSize());
+		D_ASSERT(data_byte_offset < segment.GetBlockManager().GetBlockSize());
 
 		// Initialize the byte_reader with the data values for the group
 		group_state.Init(segment_data + data_byte_offset);
@@ -197,7 +199,7 @@ public:
 };
 
 template <class T>
-unique_ptr<SegmentScanState> PatasInitScan(const QueryContext &context, ColumnSegment &segment) {
+unique_ptr<SegmentScanState> PatasInitScan(ColumnSegment &segment) {
 	auto result = make_uniq_base<SegmentScanState, PatasScanState<T>>(segment);
 	return result;
 }
@@ -212,7 +214,7 @@ void PatasScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan
 	auto &scan_state = (PatasScanState<T> &)*state.scan_state;
 
 	// Get the pointer to the result values
-	auto current_result_ptr = FlatVector::GetDataUnsafe<EXACT_TYPE>(result);
+	auto current_result_ptr = FlatVector::GetData<EXACT_TYPE>(result);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 	current_result_ptr += result_offset;
 

@@ -2,6 +2,8 @@
 # description: Test COPY DATABASE errors
 # group: [copy_database]
 
+require noforcestorage
+
 statement ok
 PRAGMA enable_verification
 
@@ -29,7 +31,7 @@ FROM and TO databases are the same
 
 # read-only test
 statement ok
-ATTACH DATABASE '{TEST_DIR}/read_only.db' AS read_only
+ATTACH DATABASE '__TEST_DIR__/read_only.db' AS read_only
 
 statement ok
 CREATE TABLE read_only.t(i INT);
@@ -38,7 +40,7 @@ statement ok
 DETACH read_only
 
 statement ok
-ATTACH DATABASE '{TEST_DIR}/read_only.db' AS read_only (READ_ONLY)
+ATTACH DATABASE '__TEST_DIR__/read_only.db' AS read_only (READ_ONLY)
 
 # we cannot copy TO a read-only database
 statement error

@@ -5,7 +5,6 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
-#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -16,7 +15,8 @@
 
 namespace duckdb {
 
-TimeStampComparison::TimeStampComparison(ExpressionRewriter &rewriter) : Rule(rewriter), context(rewriter.context) {
+TimeStampComparison::TimeStampComparison(ClientContext &context, ExpressionRewriter &rewriter)
+    : Rule(rewriter), context(context) {
 	// match on a ComparisonExpression that is an Equality and has a VARCHAR and ENUM as its children
 	auto op = make_uniq<ComparisonExpressionMatcher>();
 	op->policy = SetMatcher::Policy::UNORDERED;
@@ -42,9 +42,12 @@ TimeStampComparison::TimeStampComparison(ExpressionRewriter &rewriter) : Rule(re
 	root = std::move(op);
 }
 
-static void ExpressionIsConstant(const Expression &root_expr, bool &is_constant) {
-	ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
-	    root_expr, [&](const BoundColumnRefExpression &column_ref) { is_constant = false; });
+static void ExpressionIsConstant(Expression &expr, bool &is_constant) {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		is_constant = false;
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { ExpressionIsConstant(child, is_constant); });
 }
 
 unique_ptr<Expression> TimeStampComparison::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,

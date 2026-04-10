@@ -20,7 +20,6 @@
 
 namespace duckdb {
 
-struct EncryptionMetadata;
 class TemporaryFileManager;
 
 //===--------------------------------------------------------------------===//
@@ -47,7 +46,6 @@ struct TemporaryFileIdentifier {
 public:
 	TemporaryFileIdentifier();
 	TemporaryFileIdentifier(TemporaryBufferSize size, idx_t file_index);
-	TemporaryFileIdentifier(DatabaseInstance &db, TemporaryBufferSize size, idx_t file_index, bool encrypted);
 
 public:
 	//! Whether this temporary file identifier is valid (fields have been set)
@@ -58,14 +56,12 @@ public:
 	TemporaryBufferSize size;
 	//! The index of the temp file
 	optional_idx file_index;
-	// Indicates whether the file is encrypted
-	bool encrypted = false;
 };
 
 struct TemporaryFileIndex {
 public:
 	TemporaryFileIndex();
-	TemporaryFileIndex(TemporaryFileIdentifier identifier, idx_t block_index, idx_t block_header_size);
+	TemporaryFileIndex(TemporaryFileIdentifier identifier, idx_t block_index);
 
 public:
 	//! Whether this temporary file index is valid (fields have been set)
@@ -76,8 +72,6 @@ public:
 	TemporaryFileIdentifier identifier;
 	//! The block index within the temporary file
 	optional_idx block_index;
-	//! The block header size
-	optional_idx block_header_size;
 };
 
 //===--------------------------------------------------------------------===//
@@ -122,7 +116,6 @@ class TemporaryFileHandle {
 
 public:
 	TemporaryFileHandle(TemporaryFileManager &manager, TemporaryFileIdentifier identifier, idx_t temp_file_count);
-	~TemporaryFileHandle();
 
 public:
 	struct TemporaryFileLock {
@@ -135,18 +128,16 @@ public:
 
 public:
 	//! Try to get an index of where to write in this file. Returns an invalid index if full
-	TemporaryFileIndex TryGetBlockIndex(idx_t block_header_size);
+	TemporaryFileIndex TryGetBlockIndex();
 	//! Remove block index from this TemporaryFileHandle
 	void EraseBlockIndex(block_id_t block_index);
 
 	//! Read/Write temporary buffers at given positions in this file (potentially compressed)
-	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, const TemporaryFileIndex &index_in_file,
-	                                           unique_ptr<FileBuffer> reusable_buffer) const;
+	unique_ptr<FileBuffer> ReadTemporaryBuffer(idx_t block_index, unique_ptr<FileBuffer> reusable_buffer) const;
 	void WriteTemporaryBuffer(FileBuffer &buffer, idx_t block_index, AllocatedData &compressed_buffer) const;
 
 	//! Deletes the file if there are no more blocks
 	bool DeleteIfEmpty();
-	bool IsEncrypted() const;
 	//! Get information about this temporary file
 	TemporaryFileInformation GetTemporaryFile();
 
@@ -280,12 +271,10 @@ public:
 	};
 
 	//! Create/Read/Update/Delete operations for temporary buffers
-	idx_t WriteTemporaryBuffer(block_id_t block_id, FileBuffer &buffer);
+	void WriteTemporaryBuffer(block_id_t block_id, FileBuffer &buffer);
 	bool HasTemporaryBuffer(block_id_t block_id);
-	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, block_id_t id,
-	                                           unique_ptr<FileBuffer> reusable_buffer);
-	idx_t DeleteTemporaryBuffer(block_id_t id);
-	bool IsEncrypted() const;
+	unique_ptr<FileBuffer> ReadTemporaryBuffer(block_id_t id, unique_ptr<FileBuffer> reusable_buffer);
+	void DeleteTemporaryBuffer(block_id_t id);
 
 	//! Get the list of temporary files and their sizes
 	vector<TemporaryFileInformation> GetTemporaryFiles();

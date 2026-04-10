@@ -11,9 +11,6 @@ shared_ptr<BaseUnionData> BaseFileReader::GetUnionData(idx_t file_idx) {
 	throw NotImplementedException("Union by name not supported for reader of type %s", GetReaderType());
 }
 
-void BaseFileReader::PrepareScan(ClientContext &, GlobalTableFunctionState &, LocalTableFunctionState &) {
-}
-
 void BaseFileReader::PrepareReader(ClientContext &context, GlobalTableFunctionState &) {
 }
 
@@ -22,10 +19,6 @@ void BaseFileReader::FinishFile(ClientContext &context, GlobalTableFunctionState
 
 double BaseFileReader::GetProgressInFile(ClientContext &context) {
 	return 0;
-}
-
-unique_ptr<BaseStatistics> BaseUnionData::GetStatistics(ClientContext &context, const string &name) {
-	return nullptr;
 }
 
 } // namespace duckdb

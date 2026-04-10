@@ -116,7 +116,8 @@ static void JSONContainsFunction(DataChunk &args, ExpressionState &state, Vector
 
 	if (needles.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		if (ConstantVector::IsNull(needles)) {
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 			return;
 		}
 		auto &needle_str = *ConstantVector::GetData<string_t>(needles);

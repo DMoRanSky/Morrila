@@ -3,7 +3,7 @@
 # group: [catalog]
 
 # load the DB from disk
-load {TEST_DIR}/test_rename_column.db
+load __TEST_DIR__/test_rename_column.db
 
 statement ok
 CREATE TABLE test (a INTEGER, b INTEGER);
@@ -77,4 +77,3 @@ SELECT k FROM test ORDER BY k
 statement error
 SELECT a FROM test
 ----
-<REGEX>:.*Binder Error.*not found in FROM clause.*

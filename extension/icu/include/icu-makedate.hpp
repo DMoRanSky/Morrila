@@ -8,10 +8,10 @@
 
 #pragma once
 
+#include "duckdb.hpp"
+
 namespace duckdb {
 
-class ExtensionLoader;
-
-void RegisterICUMakeDateFunctions(ExtensionLoader &loader);
+void RegisterICUMakeDateFunctions(DatabaseInstance &db);
 
 } // namespace duckdb

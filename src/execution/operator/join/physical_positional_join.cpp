@@ -5,10 +5,9 @@
 
 namespace duckdb {
 
-PhysicalPositionalJoin::PhysicalPositionalJoin(PhysicalPlan &physical_plan, vector<LogicalType> types,
-                                               PhysicalOperator &left, PhysicalOperator &right,
-                                               idx_t estimated_cardinality)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::POSITIONAL_JOIN, std::move(types), estimated_cardinality) {
+PhysicalPositionalJoin::PhysicalPositionalJoin(vector<LogicalType> types, PhysicalOperator &left,
+                                               PhysicalOperator &right, idx_t estimated_cardinality)
+    : PhysicalOperator(PhysicalOperatorType::POSITIONAL_JOIN, std::move(types), estimated_cardinality) {
 	children.push_back(left);
 	children.push_back(right);
 }
@@ -79,7 +78,8 @@ idx_t PositionalJoinGlobalState::Refill() {
 			source.Reset();
 			for (idx_t i = 0; i < source.ColumnCount(); ++i) {
 				auto &vec = source.data[i];
-				ConstantVector::SetNull(vec);
+				vec.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(vec, true);
 			}
 			exhausted = true;
 		}
@@ -160,7 +160,8 @@ void PositionalJoinGlobalState::GetData(DataChunk &output) {
 	const auto col_offset = output.ColumnCount() - source.ColumnCount();
 	for (idx_t i = 0; i < col_offset; ++i) {
 		auto &vec = output.data[i];
-		ConstantVector::SetNull(vec);
+		vec.SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::SetNull(vec, true);
 	}
 
 	//	RHS still has data, so copy it
@@ -169,8 +170,8 @@ void PositionalJoinGlobalState::GetData(DataChunk &output) {
 	output.SetCardinality(count);
 }
 
-SourceResultType PhysicalPositionalJoin::GetDataInternal(ExecutionContext &context, DataChunk &result,
-                                                         OperatorSourceInput &input) const {
+SourceResultType PhysicalPositionalJoin::GetData(ExecutionContext &context, DataChunk &result,
+                                                 OperatorSourceInput &input) const {
 	auto &sink = sink_state->Cast<PositionalJoinGlobalState>();
 	sink.GetData(result);
 

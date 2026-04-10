@@ -2,7 +2,10 @@
 # description: Test storing lambda functions
 # group: [lambdas]
 
-load {TEST_DIR}/lambda_storage.db
+load __TEST_DIR__/lambda_storage.db
+
+statement ok
+PRAGMA enable_verification
 
 statement ok
 SET lambda_syntax='DISABLE_SINGLE_ARROW'

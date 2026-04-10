@@ -47,8 +47,7 @@ with recursive test(round) as (
 )
 select test.round
 from
-    test
-order by all;
+    test;
 ----
 0
 1
@@ -95,8 +94,7 @@ with recursive test(round) as (
 select *
 from
     (select round from test limit 1) as subselect, 
-    test
-order by all;
+    test;
 ----
 0	0
 0	1

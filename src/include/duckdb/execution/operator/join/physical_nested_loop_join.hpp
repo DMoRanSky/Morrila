@@ -10,6 +10,8 @@
 
 #include "duckdb/execution/operator/join/physical_comparison_join.hpp"
 
+
+
 namespace duckdb {
 
 //! PhysicalNestedLoopJoin represents a nested loop join between two tables
@@ -18,12 +20,11 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::NESTED_LOOP_JOIN;
 
 public:
-	PhysicalNestedLoopJoin(PhysicalPlan &physical_plan, LogicalComparisonJoin &op, PhysicalOperator &left,
-	                       PhysicalOperator &right, vector<JoinCondition> cond, JoinType join_type,
-	                       idx_t estimated_cardinality, unique_ptr<JoinFilterPushdownInfo> pushdown_info);
-	PhysicalNestedLoopJoin(PhysicalPlan &physical_plan, LogicalComparisonJoin &op, PhysicalOperator &left,
-	                       PhysicalOperator &right, vector<JoinCondition> cond, JoinType join_type,
-	                       idx_t estimated_cardinality);
+	PhysicalNestedLoopJoin(LogicalOperator &op, PhysicalOperator &left, PhysicalOperator &right,
+	                       vector<JoinCondition> cond, JoinType join_type, idx_t estimated_cardinality,
+	                       unique_ptr<JoinFilterPushdownInfo> pushdown_info);
+	PhysicalNestedLoopJoin(LogicalOperator &op, PhysicalOperator &left, PhysicalOperator &right,
+	                       vector<JoinCondition> cond, JoinType join_type, idx_t estimated_cardinality);
 
 public:
 	// Operator Interface
@@ -33,7 +34,7 @@ public:
 		return true;
 	}
 
-protected:
+public:
 	// CachingOperator Interface
 	OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                                   GlobalOperatorState &gstate, OperatorState &state) const override;
@@ -43,8 +44,7 @@ public:
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
 	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                 GlobalSourceState &gstate) const override;
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return PropagatesBuildSide(join_type);
@@ -75,7 +75,7 @@ public:
 	//! Returns a list of the types of the join conditions
 	vector<LogicalType> GetJoinTypes() const;
 
-private:
+public:
 	// resolve joins that output max N elements (SEMI, ANTI, MARK)
 	void ResolveSimpleJoin(ExecutionContext &context, DataChunk &input, DataChunk &chunk, OperatorState &state) const;
 	// resolve joins that can potentially output N*M elements (INNER, LEFT, FULL)

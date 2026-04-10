@@ -3,10 +3,16 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/catalog/catalog_entry/collate_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+
+#include "duckdb/function/function_binder.hpp"
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/common/constants.hpp"
 
 #include "duckdb/function/scalar/string_functions.hpp"
 
@@ -177,18 +183,21 @@ BindResult ExpressionBinder::BindExpression(ComparisonExpression &expr, idx_t de
 		                                  "Cannot compare values of type %s and type %s - an explicit cast is required",
 		                                  left_sql_type.ToString(), right_sql_type.ToString()));
 	}
-	// add casts (if necessary)
-	left = BoundCastExpression::AddCastToType(context, std::move(left), input_type,
-	                                          input_type.id() == LogicalTypeId::ENUM);
-	right = BoundCastExpression::AddCastToType(context, std::move(right), input_type,
-	                                           input_type.id() == LogicalTypeId::ENUM);
 
-	PushCollation(context, left, input_type);
-	PushCollation(context, right, input_type);
+    // Custom semantic rewrite removed; proceed with default comparison binding
 
-	// now create the bound comparison expression
-	return BindResult(
-	    make_uniq<BoundComparisonExpression>(expr.GetExpressionType(), std::move(left), std::move(right)));
+    // add casts (if necessary)
+    left = BoundCastExpression::AddCastToType(context, std::move(left), input_type,
+                                              input_type.id() == LogicalTypeId::ENUM);
+    right = BoundCastExpression::AddCastToType(context, std::move(right), input_type,
+                                               input_type.id() == LogicalTypeId::ENUM);
+
+    PushCollation(context, left, input_type);
+    PushCollation(context, right, input_type);
+
+    // now create the bound comparison expression
+    return BindResult(
+        make_uniq<BoundComparisonExpression>(expr.GetExpressionType(), std::move(left), std::move(right)));
 }
 
 } // namespace duckdb

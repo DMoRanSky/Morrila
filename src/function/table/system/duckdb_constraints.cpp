@@ -124,9 +124,13 @@ struct ExtraConstraintInfo {
 	vector<string> referenced_columns;
 };
 
-void ExtractReferencedColumns(const ParsedExpression &root_expr, vector<string> &result) {
-	ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(
-	    root_expr, [&](const ColumnRefExpression &colref) { result.push_back(colref.GetColumnName()); });
+void ExtractReferencedColumns(const ParsedExpression &expr, vector<string> &result) {
+	if (expr.GetExpressionClass() == ExpressionClass::COLUMN_REF) {
+		auto &colref = expr.Cast<ColumnRefExpression>();
+		result.push_back(colref.GetColumnName());
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { ExtractReferencedColumns(child, result); });
 }
 
 ExtraConstraintInfo GetExtraConstraintInfo(const TableCatalogEntry &table, const Constraint &constraint) {

@@ -2,7 +2,10 @@
 # description: Test ART storage with long prefixes
 # group: [storage]
 
-load {TEST_DIR}/test_art_load.db
+load __TEST_DIR__/test_art_load.db
+
+statement ok
+PRAGMA enable_verification;
 
 statement ok
 PRAGMA disable_checkpoint_on_shutdown;
@@ -21,7 +24,10 @@ CHECKPOINT
 
 # Original issue #3019
 
-load {TEST_DIR}/test_art_load_original.db
+load __TEST_DIR__/test_art_load_original.db
+
+statement ok
+PRAGMA enable_verification;
 
 statement ok
 PRAGMA disable_checkpoint_on_shutdown;

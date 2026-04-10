@@ -93,15 +93,13 @@ select regr_r2(1,1)
 NULL
 
 #Corner cases
-query R
+statement error
 select regr_r2(0, 1e230*i) from range(5) tbl(i);
 ----
-1.0
 
-query R
+statement error
 select regr_r2(1e230*i, i) from range(5) tbl(i);
 ----
-0.0
 
 query I
 select regr_r2(1e230*i, 0) from range(5) tbl(i);
@@ -121,10 +119,9 @@ statement error
 select regr_sxx()
 ----
 
-query R
+statement error
 select regr_sxx(0, 2e230*i) from range(5) tbl(i)
 ----
-inf
 
 query I
 select regr_sxx(2e230*i, 0) from range(5) tbl(i)

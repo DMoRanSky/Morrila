@@ -1,52 +1,33 @@
+#define DUCKDB_EXTENSION_MAIN
 #include "duckdb.hpp"
-#include "duckdb/optimizer/optimizer_extension.hpp"
-#include "duckdb/planner/operator/logical_get.hpp"
-#include "duckdb/planner/filter/expression_filter.hpp"
-#include "duckdb/storage/statistics/numeric_stats.hpp"
-#include "duckdb/common/column_index.hpp"
-#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor_state.hpp"
-#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
-#include "duckdb/main/database_manager.hpp"
-#include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/planner/extension_callback.hpp"
-#include "duckdb/planner/planner_extension.hpp"
-#include "duckdb/planner/binder.hpp"
-#include "duckdb/planner/operator/logical_projection.hpp"
-#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/common/extension_type_info.hpp"
-#include "duckdb/parser/sql_statement.hpp"
-#include "duckdb/parser/query_node/select_node.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/parser/tableref/emptytableref.hpp"
 
 using namespace duckdb;
 
 //===--------------------------------------------------------------------===//
 // Scalar function
 //===--------------------------------------------------------------------===//
-static inline int32_t hello_fun(string_t what) {
+inline int32_t hello_fun(string_t what) {
 	return what.GetSize() + 5;
 }
 
-static inline void TestAliasHello(DataChunk &args, ExpressionState &state, Vector &result) {
+inline void TestAliasHello(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.Reference(Value("Hello Alias!"));
 }
 
-static inline void AddPointFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+inline void AddPointFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &left_vector = args.data[0];
 	auto &right_vector = args.data[1];
 	const int count = args.size();
@@ -75,9 +56,9 @@ static inline void AddPointFunction(DataChunk &args, ExpressionState &state, Vec
 			auto &child_entry = child_entries[col];
 			auto &left_child_entry = left_child_entries[col];
 			auto &right_child_entry = right_child_entries[col];
-			auto pdata = ConstantVector::GetData<int32_t>(child_entry);
-			auto left_pdata = ConstantVector::GetData<int32_t>(left_child_entry);
-			auto right_pdata = ConstantVector::GetData<int32_t>(right_child_entry);
+			auto pdata = ConstantVector::GetData<int32_t>(*child_entry);
+			auto left_pdata = ConstantVector::GetData<int32_t>(*left_child_entry);
+			auto right_pdata = ConstantVector::GetData<int32_t>(*right_child_entry);
 			pdata[base_idx] = left_pdata[lhs_list_index] + right_pdata[rhs_list_index];
 		}
 	}
@@ -87,7 +68,7 @@ static inline void AddPointFunction(DataChunk &args, ExpressionState &state, Vec
 	result.Verify(count);
 }
 
-static inline void SubPointFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+inline void SubPointFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &left_vector = args.data[0];
 	auto &right_vector = args.data[1];
 	const int count = args.size();
@@ -115,9 +96,9 @@ static inline void SubPointFunction(DataChunk &args, ExpressionState &state, Vec
 			auto &child_entry = child_entries[col];
 			auto &left_child_entry = left_child_entries[col];
 			auto &right_child_entry = right_child_entries[col];
-			auto pdata = ConstantVector::GetData<int32_t>(child_entry);
-			auto left_pdata = ConstantVector::GetData<int32_t>(left_child_entry);
-			auto right_pdata = ConstantVector::GetData<int32_t>(right_child_entry);
+			auto pdata = ConstantVector::GetData<int32_t>(*child_entry);
+			auto left_pdata = ConstantVector::GetData<int32_t>(*left_child_entry);
+			auto right_pdata = ConstantVector::GetData<int32_t>(*right_child_entry);
 			pdata[base_idx] = left_pdata[lhs_list_index] - right_pdata[rhs_list_index];
 		}
 	}
@@ -212,11 +193,10 @@ public:
 	QuackExtension() {
 		parse_function = QuackParseFunction;
 		plan_function = QuackPlanFunction;
-		parser_override = QuackParser;
 	}
 
 	static ParserExtensionParseResult QuackParseFunction(ParserExtensionInfo *info, const string &query) {
-		auto lcase = StringUtil::Lower(query);
+		auto lcase = StringUtil::Lower(StringUtil::Replace(query, ";", ""));
 		if (!StringUtil::Contains(lcase, "quack")) {
 			// quack not found!?
 			if (StringUtil::Contains(lcase, "quac")) {
@@ -226,28 +206,16 @@ public:
 			// use original error
 			return ParserExtensionParseResult();
 		}
-
-		idx_t count = 0;
-		size_t pos = 0;
-		size_t last_end = 0;
-		while ((pos = lcase.find("quack", last_end)) != string::npos) {
-			string between = lcase.substr(last_end, pos - last_end);
-			StringUtil::Trim(between);
-			if (!between.empty() && !StringUtil::CIEquals(between, ";")) {
-				return ParserExtensionParseResult("This is not a quack: " + between);
+		auto splits = StringUtil::Split(lcase, "quack");
+		for (auto &split : splits) {
+			StringUtil::Trim(split);
+			if (!split.empty()) {
+				// we only accept quacks here
+				return ParserExtensionParseResult("This is not a quack: " + split);
 			}
-			count++;
-			last_end = pos + 5;
 		}
-
-		string after = lcase.substr(last_end);
-		StringUtil::Trim(after);
-		if (!after.empty() && !StringUtil::CIEquals(after, ";")) {
-			return ParserExtensionParseResult("This is not a quack: " + after);
-		}
-
 		// QUACK
-		return ParserExtensionParseResult(make_uniq<QuackExtensionData>(count));
+		return ParserExtensionParseResult(make_uniq<QuackExtensionData>(splits.size() + 1));
 	}
 
 	static ParserExtensionPlanResult QuackPlanFunction(ParserExtensionInfo *info, ClientContext &context,
@@ -261,81 +229,6 @@ public:
 		result.return_type = StatementReturnType::QUERY_RESULT;
 		return result;
 	}
-
-	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, const string &query, ParserOptions &options) {
-		vector<string> queries = StringUtil::Split(query, ";");
-		vector<unique_ptr<SQLStatement>> statements;
-		for (const auto &query_input : queries) {
-			if (StringUtil::CIEquals(query_input, "override")) {
-				auto select_node = make_uniq<SelectNode>();
-				select_node->select_list.push_back(
-				    make_uniq<ConstantExpression>(Value("The DuckDB parser has been overridden")));
-				select_node->from_table = make_uniq<EmptyTableRef>();
-				auto select_statement = make_uniq<SelectStatement>();
-				select_statement->node = std::move(select_node);
-				statements.push_back(std::move(select_statement));
-			}
-			if (StringUtil::CIEquals(query_input, "overri")) {
-				auto exception = ParserException("Parser overridden, query equaled \"overri\" but not \"override\"");
-				return ParserOverrideResult(exception);
-			}
-		}
-		if (statements.empty()) {
-			auto not_implemented_exception =
-			    NotImplementedException("QuackParser has not yet implemented the statements to transform this query");
-			return ParserOverrideResult(not_implemented_exception);
-		}
-		return ParserOverrideResult(std::move(statements));
-	}
-};
-
-//===--------------------------------------------------------------------===//
-// Planner extension - adds an extra constant column to every query
-//===--------------------------------------------------------------------===//
-class AddColumnExtension : public PlannerExtension {
-public:
-	AddColumnExtension() {
-		post_bind_function = AddColumnPostBind;
-	}
-
-	static void AddColumnPostBind(PlannerExtensionInput &input, BoundStatement &statement) {
-		// Check if extension is enabled
-		Value enabled;
-		if (!input.context.TryGetCurrentSetting("add_column_enabled", enabled) || !enabled.GetValue<bool>()) {
-			return;
-		}
-
-		// Only modify statements that return query results (SELECT, INSERT/UPDATE/DELETE RETURNING, etc.)
-		auto &properties = input.binder.GetStatementProperties();
-		if (properties.return_type != StatementReturnType::QUERY_RESULT) {
-			return;
-		}
-
-		// Get the column bindings from the existing plan
-		auto column_bindings = statement.plan->GetColumnBindings();
-
-		// Get a new table index for the projection
-		auto table_index = input.binder.GenerateTableIndex();
-
-		// Create references to all existing columns using BoundColumnRefExpression
-		vector<unique_ptr<Expression>> projections;
-		for (idx_t i = 0; i < column_bindings.size(); i++) {
-			projections.push_back(make_uniq<BoundColumnRefExpression>(statement.types[i], column_bindings[i]));
-		}
-
-		// Add a constant column
-		projections.push_back(make_uniq<BoundConstantExpression>(Value("quack")));
-
-		// Create a projection operator wrapping the existing plan
-		auto projection = make_uniq<LogicalProjection>(table_index, std::move(projections));
-		projection->children.push_back(std::move(statement.plan));
-		projection->ResolveOperatorTypes();
-
-		// Update the statement with the new plan, names, and types
-		statement.plan = std::move(projection);
-		statement.names.push_back("extra_column");
-		statement.types.push_back(LogicalType::VARCHAR);
-	}
 };
 
 static set<string> test_loaded_extension_list;
@@ -346,7 +239,7 @@ class QuackLoadExtension : public ExtensionCallback {
 	}
 };
 
-static inline void LoadedExtensionsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+inline void LoadedExtensionsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	string result_str;
 	for (auto &ext : test_loaded_extension_list) {
 		if (!result_str.empty()) {
@@ -361,19 +254,19 @@ static inline void LoadedExtensionsFunction(DataChunk &args, ExpressionState &st
 //===--------------------------------------------------------------------===//
 
 struct BoundedType {
-	static LogicalType Bind(BindLogicalTypeInput &input) {
+	static LogicalType Bind(const BindLogicalTypeInput &input) {
 		auto &modifiers = input.modifiers;
 
 		if (modifiers.size() != 1) {
 			throw BinderException("BOUNDED type must have one modifier");
 		}
-		if (modifiers[0].GetValue().type() != LogicalType::INTEGER) {
+		if (modifiers[0].type() != LogicalType::INTEGER) {
 			throw BinderException("BOUNDED type modifier must be integer");
 		}
-		if (modifiers[0].GetValue().IsNull()) {
+		if (modifiers[0].IsNull()) {
 			throw BinderException("BOUNDED type modifier cannot be NULL");
 		}
-		auto bound_val = modifiers[0].GetValue().GetValue<int32_t>();
+		auto bound_val = modifiers[0].GetValue<int32_t>();
 		return Get(bound_val);
 	}
 
@@ -436,7 +329,7 @@ static unique_ptr<FunctionData> BoundedAddBind(ClientContext &context, ScalarFun
 		auto new_max_val = left_max_val + right_max_val;
 		bound_function.arguments[0] = arguments[0]->return_type;
 		bound_function.arguments[1] = arguments[1]->return_type;
-		bound_function.SetReturnType(BoundedType::Get(new_max_val));
+		bound_function.return_type = BoundedType::Get(new_max_val);
 	} else {
 		throw BinderException("bounded_add expects two BOUNDED types");
 	}
@@ -462,12 +355,12 @@ static unique_ptr<FunctionData> BoundedInvertBind(ClientContext &context, Scalar
                                                   vector<unique_ptr<Expression>> &arguments) {
 	if (arguments[0]->return_type == BoundedType::GetDefault()) {
 		bound_function.arguments[0] = arguments[0]->return_type;
-		bound_function.SetReturnType(arguments[0]->return_type);
+		bound_function.return_type = arguments[0]->return_type;
 	} else {
 		throw BinderException("bounded_invert expects a BOUNDED type");
 	}
 	auto result = make_uniq<BoundedFunctionData>();
-	result->max_val = BoundedType::GetMaxValue(bound_function.GetReturnType());
+	result->max_val = BoundedType::GetMaxValue(bound_function.return_type);
 	return std::move(result);
 }
 
@@ -492,14 +385,13 @@ static void BoundedToAsciiFunc(DataChunk &args, ExpressionState &state, Vector &
 	auto &source_vector = args.data[0];
 	const auto count = args.size();
 
-	auto &heap = StringVector::GetStringHeap(result);
 	UnaryExecutor::Execute<int32_t, string_t>(source_vector, result, count, [&](int32_t input) {
 		if (input < 0) {
 			throw NotImplementedException("Negative values not supported");
 		}
 		string s;
 		s.push_back(static_cast<char>(input));
-		return heap.AddString(s);
+		return StringVector::AddString(result, s);
 	});
 }
 
@@ -535,22 +427,21 @@ static bool IntToBoundedCast(Vector &source, Vector &result, idx_t count, CastPa
 // to verify that the range is valid
 
 struct MinMaxType {
-	static LogicalType Bind(BindLogicalTypeInput &input) {
+	static LogicalType Bind(const BindLogicalTypeInput &input) {
 		auto &modifiers = input.modifiers;
 
 		if (modifiers.size() != 2) {
 			throw BinderException("MINMAX type must have two modifiers");
 		}
-		if (modifiers[0].GetValue().type() != LogicalType::INTEGER ||
-		    modifiers[1].GetValue().type() != LogicalType::INTEGER) {
+		if (modifiers[0].type() != LogicalType::INTEGER || modifiers[1].type() != LogicalType::INTEGER) {
 			throw BinderException("MINMAX type modifiers must be integers");
 		}
-		if (modifiers[0].GetValue().IsNull() || modifiers[1].GetValue().IsNull()) {
+		if (modifiers[0].IsNull() || modifiers[1].IsNull()) {
 			throw BinderException("MINMAX type modifiers cannot be NULL");
 		}
 
-		const auto min_val = modifiers[0].GetValue().GetValue<int32_t>();
-		const auto max_val = modifiers[1].GetValue().GetValue<int32_t>();
+		const auto min_val = modifiers[0].GetValue<int32_t>();
+		const auto max_val = modifiers[1].GetValue<int32_t>();
 
 		if (min_val >= max_val) {
 			throw BinderException("MINMAX type min value must be less than max value");
@@ -616,148 +507,13 @@ static void MinMaxRangeFunc(DataChunk &args, ExpressionState &state, Vector &res
 }
 
 //===--------------------------------------------------------------------===//
-// Row ID Filter — extensible table filter demo
-//
-// This demo shows how an optimizer extension can inject an ExpressionFilter
-// into a table scan's filter set. The filter wraps a ScalarFunction that
-// checks each row's ROW_ID against a sorted allow-list.
-//
-//
-// Three callbacks are involved:
-//   1. RowIdFilterFunction  — execution: stateful linear scan over allow-list
-//   2. RowIdFilterPropagate — row-group pruning via min/max statistics
-//   3. RowIdFilterInit      — per-thread state initialization
-//===--------------------------------------------------------------------===//
-
-// The bind callback is unused for most extensible table filters
-static unique_ptr<FunctionData> RowIdFilterBind(ClientContext &, ScalarFunction &, vector<unique_ptr<Expression>> &) {
-	throw InternalException("rowid_filter: bind should never be called");
-}
-
-struct RowIdFilterBindData : public FunctionData {
-	vector<int64_t> allowed_ids;
-	unordered_set<int64_t> allowed_set;
-
-	explicit RowIdFilterBindData(vector<int64_t> ids) : allowed_ids(std::move(ids)) {
-		allowed_set.insert(allowed_ids.begin(), allowed_ids.end());
-	}
-
-	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<RowIdFilterBindData>(allowed_ids);
-	}
-	bool Equals(const FunctionData &other_p) const override {
-		return allowed_ids == other_p.Cast<RowIdFilterBindData>().allowed_ids;
-	}
-};
-
-// Per-thread local state for the filter function.
-// In this demo we use a simple hash-set lookup, so no per-thread state is needed.
-// In practice, if row IDs arrive in non-decreasing order (e.g. sequential scan),
-// a cursor-based linear scan over a sorted allowed list would be more efficient — O(n) total.
-struct RowIdFilterState : public FunctionLocalState {};
-
-static unique_ptr<FunctionLocalState> RowIdFilterInit(ExpressionState &, const BoundFunctionExpression &,
-                                                      FunctionData *) {
-	return make_uniq<RowIdFilterState>();
-}
-
-static void RowIdFilterFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &bind_data = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<RowIdFilterBindData>();
-	auto &allowed = bind_data.allowed_set;
-
-	auto &input_vec = args.data[0];
-	idx_t count = args.size();
-
-	UnifiedVectorFormat vdata;
-	input_vec.ToUnifiedFormat(count, vdata);
-	auto row_ids = UnifiedVectorFormat::GetData<int64_t>(vdata);
-
-	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto out = FlatVector::GetDataMutable<bool>(result);
-
-	for (idx_t i = 0; i < count; i++) {
-		auto idx = vdata.sel->get_index(i);
-		if (!vdata.validity.RowIsValid(idx)) {
-			out[i] = false;
-			continue;
-		}
-		out[i] = allowed.count(row_ids[idx]) > 0;
-	}
-}
-
-static FilterPropagateResult RowIdFilterPropagate(const FunctionStatisticsPruneInput &input) {
-	auto &allowed = input.bind_data->Cast<RowIdFilterBindData>().allowed_ids;
-	auto &stats = input.stats;
-
-	if (!NumericStats::HasMinMax(stats)) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
-	auto min_val = NumericStats::GetMin<int64_t>(stats);
-	auto max_val = NumericStats::GetMax<int64_t>(stats);
-
-	auto it = std::lower_bound(allowed.begin(), allowed.end(), min_val);
-	if (it != allowed.end() && *it <= max_val) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
-	return FilterPropagateResult::FILTER_ALWAYS_FALSE;
-}
-
-class RowIdOptimizerExtension : public OptimizerExtension {
-public:
-	RowIdOptimizerExtension() {
-		optimize_function = RowIdOptimizeFunction;
-	}
-
-	static void RowIdOptimizeFunction(OptimizerExtensionInput &input, duckdb::unique_ptr<LogicalOperator> &plan) {
-		for (auto &child : plan->children) {
-			RowIdOptimizeFunction(input, child);
-		}
-		if (plan->type != LogicalOperatorType::LOGICAL_GET) {
-			return;
-		}
-		auto &get = plan->Cast<LogicalGet>();
-		auto table = get.GetTable();
-		if (!table || table->name != "rowid_test_table") {
-			return;
-		}
-
-		// Build the scalar function
-		ScalarFunction func("rowid_filter", {LogicalType::BIGINT}, LogicalType::BOOLEAN, RowIdFilterFunction,
-		                    RowIdFilterBind);
-		func.SetInitStateCallback(RowIdFilterInit);
-		func.SetFilterPruneCallback(RowIdFilterPropagate);
-
-		// Construct the bound expression (column index 0: the filter chunk contains only the filtered column)
-		vector<unique_ptr<Expression>> children;
-		children.push_back(make_uniq<BoundReferenceExpression>(LogicalType::BIGINT, 0));
-		auto expr = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN, func, std::move(children),
-		                                               make_uniq<RowIdFilterBindData>(vector<int64_t> {3, 4, 5, 7, 9}));
-
-		// Ensure ROW_ID is in the scan's column list
-		auto row_id_index = get.TryGetProjectionIndex(COLUMN_IDENTIFIER_ROW_ID);
-		if (!row_id_index.IsValid()) {
-			if (get.projection_ids.empty()) {
-				for (idx_t i = 0; i < get.GetColumnIds().size(); i++) {
-					get.projection_ids.emplace_back(i);
-				}
-			}
-			row_id_index = get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID);
-		}
-
-		// Push the filter on the ROW_ID column
-		get.table_filters.PushFilter(row_id_index, make_uniq<ExpressionFilter>(std::move(expr)));
-	}
-};
-
-//===--------------------------------------------------------------------===//
 // Extension load + setup
 //===--------------------------------------------------------------------===//
 extern "C" {
-DUCKDB_CPP_EXTENSION_ENTRY(loadable_extension_demo, loader) {
+DUCKDB_EXTENSION_API void loadable_extension_demo_init(duckdb::DatabaseInstance &db) {
 	CreateScalarFunctionInfo hello_alias_info(
 	    ScalarFunction("test_alias_hello", {}, LogicalType::VARCHAR, TestAliasHello));
 
-	auto &db = loader.GetDatabaseInstance();
 	// create a scalar function
 	Connection con(db);
 	auto &client_context = *con.context;
@@ -809,88 +565,55 @@ DUCKDB_CPP_EXTENSION_ENTRY(loadable_extension_demo, loader) {
 
 	con.Commit();
 
-	// Table with tagged columns
-	{
-		auto tagged_table_info = make_uniq<CreateTableInfo>();
-		tagged_table_info->schema = DEFAULT_SCHEMA;
-		tagged_table_info->table = "tagged_table";
-		tagged_table_info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-		tagged_table_info->temporary = false;
-		tagged_table_info->internal = true;
-
-		ColumnDefinition col_a("a", LogicalType::INTEGER);
-		InsertionOrderPreservingMap<string> col_a_tags;
-		col_a_tags["ext:name"] = "loadable_extension_demo";
-		col_a_tags["ext:column_type"] = "primary";
-		col_a.SetTags(std::move(col_a_tags));
-		tagged_table_info->columns.AddColumn(std::move(col_a));
-
-		ColumnDefinition col_b("b", LogicalType::VARCHAR);
-		InsertionOrderPreservingMap<string> col_b_tags;
-		col_b_tags["ext:name"] = "loadable_extension_demo";
-		col_b_tags["ext:column_type"] = "dimension";
-		col_b.SetTags(std::move(col_b_tags));
-		tagged_table_info->columns.AddColumn(std::move(col_b));
-
-		con.BeginTransaction();
-		auto &default_db_name = DatabaseManager::GetDefaultDatabase(client_context);
-		auto &default_catalog = Catalog::GetCatalog(client_context, default_db_name);
-		MetaTransaction::Get(client_context).ModifyDatabase(default_catalog.GetAttached(), DatabaseModificationType());
-		default_catalog.CreateTable(client_context, std::move(tagged_table_info));
-		con.Commit();
-	}
-
 	// add a parser extension
 	auto &config = DBConfig::GetConfig(db);
-	ParserExtension::Register(config, QuackExtension());
-	ExtensionCallback::Register(config, make_shared_ptr<QuackLoadExtension>());
-
-	// add a planner extension that adds an extra column to queries
-	PlannerExtension::Register(config, AddColumnExtension());
-	config.AddExtensionOption("add_column_enabled", "enable adding extra column to queries", LogicalType::BOOLEAN,
-	                          Value::BOOLEAN(false));
+	config.parser_extensions.push_back(QuackExtension());
+	config.extension_callbacks.push_back(make_uniq<QuackLoadExtension>());
 
 	// Bounded type
 	auto bounded_type = BoundedType::GetDefault();
-	loader.RegisterType("BOUNDED", bounded_type, BoundedType::Bind);
+	ExtensionUtil::RegisterType(db, "BOUNDED", bounded_type, BoundedType::Bind);
 
 	// Example of function inspecting the type property
 	ScalarFunction bounded_max("bounded_max", {bounded_type}, LogicalType::INTEGER, BoundedMaxFunc, BoundedMaxBind);
-	loader.RegisterFunction(bounded_max);
+	ExtensionUtil::RegisterFunction(db, bounded_max);
 
 	// Example of function inspecting the type property and returning the same type
 	ScalarFunction bounded_invert("bounded_invert", {bounded_type}, bounded_type, BoundedInvertFunc, BoundedInvertBind);
 	// bounded_invert.serialize = BoundedReturnSerialize;
 	// bounded_invert.deserialize = BoundedReturnDeserialize;
-	loader.RegisterFunction(bounded_invert);
+	ExtensionUtil::RegisterFunction(db, bounded_invert);
 
 	// Example of function inspecting the type property of both arguments and returning a new type
 	ScalarFunction bounded_add("bounded_add", {bounded_type, bounded_type}, bounded_type, BoundedAddFunc,
 	                           BoundedAddBind);
-	loader.RegisterFunction(bounded_add);
+	ExtensionUtil::RegisterFunction(db, bounded_add);
 
 	// Example of function that is generic over the type property (the bound is not important)
 	ScalarFunction bounded_even("bounded_even", {bounded_type}, LogicalType::BOOLEAN, BoundedEvenFunc);
-	loader.RegisterFunction(bounded_even);
+	ExtensionUtil::RegisterFunction(db, bounded_even);
 
 	// Example of function that is specialized over type property
 	auto bounded_specialized_type = BoundedType::Get(0xFF);
 	ScalarFunction bounded_to_ascii("bounded_ascii", {bounded_specialized_type}, LogicalType::VARCHAR,
 	                                BoundedToAsciiFunc);
-	loader.RegisterFunction(bounded_to_ascii);
+	ExtensionUtil::RegisterFunction(db, bounded_to_ascii);
 
 	// Enable explicit casting to our specialized type
-	loader.RegisterCastFunction(bounded_type, bounded_specialized_type, BoundCastInfo(BoundedToBoundedCast), 0);
+	ExtensionUtil::RegisterCastFunction(db, bounded_type, bounded_specialized_type, BoundCastInfo(BoundedToBoundedCast),
+	                                    0);
 	// Casts
-	loader.RegisterCastFunction(LogicalType::INTEGER, bounded_type, BoundCastInfo(IntToBoundedCast), 0);
+	ExtensionUtil::RegisterCastFunction(db, LogicalType::INTEGER, bounded_type, BoundCastInfo(IntToBoundedCast), 0);
 
 	// MinMax Type
 	auto minmax_type = MinMaxType::GetDefault();
-	loader.RegisterType("MINMAX", minmax_type, MinMaxType::Bind);
-	loader.RegisterCastFunction(LogicalType::INTEGER, minmax_type, BoundCastInfo(IntToMinMaxCast), 0);
-	loader.RegisterFunction(ScalarFunction("minmax_range", {minmax_type}, LogicalType::INTEGER, MinMaxRangeFunc));
+	ExtensionUtil::RegisterType(db, "MINMAX", minmax_type, MinMaxType::Bind);
+	ExtensionUtil::RegisterCastFunction(db, LogicalType::INTEGER, minmax_type, BoundCastInfo(IntToMinMaxCast), 0);
+	ExtensionUtil::RegisterFunction(
+	    db, ScalarFunction("minmax_range", {minmax_type}, LogicalType::INTEGER, MinMaxRangeFunc));
+}
 
-	// Register the RowId optimizer extension (extensible table filter demo)
-	config.GetCallbackManager().Register(RowIdOptimizerExtension());
+DUCKDB_EXTENSION_API const char *loadable_extension_demo_version() {
+	return DuckDB::LibraryVersion();
 }
 }

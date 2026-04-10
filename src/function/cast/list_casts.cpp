@@ -1,8 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/bound_cast_data.hpp"
@@ -58,7 +53,7 @@ bool ListCast::ListToListCast(Vector &source, Vector &result, idx_t count, CastP
 		FlatVector::SetValidity(result, FlatVector::Validity(source));
 
 		auto ldata = FlatVector::GetData<list_entry_t>(source);
-		auto tdata = FlatVector::GetDataMutable<list_entry_t>(result);
+		auto tdata = FlatVector::GetData<list_entry_t>(result);
 		for (idx_t i = 0; i < count; i++) {
 			tdata[i] = ldata[i];
 		}
@@ -77,6 +72,7 @@ bool ListCast::ListToListCast(Vector &source, Vector &result, idx_t count, CastP
 }
 
 static bool ListToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	auto constant = source.GetVectorType() == VectorType::CONSTANT_VECTOR;
 	// first cast the child vector to varchar
 	Vector varchar_list(LogicalType::LIST(LogicalType::VARCHAR), count);
 	ListCast::ListToListCast(source, varchar_list, count, parameters);
@@ -98,15 +94,15 @@ static bool ListToVarcharCast(Vector &source, Vector &result, idx_t count, CastP
 	auto child_data = FlatVector::GetData<string_t>(child);
 	auto &child_validity = FlatVector::Validity(child);
 
+	auto result_data = FlatVector::GetData<string_t>(result);
 	static constexpr const idx_t SEP_LENGTH = 2;
 	static constexpr const idx_t NULL_LENGTH = 4;
 	unsafe_unique_array<bool> needs_quotes;
-	idx_t needs_quotes_length = DConstants::INVALID_INDEX;
+	idx_t needs_quotes_length;
 
-	auto result_data = FlatVector::Writer<string_t>(result, count);
 	for (idx_t i = 0; i < count; i++) {
 		if (!validity.RowIsValid(i)) {
-			result_data.SetInvalid(i);
+			FlatVector::SetNull(result, i, true);
 			continue;
 		}
 		auto list = list_data[i];
@@ -128,8 +124,8 @@ static bool ListToVarcharCast(Vector &source, Vector &result, idx_t count, CastP
 				list_length += NULL_LENGTH;
 			}
 		}
-		auto &result_str = result_data[i].EmptyString(list_length);
-		auto dataptr = result_str.GetDataWriteable();
+		result_data[i] = StringVector::EmptyString(result, list_length);
+		auto dataptr = result_data[i].GetDataWriteable();
 		idx_t offset = 0;
 		dataptr[offset++] = '[';
 		for (idx_t list_idx = 0; list_idx < list.length; list_idx++) {
@@ -146,7 +142,11 @@ static bool ListToVarcharCast(Vector &source, Vector &result, idx_t count, CastP
 			}
 		}
 		dataptr[offset] = ']';
-		result_str.Finalize();
+		result_data[i].Finalize();
+	}
+
+	if (constant) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
 	return true;
 }
@@ -159,7 +159,7 @@ static bool ListToArrayCast(Vector &source, Vector &result, idx_t count, CastPar
 	if (source.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		result.SetVectorType(source.GetVectorType());
 		if (ConstantVector::IsNull(source)) {
-			ConstantVector::SetNull(result);
+			ConstantVector::SetNull(result, true);
 			return true;
 		}
 
@@ -169,7 +169,7 @@ static bool ListToArrayCast(Vector &source, Vector &result, idx_t count, CastPar
 			auto msg = StringUtil::Format("Cannot cast list with length %llu to array with length %u", ldata.length,
 			                              array_size);
 			HandleCastError::AssignError(msg, parameters);
-			ConstantVector::SetNull(result);
+			ConstantVector::SetNull(result, true);
 			return false;
 		}
 

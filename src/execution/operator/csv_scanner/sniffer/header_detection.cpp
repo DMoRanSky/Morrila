@@ -1,8 +1,6 @@
 #include "duckdb/common/types/cast_helpers.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
-#include "duckdb/parser/simplified_token.hpp"
 
 #include "utf8proc.hpp"
 
@@ -353,10 +351,10 @@ void CSVSniffer::DetectHeader() {
 		// This file only contains a header, lets default to the lowest type of all.
 		detected_types.clear();
 		for (idx_t i = 0; i < names.size(); i++) {
-			detected_types.push_back(LogicalType::SQLNULL);
+			detected_types.push_back(LogicalType::BOOLEAN);
 		}
 	}
-	for (idx_t i = detected_types.size(); i < names.size(); i++) {
+	for (idx_t i = max_columns_found; i < names.size(); i++) {
 		detected_types.push_back(LogicalType::VARCHAR);
 	}
 	max_columns_found = names.size();

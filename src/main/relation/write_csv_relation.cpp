@@ -25,14 +25,6 @@ BoundStatement WriteCSVRelation::Bind(Binder &binder) {
 	return binder.Bind(copy.Cast<SQLStatement>());
 }
 
-unique_ptr<QueryNode> WriteCSVRelation::GetQueryNode() {
-	throw InternalException("Cannot create a query node from a write CSV relation");
-}
-
-string WriteCSVRelation::GetQuery() {
-	return string();
-}
-
 const vector<ColumnDefinition> &WriteCSVRelation::Columns() {
 	return columns;
 }

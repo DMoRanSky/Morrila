@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "core_functions/scalar/string_functions.hpp"
 #include "duckdb/common/operator/multiply.hpp"
@@ -30,6 +29,21 @@ static void RepeatFunction(DataChunk &args, ExpressionState &, Vector &result) {
 			        copy_count, string_t::MAX_STRING_SIZE);
 		    }
 	    });
+}
+
+unique_ptr<FunctionData> RepeatBindFunction(ClientContext &, ScalarFunction &bound_function,
+                                            vector<unique_ptr<Expression>> &arguments) {
+	switch (arguments[0]->return_type.id()) {
+	case LogicalTypeId::UNKNOWN:
+		throw ParameterNotResolvedException();
+	case LogicalTypeId::LIST:
+		break;
+	default:
+		throw NotImplementedException("repeat(list, count) requires a list as parameter");
+	}
+	bound_function.arguments[0] = arguments[0]->return_type;
+	bound_function.return_type = arguments[0]->return_type;
+	return nullptr;
 }
 
 static void RepeatListFunction(DataChunk &args, ExpressionState &, Vector &result) {
@@ -65,10 +79,10 @@ ScalarFunctionSet RepeatFun::GetFunctions() {
 	for (const auto &type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
 		repeat.AddFunction(ScalarFunction({type, LogicalType::BIGINT}, type, RepeatFunction));
 	}
-	repeat.AddFunction(ScalarFunction({LogicalType::LIST(LogicalType::TEMPLATE("T")), LogicalType::BIGINT},
-	                                  LogicalType::LIST(LogicalType::TEMPLATE("T")), RepeatListFunction));
+	repeat.AddFunction(ScalarFunction({LogicalType::LIST(LogicalType::ANY), LogicalType::BIGINT},
+	                                  LogicalType::LIST(LogicalType::ANY), RepeatListFunction, RepeatBindFunction));
 	for (auto &func : repeat.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return repeat;
 }

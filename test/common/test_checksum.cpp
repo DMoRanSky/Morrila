@@ -4,6 +4,7 @@
 #include <vector>
 
 using namespace duckdb;
+using namespace std;
 
 #define NUM_INTS 10
 

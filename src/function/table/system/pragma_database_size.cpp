@@ -1,13 +1,12 @@
 #include "duckdb/function/table/system_functions.hpp"
 
+#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/block_manager.hpp"
+#include "duckdb/storage/storage_info.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/block_manager.hpp"
-#include "duckdb/storage/storage_info.hpp"
-#include "duckdb/storage/storage_manager.hpp"
 
 namespace duckdb {
 
@@ -16,7 +15,7 @@ struct PragmaDatabaseSizeData : public GlobalTableFunctionState {
 	}
 
 	idx_t index;
-	vector<shared_ptr<AttachedDatabase>> databases;
+	vector<reference<AttachedDatabase>> databases;
 	Value memory_usage;
 	Value memory_limit;
 };
@@ -69,7 +68,7 @@ void PragmaDatabaseSizeFunction(ClientContext &context, TableFunctionInput &data
 	auto &data = data_p.global_state->Cast<PragmaDatabaseSizeData>();
 	idx_t row = 0;
 	for (; data.index < data.databases.size() && row < STANDARD_VECTOR_SIZE; data.index++) {
-		auto &db = *data.databases[data.index];
+		auto &db = data.databases[data.index].get();
 		if (db.IsSystem() || db.IsTemporary()) {
 			continue;
 		}

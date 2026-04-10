@@ -1,4 +1,7 @@
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/extra_type_info.hpp"
 
 namespace duckdb {
@@ -23,7 +26,18 @@ unique_ptr<CreateInfo> CreateTypeInfo::Copy() const {
 }
 
 string CreateTypeInfo::ToString() const {
-	string result = GetCreatePrefix("TYPE");
+	string result = "";
+	result += "CREATE";
+	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		result += " OR REPLACE ";
+	}
+	if (temporary) {
+		result += " TEMPORARY";
+	}
+	result += " TYPE ";
+	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		result += " IF NOT EXISTS ";
+	}
 	result += QualifierToString(temporary ? "" : catalog, schema, name);
 	if (type.id() == LogicalTypeId::ENUM) {
 		auto &values_insert_order = EnumType::GetValuesInsertOrder(type);
@@ -41,6 +55,13 @@ string CreateTypeInfo::ToString() const {
 		// CREATE TYPE mood AS ENUM (SELECT 'happy')
 		D_ASSERT(query);
 		result += " AS ENUM (" + query->ToString() + ")";
+	} else if (type.id() == LogicalTypeId::USER) {
+		result += " AS ";
+		auto extra_info = type.AuxInfo();
+		D_ASSERT(extra_info);
+		D_ASSERT(extra_info->type == ExtraTypeInfoType::USER_TYPE_INFO);
+		auto &user_info = extra_info->Cast<UserTypeInfo>();
+		result += QualifierToString(user_info.catalog, user_info.schema, user_info.user_type_name);
 	} else {
 		result += " AS ";
 		result += type.ToString();

@@ -1,7 +1,6 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
-#include "duckdb/main/extension_manager.hpp"
+#include "duckdb/main/extension_util.hpp"
 
 #include "duckdb.hpp"
 
@@ -12,7 +11,7 @@ void SomeTableFunc(duckdb::ClientContext &, duckdb::TableFunctionInput &, duckdb
 
 TEST_CASE("Test catalog versioning", "[catalog]") {
 	DBConfig config;
-	config.SetOptionByName("allow_unsigned_extensions", true);
+	config.options.allow_unsigned_extensions = true;
 	DuckDB db(nullptr, &config);
 	Connection con1(db);
 
@@ -87,10 +86,7 @@ TEST_CASE("Test catalog versioning", "[catalog]") {
 
 	// system transactions do not register catalog version changes :/
 	duckdb::TableFunction tf("some_new_table_function", {}, SomeTableFunc);
-	ExtensionInfo extension_info {};
-	ExtensionActiveLoad load_info {*db.instance, extension_info, "test_catalog_extension"};
-	ExtensionLoader loader {load_info};
-	loader.RegisterFunction(tf);
+	ExtensionUtil::RegisterFunction(*db.instance, tf);
 
 	con1.context->RunFunctionInTransaction([&]() {
 		auto &catalog = Catalog::GetCatalog(*con1.context, "system");

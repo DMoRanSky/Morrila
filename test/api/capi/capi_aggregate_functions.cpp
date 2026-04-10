@@ -1,6 +1,7 @@
 #include "capi_tester.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 struct WeightedSumState {
 	int64_t sum;

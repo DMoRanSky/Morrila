@@ -5,9 +5,15 @@
 
 namespace duckdb {
 
-namespace {
+static bool PrefixFunction(const string_t &str, const string_t &pattern);
 
-bool PrefixFunction(const string_t &str, const string_t &pattern) {
+struct PrefixOperator {
+	template <class TA, class TB, class TR>
+	static inline TR Operation(TA left, TB right) {
+		return PrefixFunction(left, right);
+	}
+};
+static bool PrefixFunction(const string_t &str, const string_t &pattern) {
 	auto str_length = str.GetSize();
 	auto patt_length = pattern.GetSize();
 	if (patt_length > str_length) {
@@ -51,15 +57,6 @@ bool PrefixFunction(const string_t &str, const string_t &pattern) {
 		return true;
 	}
 }
-
-struct PrefixOperator {
-	template <class TA, class TB, class TR>
-	static inline TR Operation(TA left, TB right) {
-		return PrefixFunction(left, right);
-	}
-};
-
-} // namespace
 
 ScalarFunction PrefixFun::GetFunction() {
 	return ScalarFunction("prefix",                                     // name of the function

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/constants.hpp"
 #include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
@@ -28,10 +29,6 @@ public:
 	SegmentLock &operator=(SegmentLock &&other) noexcept {
 		std::swap(lock, other.lock);
 		return *this;
-	}
-
-	void Release() {
-		lock.unlock();
 	}
 
 private:

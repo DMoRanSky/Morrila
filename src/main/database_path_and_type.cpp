@@ -3,7 +3,6 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/magic_bytes.hpp"
 #include "duckdb/function/replacement_scan.hpp"
-#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 
@@ -16,9 +15,9 @@ void DBPathAndType::ExtractExtensionPrefix(string &path, string &db_type) {
 	}
 }
 
-void DBPathAndType::CheckMagicBytes(QueryContext context, FileSystem &fs, string &path, string &db_type) {
+void DBPathAndType::CheckMagicBytes(FileSystem &fs, string &path, string &db_type) {
 	// if there isn't - check the magic bytes of the file (if any)
-	auto file_type = MagicBytes::CheckMagicBytes(context, fs, path);
+	auto file_type = MagicBytes::CheckMagicBytes(fs, path);
 	db_type = string();
 	switch (file_type) {
 	case DataFileType::SQLITE_FILE:
@@ -51,7 +50,7 @@ void DBPathAndType::ResolveDatabaseType(FileSystem &fs, string &path, string &db
 		return;
 	}
 	// check database type by reading the magic bytes of a file
-	DBPathAndType::CheckMagicBytes(QueryContext(), fs, path, db_type);
+	DBPathAndType::CheckMagicBytes(fs, path, db_type);
 }
 
 } // namespace duckdb

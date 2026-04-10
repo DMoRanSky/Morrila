@@ -1,5 +1,7 @@
 #include "duckdb/execution/operator/join/physical_nested_loop_join.hpp"
 #include "duckdb/parallel/thread_context.hpp"
+#include "duckdb/common/operator/comparison_operators.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/nested_loop_join.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -7,40 +9,25 @@
 
 namespace duckdb {
 
-PhysicalNestedLoopJoin::PhysicalNestedLoopJoin(PhysicalPlan &physical_plan, LogicalComparisonJoin &op,
-                                               PhysicalOperator &left, PhysicalOperator &right,
-                                               vector<JoinCondition> conds, JoinType join_type,
+PhysicalNestedLoopJoin::PhysicalNestedLoopJoin(LogicalOperator &op, PhysicalOperator &left, PhysicalOperator &right,
+                                               vector<JoinCondition> cond, JoinType join_type,
                                                idx_t estimated_cardinality,
                                                unique_ptr<JoinFilterPushdownInfo> pushdown_info_p)
-    : PhysicalComparisonJoin(physical_plan, op, PhysicalOperatorType::NESTED_LOOP_JOIN, std::move(conds), join_type,
+    : PhysicalComparisonJoin(op, PhysicalOperatorType::NESTED_LOOP_JOIN, std::move(cond), join_type,
                              estimated_cardinality) {
+
 	filter_pushdown = std::move(pushdown_info_p);
+
 	children.push_back(left);
 	children.push_back(right);
 }
 
-PhysicalNestedLoopJoin::PhysicalNestedLoopJoin(PhysicalPlan &physical_plan, LogicalComparisonJoin &op,
-                                               PhysicalOperator &left, PhysicalOperator &right,
+PhysicalNestedLoopJoin::PhysicalNestedLoopJoin(LogicalOperator &op, PhysicalOperator &left, PhysicalOperator &right,
                                                vector<JoinCondition> cond, JoinType join_type,
                                                idx_t estimated_cardinality)
-    : PhysicalNestedLoopJoin(physical_plan, op, left, right, std::move(cond), join_type, estimated_cardinality,
-                             nullptr) {
+    : PhysicalNestedLoopJoin(op, left, right, std::move(cond), join_type, estimated_cardinality, nullptr) {
 }
 
-bool PhysicalJoin::HasNullValues(DataChunk &chunk) {
-	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-		auto entries = chunk.data[col_idx].Validity(chunk.size());
-		if (!entries.CanHaveNull()) {
-			continue;
-		}
-		for (idx_t i = 0; i < chunk.size(); i++) {
-			if (!entries.IsValid(i)) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
 
 template <bool MATCH>
 static void ConstructSemiOrAntiJoinResult(DataChunk &left, DataChunk &result, bool found_match[]) {
@@ -83,15 +70,16 @@ void PhysicalJoin::ConstructMarkJoinResult(DataChunk &join_keys, DataChunk &left
 	mark_vector.SetVectorType(VectorType::FLAT_VECTOR);
 	// first we set the NULL values from the join keys
 	// if there is any NULL in the keys, the result is NULL
-	auto bool_result = FlatVector::GetDataMutable<bool>(mark_vector);
+	auto bool_result = FlatVector::GetData<bool>(mark_vector);
 	auto &mask = FlatVector::Validity(mark_vector);
 	for (idx_t col_idx = 0; col_idx < join_keys.ColumnCount(); col_idx++) {
-		auto entries = join_keys.data[col_idx].Validity(join_keys.size());
-		if (!entries.CanHaveNull()) {
-			continue;
-		}
-		for (idx_t i = 0; i < join_keys.size(); i++) {
-			mask.Set(i, entries.IsValid(i));
+		UnifiedVectorFormat jdata;
+		join_keys.data[col_idx].ToUnifiedFormat(join_keys.size(), jdata);
+		if (!jdata.validity.AllValid()) {
+			for (idx_t i = 0; i < join_keys.size(); i++) {
+				auto jidx = jdata.sel->get_index(i);
+				mask.Set(i, jdata.validity.RowIsValid(jidx));
+			}
 		}
 	}
 	// now set the remaining entries to either true or false based on whether a match was found
@@ -117,27 +105,17 @@ bool PhysicalNestedLoopJoin::IsSupported(const vector<JoinCondition> &conditions
 		return true;
 	}
 	for (auto &cond : conditions) {
-		if (!cond.IsComparison()) {
-			continue;
-		}
-		if (cond.GetLHS().return_type.InternalType() == PhysicalType::STRUCT ||
-		    cond.GetLHS().return_type.InternalType() == PhysicalType::LIST ||
-		    cond.GetLHS().return_type.InternalType() == PhysicalType::ARRAY) {
+		if (cond.left->return_type.InternalType() == PhysicalType::STRUCT ||
+		    cond.left->return_type.InternalType() == PhysicalType::LIST ||
+		    cond.left->return_type.InternalType() == PhysicalType::ARRAY) {
 			return false;
 		}
 	}
-
 	// To avoid situations like https://github.com/duckdb/duckdb/issues/10046
 	// If there is an equality in the conditions, a hash join is planned
 	// with one condition, we can use mark join logic, otherwise we should use physical blockwise nl join
 	if (join_type == JoinType::SEMI || join_type == JoinType::ANTI) {
-		idx_t comparison_count = 0;
-		for (auto &cond : conditions) {
-			if (cond.IsComparison()) {
-				comparison_count++;
-			}
-		}
-		return comparison_count == 1;
+		return conditions.size() == 1;
 	}
 	return true;
 }
@@ -179,8 +157,8 @@ public:
 	    : rhs_executor(context) {
 		vector<LogicalType> condition_types;
 		for (auto &cond : op.conditions) {
-			rhs_executor.AddExpression(cond.GetRHS());
-			condition_types.push_back(cond.GetRHS().return_type);
+			rhs_executor.AddExpression(*cond.right);
+			condition_types.push_back(cond.right->return_type);
 		}
 		right_condition.Initialize(Allocator::Get(context), condition_types);
 
@@ -199,8 +177,8 @@ public:
 
 vector<LogicalType> PhysicalNestedLoopJoin::GetJoinTypes() const {
 	vector<LogicalType> result;
-	for (auto &cond : conditions) {
-		result.push_back(cond.GetRHS().return_type);
+	for (auto &op : conditions) {
+		result.push_back(op.right->return_type);
 	}
 	return result;
 }
@@ -251,7 +229,7 @@ SinkFinalizeType PhysicalNestedLoopJoin::Finalize(Pipeline &pipeline, Event &eve
                                                   OperatorSinkFinalizeInput &input) const {
 	auto &gsink = input.global_state.Cast<NestedLoopJoinGlobalState>();
 	if (filter_pushdown && !gsink.skip_filter_pushdown) {
-		(void)filter_pushdown->Finalize(context, *gsink.global_filter_state, *this);
+		(void)filter_pushdown->Finalize(context, nullptr, *gsink.global_filter_state, *this);
 	}
 
 	gsink.right_outer.Initialize(gsink.right_payload_data.Count());
@@ -278,22 +256,17 @@ public:
 	PhysicalNestedLoopJoinState(ClientContext &context, const PhysicalNestedLoopJoin &op,
 	                            const vector<JoinCondition> &conditions)
 	    : fetch_next_left(true), fetch_next_right(false), lhs_executor(context), left_tuple(0), right_tuple(0),
-	      left_outer(IsLeftOuterJoin(op.join_type)), pred_executor(context) {
+	      left_outer(IsLeftOuterJoin(op.join_type)) {
 		vector<LogicalType> condition_types;
 		for (auto &cond : conditions) {
-			lhs_executor.AddExpression(cond.GetLHS());
-			condition_types.push_back(cond.GetLHS().return_type);
+			lhs_executor.AddExpression(*cond.left);
+			condition_types.push_back(cond.left->return_type);
 		}
 		auto &allocator = Allocator::Get(context);
 		left_condition.Initialize(allocator, condition_types);
 		right_condition.Initialize(allocator, condition_types);
 		right_payload.Initialize(allocator, op.children[1].get().GetTypes());
 		left_outer.Initialize(STANDARD_VECTOR_SIZE);
-
-		if (op.predicate) {
-			pred_executor.AddExpression(*op.predicate);
-			pred_matches.Initialize();
-		}
 	}
 
 	bool fetch_next_left;
@@ -311,10 +284,6 @@ public:
 	idx_t right_tuple;
 
 	OuterJoinMarker left_outer;
-
-	//! Predicate
-	ExpressionExecutor pred_executor;
-	SelectionVector pred_matches;
 
 public:
 	void Finalize(const PhysicalOperator &op, ExecutionContext &context) override {
@@ -440,9 +409,9 @@ OperatorResultType PhysicalNestedLoopJoin::ResolveComplexJoin(ExecutionContext &
 		auto &right_payload = state.right_payload;
 
 		// sanity check
-		left_chunk.Verify(context.client.db);
-		right_condition.Verify(context.client.db);
-		right_payload.Verify(context.client.db);
+		left_chunk.Verify();
+		right_condition.Verify();
+		right_payload.Verify();
 
 		// now perform the join
 		SelectionVector lvector(STANDARD_VECTOR_SIZE), rvector(STANDARD_VECTOR_SIZE);
@@ -452,20 +421,11 @@ OperatorResultType PhysicalNestedLoopJoin::ResolveComplexJoin(ExecutionContext &
 		if (match_count > 0) {
 			// we have matching tuples!
 			// construct the result
-			chunk.Slice(input, lvector, match_count);
-			chunk.Slice(right_payload, rvector, match_count, input.ColumnCount());
-
-			//	If we have a predicate, apply it to the result
-			if (predicate) {
-				auto &sel = state.pred_matches;
-				match_count = state.pred_executor.SelectExpression(chunk, sel);
-				chunk.Slice(sel, match_count);
-				lvector.SliceInPlace(sel, match_count);
-				rvector.SliceInPlace(sel, match_count);
-			}
-
 			state.left_outer.SetMatches(lvector, match_count);
 			gstate.right_outer.SetMatches(rvector, match_count, state.condition_scan_state.current_row_index);
+
+			chunk.Slice(input, lvector, match_count);
+			chunk.Slice(right_payload, rvector, match_count, input.ColumnCount());
 		}
 
 		// check if we exhausted the RHS, if we did we need to move to the next right chunk in the next iteration
@@ -517,8 +477,8 @@ unique_ptr<LocalSourceState> PhysicalNestedLoopJoin::GetLocalSourceState(Executi
 	return make_uniq<NestedLoopJoinLocalScanState>(*this, gstate.Cast<NestedLoopJoinGlobalScanState>());
 }
 
-SourceResultType PhysicalNestedLoopJoin::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                         OperatorSourceInput &input) const {
+SourceResultType PhysicalNestedLoopJoin::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                 OperatorSourceInput &input) const {
 	D_ASSERT(PropagatesBuildSide(join_type));
 	// check if we need to scan any unmatched tuples from the RHS for the full/right outer join
 	auto &sink = sink_state->Cast<NestedLoopJoinGlobalState>();

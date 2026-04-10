@@ -13,10 +13,11 @@
 #include "thrift/transport/TBufferTransports.h"
 
 #include "duckdb.hpp"
-#include "duckdb/storage/external_file_cache/caching_file_system.hpp"
-#include "duckdb/storage/external_file_cache/file_buffer_handle_group.hpp"
+#ifndef DUCKDB_AMALGAMATION
+#include "duckdb/storage/caching_file_system.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/allocator.hpp"
+#endif
 
 namespace duckdb {
 
@@ -28,25 +29,12 @@ struct ReadHead {
 	uint64_t size;
 
 	// Current info
-	FileBufferHandleGroup handle_group;
-	AllocatedData local_buffer;
-	data_ptr_t buffer_ptr = nullptr;
+	BufferHandle buffer_handle;
+	data_ptr_t buffer_ptr;
 	bool data_isset = false;
 
 	idx_t GetEnd() const {
 		return size + location;
-	}
-
-	// Materialize [buffer_ptr], should call before access.
-	// TODO(hjiang): Currently it's only used for `Prefetch` operation, should be able to save one copy.
-	void Materialize() {
-		if (handle_group.GetHandles().size() == 1) {
-			buffer_ptr = handle_group.Ptr();
-		} else {
-			local_buffer = Allocator::DefaultAllocator().Allocate(size);
-			handle_group.CopyTo(local_buffer.get(), size);
-			buffer_ptr = local_buffer.get();
-		}
 	}
 };
 
@@ -130,8 +118,8 @@ struct ReadAheadBuffer {
 			if (read_head.GetEnd() > file_handle.GetFileSize()) {
 				throw std::runtime_error("Prefetch registered requested for bytes outside file");
 			}
-			read_head.handle_group = file_handle.Read(read_head.size, read_head.location);
-			read_head.Materialize();
+			read_head.buffer_handle = file_handle.Read(read_head.buffer_ptr, read_head.size, read_head.location);
+			D_ASSERT(read_head.buffer_handle.IsValid());
 			read_head.data_isset = true;
 		}
 	}
@@ -152,10 +140,12 @@ public:
 			D_ASSERT(location - prefetch_buffer->location + len <= prefetch_buffer->size);
 
 			if (!prefetch_buffer->data_isset) {
-				prefetch_buffer->handle_group = file_handle.Read(prefetch_buffer->size, prefetch_buffer->location);
-				prefetch_buffer->Materialize();
+				prefetch_buffer->buffer_handle =
+				    file_handle.Read(prefetch_buffer->buffer_ptr, prefetch_buffer->size, prefetch_buffer->location);
+				D_ASSERT(prefetch_buffer->buffer_handle.IsValid());
 				prefetch_buffer->data_isset = true;
 			}
+			D_ASSERT(prefetch_buffer->buffer_handle.IsValid());
 			memcpy(buf, prefetch_buffer->buffer_ptr + location - prefetch_buffer->location, len);
 		} else if (prefetch_mode && len < PREFETCH_FALLBACK_BUFFERSIZE && len > 0) {
 			Prefetch(location, MinValue<uint64_t>(PREFETCH_FALLBACK_BUFFERSIZE, file_handle.GetFileSize() - location));
@@ -164,7 +154,7 @@ public:
 			memcpy(buf, prefetch_buffer_fallback->buffer_ptr + location - prefetch_buffer_fallback->location, len);
 		} else {
 			// No prefetch, do a regular (non-caching) read
-			file_handle.GetFileHandle().Read(context, buf, len, location);
+			file_handle.GetFileHandle().Read(buf, len, location);
 		}
 
 		location += len;
@@ -223,8 +213,6 @@ public:
 	}
 
 private:
-	QueryContext context;
-
 	CachingFileHandle &file_handle;
 	idx_t location;
 	idx_t size;

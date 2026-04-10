@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
 #include "core_functions/scalar/array_functions.hpp"
 #include "core_functions/array_kernels.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -7,13 +6,14 @@ namespace duckdb {
 
 static unique_ptr<FunctionData> ArrayGenericBinaryBind(ClientContext &context, ScalarFunction &bound_function,
                                                        vector<unique_ptr<Expression>> &arguments) {
+
 	const auto &lhs_type = arguments[0]->return_type;
 	const auto &rhs_type = arguments[1]->return_type;
 
 	if (lhs_type.IsUnknown() && rhs_type.IsUnknown()) {
 		bound_function.arguments[0] = rhs_type;
 		bound_function.arguments[1] = lhs_type;
-		bound_function.SetReturnType(LogicalType::UNKNOWN);
+		bound_function.return_type = LogicalType::UNKNOWN;
 		return nullptr;
 	}
 
@@ -60,7 +60,7 @@ static unique_ptr<FunctionData> ArrayGenericBinaryBind(ClientContext &context, S
 //------------------------------------------------------------------------------
 // Given two arrays of the same size, combine their elements into a single array
 // of the same size as the input arrays.
-namespace {
+
 struct CrossProductOp {
 	template <class TYPE>
 	static void Operation(const TYPE *lhs_data, const TYPE *rhs_data, TYPE *res_data, idx_t size) {
@@ -79,7 +79,6 @@ struct CrossProductOp {
 		res_data[2] = lx * ry - ly * rx;
 	}
 };
-} // namespace
 
 template <class TYPE, class OP, idx_t N>
 static void ArrayFixedCombine(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -103,7 +102,7 @@ static void ArrayFixedCombine(DataChunk &args, ExpressionState &state, Vector &r
 
 	auto lhs_data = FlatVector::GetData<TYPE>(lhs_child);
 	auto rhs_data = FlatVector::GetData<TYPE>(rhs_child);
-	auto res_data = FlatVector::GetDataMutable<TYPE>(res_child);
+	auto res_data = FlatVector::GetData<TYPE>(res_child);
 
 	for (idx_t i = 0; i < count; i++) {
 		const auto lhs_idx = lhs_format.sel->get_index(i);
@@ -164,7 +163,7 @@ static void ArrayGenericFold(DataChunk &args, ExpressionState &state, Vector &re
 
 	auto lhs_data = FlatVector::GetData<TYPE>(lhs_child);
 	auto rhs_data = FlatVector::GetData<TYPE>(rhs_child);
-	auto res_data = FlatVector::GetDataMutable<TYPE>(result);
+	auto res_data = FlatVector::GetData<TYPE>(result);
 
 	const auto array_size = ArrayType::GetSize(args.data[0].GetType());
 	D_ASSERT(array_size == ArrayType::GetSize(args.data[1].GetType()));
@@ -212,11 +211,11 @@ static void AddArrayFoldFunction(ScalarFunctionSet &set, const LogicalType &type
 	const auto array = LogicalType::ARRAY(type, optional_idx());
 	if (type.id() == LogicalTypeId::FLOAT) {
 		ScalarFunction function({array, array}, type, ArrayGenericFold<float, OP>, ArrayGenericBinaryBind);
-		function.SetFallible();
+		BaseScalarFunction::SetReturnsError(function);
 		set.AddFunction(function);
 	} else if (type.id() == LogicalTypeId::DOUBLE) {
 		ScalarFunction function({array, array}, type, ArrayGenericFold<double, OP>, ArrayGenericBinaryBind);
-		function.SetFallible();
+		BaseScalarFunction::SetReturnsError(function);
 		set.AddFunction(function);
 	} else {
 		throw NotImplementedException("Array function not implemented for type %s", type.ToString());
@@ -273,7 +272,7 @@ ScalarFunctionSet ArrayCrossProductFun::GetFunctions() {
 	set.AddFunction(
 	    ScalarFunction({double_array, double_array}, double_array, ArrayFixedCombine<double, CrossProductOp, 3>));
 	for (auto &func : set.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return set;
 }

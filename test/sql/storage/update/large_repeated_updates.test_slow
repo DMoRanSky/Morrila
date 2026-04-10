@@ -2,7 +2,8 @@
 # description: Test repeated updates on big table
 # group: [update]
 
-load {TEST_DIR}/updates_large_repeated.db
+# load the DB from disk
+load __TEST_DIR__/updates_large_repeated.db
 
 statement ok
 begin transaction;

@@ -1,8 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/types/column/column_data_collection_segment.hpp"
 
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -159,10 +154,6 @@ void ColumnDataCollectionSegment::SetChildIndex(VectorChildIndex base_idx, idx_t
 	child_indices[base_idx.index + child_number] = index;
 }
 
-bool TypeHasData(const LogicalType &type) {
-	return type.InternalType() != PhysicalType::STRUCT && type.InternalType() != PhysicalType::ARRAY;
-}
-
 idx_t ColumnDataCollectionSegment::ReadVectorInternal(ChunkManagementState &state, VectorDataIndex vector_index,
                                                       Vector &result) {
 	auto &vector_type = result.GetType();
@@ -174,9 +165,7 @@ idx_t ColumnDataCollectionSegment::ReadVectorInternal(ChunkManagementState &stat
 	auto validity_data = GetValidityPointer(base_ptr, type_size, vdata.count);
 	if (!vdata.next_data.IsValid() && state.properties != ColumnDataScanProperties::DISALLOW_ZERO_COPY) {
 		// no next data, we can do a zero-copy read of this vector
-		if (TypeHasData(result.GetType())) {
-			FlatVector::SetData(result, base_ptr);
-		}
+		FlatVector::SetData(result, base_ptr);
 		FlatVector::Validity(result).Initialize(validity_data, STANDARD_VECTOR_SIZE);
 		return vdata.count;
 	}
@@ -195,7 +184,7 @@ idx_t ColumnDataCollectionSegment::ReadVectorInternal(ChunkManagementState &stat
 	result.Resize(0, vector_count);
 	next_index = vector_index;
 	// now perform the copy of each of the vectors
-	auto target_data = FlatVector::GetDataMutable(result);
+	auto target_data = FlatVector::GetData(result);
 	auto &target_validity = FlatVector::Validity(result);
 	idx_t current_offset = 0;
 	while (next_index.IsValid()) {
@@ -234,7 +223,8 @@ idx_t ColumnDataCollectionSegment::ReadVector(ChunkManagementState &state, Vecto
 	} else if (internal_type == PhysicalType::STRUCT) {
 		auto &child_vectors = StructVector::GetEntries(result);
 		for (idx_t child_idx = 0; child_idx < child_vectors.size(); child_idx++) {
-			auto child_count = ReadVector(state, GetChildIndex(vdata.child_index, child_idx), child_vectors[child_idx]);
+			auto child_count =
+			    ReadVector(state, GetChildIndex(vdata.child_index, child_idx), *child_vectors[child_idx]);
 			if (child_count != vcount) {
 				throw InternalException("Column Data Collection: mismatch in struct child sizes");
 			}
@@ -242,21 +232,20 @@ idx_t ColumnDataCollectionSegment::ReadVector(ChunkManagementState &state, Vecto
 	} else if (internal_type == PhysicalType::VARCHAR) {
 		if (allocator->GetType() == ColumnDataAllocatorType::BUFFER_MANAGER_ALLOCATOR) {
 			auto next_index = vector_index;
-			const auto copied =
-			    vdata.next_data.IsValid() || state.properties == ColumnDataScanProperties::DISALLOW_ZERO_COPY;
 			idx_t offset = 0;
 			while (next_index.IsValid()) {
 				auto &current_vdata = GetVectorData(next_index);
 				for (auto &swizzle_segment : current_vdata.swizzle_data) {
 					auto &string_heap_segment = GetVectorData(swizzle_segment.child_index);
-					allocator->UnswizzlePointers(state, result, swizzle_segment, string_heap_segment, offset, copied);
+					allocator->UnswizzlePointers(state, result, offset + swizzle_segment.offset, swizzle_segment.count,
+					                             string_heap_segment.block_id, string_heap_segment.offset);
 				}
 				offset += current_vdata.count;
 				next_index = current_vdata.next_data;
 			}
 		}
 		if (state.properties == ColumnDataScanProperties::DISALLOW_ZERO_COPY) {
-			VectorOperations::Copy(result, result, vcount, 0, 0);
+			VectorOperations::Copy(result, result, vdata.count, 0, 0);
 		}
 	}
 	return vcount;

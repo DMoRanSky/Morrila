@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/function/window/window_boundaries_state.hpp"
@@ -10,7 +9,7 @@ namespace duckdb {
 // WindowBoundariesState
 //===--------------------------------------------------------------------===//
 idx_t WindowBoundariesState::FindNextStart(const ValidityMask &mask, idx_t l, const idx_t r, idx_t &n) {
-	if (mask.CannotHaveNull()) {
+	if (mask.AllValid()) {
 		auto start = MinValue(l + n - 1, r);
 		n -= MinValue(n, r - l);
 		return start;
@@ -41,7 +40,7 @@ idx_t WindowBoundariesState::FindNextStart(const ValidityMask &mask, idx_t l, co
 }
 
 idx_t WindowBoundariesState::FindPrevStart(const ValidityMask &mask, const idx_t l, idx_t r, idx_t &n) {
-	if (mask.CannotHaveNull()) {
+	if (mask.AllValid()) {
 		auto start = (r <= l + n) ? l : r - n;
 		n -= r - start;
 		return start;
@@ -133,7 +132,7 @@ struct WindowColumnIterator {
 		return coll->GetCell<T>(0, pos + m);
 	}
 
-	friend inline iterator operator+(const iterator &a, difference_type n) {
+	friend inline iterator &operator+(const iterator &a, difference_type n) {
 		return iterator(a.coll, a.pos + n);
 	}
 
@@ -314,7 +313,92 @@ bool WindowBoundariesState::HasFollowingRange(const BoundWindowExpression &wexpr
 	return (wexpr.start == WindowBoundary::EXPR_FOLLOWING_RANGE || wexpr.end == WindowBoundary::EXPR_FOLLOWING_RANGE);
 }
 
-void WindowBoundariesState::AddImpliedBounds(WindowBoundsSet &result, const BoundWindowExpression &wexpr) {
+WindowBoundsSet WindowBoundariesState::GetWindowBounds(const BoundWindowExpression &wexpr) {
+	const auto partition_count = wexpr.partitions.size();
+	const auto order_count = wexpr.orders.size();
+
+	WindowBoundsSet result;
+	switch (wexpr.GetExpressionType()) {
+	case ExpressionType::WINDOW_ROW_NUMBER:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+		}
+		break;
+	case ExpressionType::WINDOW_NTILE:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+			result.insert(PARTITION_END);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+		}
+		break;
+	case ExpressionType::WINDOW_RANK:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+			result.insert(PEER_BEGIN);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+			result.insert(PEER_BEGIN);
+		}
+		break;
+	case ExpressionType::WINDOW_RANK_DENSE:
+		result.insert(PARTITION_BEGIN);
+		result.insert(PEER_BEGIN);
+		break;
+	case ExpressionType::WINDOW_PERCENT_RANK:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+			result.insert(PARTITION_END);
+			result.insert(PEER_BEGIN);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+			result.insert(PEER_BEGIN);
+		}
+		break;
+	case ExpressionType::WINDOW_CUME_DIST:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+			result.insert(PARTITION_END);
+			result.insert(PEER_END);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+			result.insert(PEER_END);
+		}
+		break;
+	case ExpressionType::WINDOW_LEAD:
+	case ExpressionType::WINDOW_LAG:
+		if (wexpr.arg_orders.empty()) {
+			result.insert(PARTITION_BEGIN);
+			result.insert(PARTITION_END);
+		} else {
+			// Secondary orders need to know where the frame is
+			result.insert(FRAME_BEGIN);
+			result.insert(FRAME_END);
+		}
+		break;
+	case ExpressionType::WINDOW_FIRST_VALUE:
+	case ExpressionType::WINDOW_LAST_VALUE:
+	case ExpressionType::WINDOW_NTH_VALUE:
+	case ExpressionType::WINDOW_AGGREGATE:
+		result.insert(FRAME_BEGIN);
+		result.insert(FRAME_END);
+		break;
+	default:
+		throw InternalException("Window expression type %s", ExpressionTypeToString(wexpr.GetExpressionType()));
+	}
+
 	//	Internal dependencies
 	if (result.count(FRAME_BEGIN) || result.count(FRAME_END)) {
 		result.insert(PARTITION_BEGIN);
@@ -388,9 +472,6 @@ void WindowBoundariesState::AddImpliedBounds(WindowBoundsSet &result, const Boun
 		}
 	}
 
-	const auto partition_count = wexpr.partitions.size();
-	const auto order_count = wexpr.orders.size();
-
 	if (result.count(VALID_END)) {
 		result.insert(PARTITION_END);
 		if (HasFollowingRange(wexpr)) {
@@ -410,12 +491,14 @@ void WindowBoundariesState::AddImpliedBounds(WindowBoundsSet &result, const Boun
 	if (result.count(PARTITION_END) && (partition_count + order_count)) {
 		result.insert(PARTITION_BEGIN);
 	}
+
+	return result;
 }
 
 WindowBoundariesState::WindowBoundariesState(const BoundWindowExpression &wexpr, const idx_t input_size)
-    : type(wexpr.GetExpressionType()), input_size(input_size), start_boundary(wexpr.start), end_boundary(wexpr.end),
-      partition_count(wexpr.partitions.size()), order_count(wexpr.orders.size()),
-      range_sense(wexpr.orders.empty() ? OrderType::INVALID : wexpr.orders[0].type),
+    : required(GetWindowBounds(wexpr)), type(wexpr.GetExpressionType()), input_size(input_size),
+      start_boundary(wexpr.start), end_boundary(wexpr.end), partition_count(wexpr.partitions.size()),
+      order_count(wexpr.orders.size()), range_sense(wexpr.orders.empty() ? OrderType::INVALID : wexpr.orders[0].type),
       has_preceding_range(HasPrecedingRange(wexpr)), has_following_range(HasFollowingRange(wexpr)) {
 }
 
@@ -463,7 +546,7 @@ void WindowBoundariesState::Bounds(DataChunk &bounds, idx_t row_idx, optional_pt
 
 void WindowBoundariesState::PartitionBegin(DataChunk &bounds, idx_t row_idx, const idx_t count, bool is_jump,
                                            const ValidityMask &partition_mask) {
-	auto partition_begin_data = FlatVector::Writer<idx_t>(bounds.data[PARTITION_BEGIN]);
+	auto partition_begin_data = FlatVector::GetData<idx_t>(bounds.data[PARTITION_BEGIN]);
 
 	//	OVER()
 	if (partition_count + order_count == 0) {
@@ -494,7 +577,7 @@ void WindowBoundariesState::PartitionBegin(DataChunk &bounds, idx_t row_idx, con
 
 void WindowBoundariesState::PartitionEnd(DataChunk &bounds, idx_t row_idx, const idx_t count, bool is_jump,
                                          const ValidityMask &partition_mask) {
-	auto partition_end_data = FlatVector::Writer<idx_t>(bounds.data[PARTITION_END]);
+	auto partition_end_data = FlatVector::GetData<idx_t>(bounds.data[PARTITION_END]);
 
 	//	OVER()
 	if (partition_count + order_count == 0) {
@@ -504,7 +587,7 @@ void WindowBoundariesState::PartitionEnd(DataChunk &bounds, idx_t row_idx, const
 		return;
 	}
 
-	auto partition_begin_data = FlatVector::Writer<const idx_t>(bounds.data[PARTITION_BEGIN]);
+	auto partition_begin_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_BEGIN]);
 	for (idx_t chunk_idx = 0; chunk_idx < count; ++chunk_idx, ++row_idx) {
 		// determine partition and peer group boundaries to ultimately figure out window size
 		const auto is_same_partition = !partition_mask.RowIsValidUnsafe(row_idx);
@@ -527,7 +610,8 @@ void WindowBoundariesState::PartitionEnd(DataChunk &bounds, idx_t row_idx, const
 
 void WindowBoundariesState::PeerBegin(DataChunk &bounds, idx_t row_idx, const idx_t count, bool is_jump,
                                       const ValidityMask &partition_mask, const ValidityMask &order_mask) {
-	auto peer_begin_data = FlatVector::Writer<idx_t>(bounds.data[PEER_BEGIN]);
+
+	auto peer_begin_data = FlatVector::GetData<idx_t>(bounds.data[PEER_BEGIN]);
 
 	//	OVER()
 	if (partition_count + order_count == 0) {
@@ -570,7 +654,7 @@ void WindowBoundariesState::PeerEnd(DataChunk &bounds, idx_t row_idx, const idx_
 
 	auto partition_end_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_END]);
 	auto peer_begin_data = FlatVector::GetData<const idx_t>(bounds.data[PEER_BEGIN]);
-	auto peer_end_data = FlatVector::Writer<idx_t>(bounds.data[PEER_END]);
+	auto peer_end_data = FlatVector::GetData<idx_t>(bounds.data[PEER_END]);
 	auto prev_end = peer_begin_data[0];
 	for (idx_t chunk_idx = 0; chunk_idx < count; ++chunk_idx, ++row_idx) {
 		const auto peer_start = peer_begin_data[chunk_idx];
@@ -588,7 +672,7 @@ void WindowBoundariesState::ValidBegin(DataChunk &bounds, idx_t row_idx, const i
                                        optional_ptr<WindowCursor> range) {
 	auto partition_begin_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_BEGIN]);
 	auto partition_end_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_END]);
-	auto valid_begin_data = FlatVector::Writer<idx_t>(bounds.data[VALID_BEGIN]);
+	auto valid_begin_data = FlatVector::GetData<idx_t>(bounds.data[VALID_BEGIN]);
 
 	//	OVER()
 	D_ASSERT(partition_count + order_count != 0);
@@ -603,7 +687,7 @@ void WindowBoundariesState::ValidBegin(DataChunk &bounds, idx_t row_idx, const i
 			valid_start = partition_begin_data[chunk_idx];
 			const auto valid_end = partition_end_data[chunk_idx];
 
-			if (valid_start < valid_end) {
+			if ((valid_start < valid_end) && has_preceding_range) {
 				// Exclude any leading NULLs
 				if (range->CellIsNull(0, valid_start)) {
 					idx_t n = 1;
@@ -621,7 +705,7 @@ void WindowBoundariesState::ValidEnd(DataChunk &bounds, idx_t row_idx, const idx
                                      optional_ptr<WindowCursor> range) {
 	auto partition_end_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_END]);
 	auto valid_begin_data = FlatVector::GetData<const idx_t>(bounds.data[VALID_BEGIN]);
-	auto valid_end_data = FlatVector::Writer<idx_t>(bounds.data[VALID_END]);
+	auto valid_end_data = FlatVector::GetData<idx_t>(bounds.data[VALID_END]);
 
 	//	OVER()
 	D_ASSERT(partition_count + order_count != 0);
@@ -636,7 +720,7 @@ void WindowBoundariesState::ValidEnd(DataChunk &bounds, idx_t row_idx, const idx
 			const auto valid_start = valid_begin_data[chunk_idx];
 			valid_end = partition_end_data[chunk_idx];
 
-			if (valid_start < valid_end) {
+			if ((valid_start < valid_end) && has_following_range) {
 				// Exclude any trailing NULLs
 				if (range->CellIsNull(0, valid_end - 1)) {
 					idx_t n = 1;
@@ -654,10 +738,10 @@ void WindowBoundariesState::FrameBegin(DataChunk &bounds, idx_t row_idx, const i
                                        optional_ptr<WindowCursor> range) {
 	auto partition_begin_data = FlatVector::GetData<idx_t>(bounds.data[PARTITION_BEGIN]);
 	auto partition_end_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_END]);
-	auto peer_begin_data = FlatVector::GetDataMutable<idx_t>(bounds.data[PEER_BEGIN]);
+	auto peer_begin_data = FlatVector::GetData<idx_t>(bounds.data[PEER_BEGIN]);
 	auto valid_begin_data = FlatVector::GetData<const idx_t>(bounds.data[VALID_BEGIN]);
 	auto valid_end_data = FlatVector::GetData<const idx_t>(bounds.data[VALID_END]);
-	auto frame_begin_data = FlatVector::GetDataMutable<idx_t>(bounds.data[FRAME_BEGIN]);
+	auto frame_begin_data = FlatVector::GetData<idx_t>(bounds.data[FRAME_BEGIN]);
 
 	idx_t window_start = NumericLimits<idx_t>::Maximum();
 
@@ -810,10 +894,10 @@ void WindowBoundariesState::FrameEnd(DataChunk &bounds, idx_t row_idx, const idx
                                      optional_ptr<WindowCursor> range) {
 	auto partition_begin_data = FlatVector::GetData<const idx_t>(bounds.data[PARTITION_BEGIN]);
 	auto partition_end_data = FlatVector::GetData<idx_t>(bounds.data[PARTITION_END]);
-	auto peer_end_data = FlatVector::GetDataMutable<idx_t>(bounds.data[PEER_END]);
+	auto peer_end_data = FlatVector::GetData<idx_t>(bounds.data[PEER_END]);
 	auto valid_begin_data = FlatVector::GetData<const idx_t>(bounds.data[VALID_BEGIN]);
 	auto valid_end_data = FlatVector::GetData<const idx_t>(bounds.data[VALID_END]);
-	auto frame_end_data = FlatVector::GetDataMutable<idx_t>(bounds.data[FRAME_END]);
+	auto frame_end_data = FlatVector::GetData<idx_t>(bounds.data[FRAME_END]);
 
 	idx_t window_end = NumericLimits<idx_t>::Maximum();
 

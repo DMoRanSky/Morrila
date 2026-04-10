@@ -1,5 +1,4 @@
 #include "duckdb/optimizer/expression_heuristics.hpp"
-#include "duckdb/planner/table_filter_set.hpp"
 
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
@@ -211,7 +210,7 @@ idx_t ExpressionHeuristics::Cost(Expression &expr) {
 		return ExpressionCost(const_expr.return_type.InternalType(), 1);
 	}
 	case ExpressionClass::BOUND_REF: {
-		auto &col_expr = expr.Cast<BoundReferenceExpression>();
+		auto &col_expr = expr.Cast<BoundColumnRefExpression>();
 		return ExpressionCost(col_expr.return_type.InternalType(), 8);
 	}
 	default: {
@@ -223,7 +222,7 @@ idx_t ExpressionHeuristics::Cost(Expression &expr) {
 	return 1000;
 }
 
-idx_t ExpressionHeuristics::Cost(const TableFilter &filter) {
+idx_t ExpressionHeuristics::Cost(TableFilter &filter) {
 	switch (filter.filter_type) {
 	case TableFilterType::DYNAMIC_FILTER:
 	case TableFilterType::OPTIONAL_FILTER:
@@ -274,10 +273,10 @@ vector<idx_t> ExpressionHeuristics::GetInitialOrder(const TableFilterSet &table_
 	};
 	vector<FilterCost> filter_costs;
 	idx_t filter_index = 0;
-	for (auto &entry : table_filters) {
+	for (auto &entry : table_filters.filters) {
 		FilterCost cost;
 		cost.index = filter_index;
-		cost.cost = Cost(entry.Filter());
+		cost.cost = Cost(*entry.second);
 		filter_costs.push_back(cost);
 		filter_index++;
 	}

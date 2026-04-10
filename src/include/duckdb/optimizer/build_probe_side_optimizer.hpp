@@ -35,7 +35,7 @@ public:
 	void VisitExpression(unique_ptr<Expression> *expression) override {};
 
 private:
-	bool TryFlipJoinChildren(LogicalOperator &op) const;
+	void TryFlipJoinChildren(LogicalOperator &op) const;
 	static idx_t ChildHasJoins(LogicalOperator &op);
 
 	static BuildSize GetBuildSizes(const LogicalOperator &op, idx_t lhs_cardinality, idx_t rhs_cardinality);

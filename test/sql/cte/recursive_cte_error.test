@@ -29,4 +29,3 @@ SELECT source, path, target
 FROM tag_hierarchy
 ;
 ----
-<REGEX>:.*Conversion Error: Could not convert string.*

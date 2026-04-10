@@ -1,3 +1,4 @@
+#include "duckdb/common/limits.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/storage/compression/patas/patas_analyze.hpp"

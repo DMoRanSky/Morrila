@@ -1,21 +1,23 @@
+#define DUCKDB_EXTENSION_MAIN
+
 #include "delta_extension.hpp"
 #include "delta_functions.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 
 namespace duckdb {
 
-static void LoadInternal(ExtensionLoader &loader) {
+static void LoadInternal(DatabaseInstance &instance) {
 	// Load functions
 	for (const auto &function : DeltaFunctions::GetTableFunctions(instance)) {
-		loader.RegisterFunction(function);
+		ExtensionUtil::RegisterFunction(instance, function);
 	}
 }
 
-void DeltaExtension::Load(ExtensionLoader &loader) {
-	LoadInternal(loader);
+void DeltaExtension::Load(DuckDB &db) {
+	LoadInternal(*db.instance);
 }
 
 std::string DeltaExtension::Name() {
@@ -26,7 +28,16 @@ std::string DeltaExtension::Name() {
 
 extern "C" {
 
-DUCKDB_CPP_EXTENSION_ENTRY(delta, loader) {
-	duckdb::LoadInternal(loader);
+DUCKDB_EXTENSION_API void delta_init(duckdb::DatabaseInstance &db) {
+	duckdb::DuckDB db_wrapper(db);
+	db_wrapper.LoadExtension<duckdb::DeltaExtension>();
+}
+
+DUCKDB_EXTENSION_API const char *delta_version() {
+	return duckdb::DuckDB::LibraryVersion();
 }
 }
+
+#ifndef DUCKDB_EXTENSION_MAIN
+#error DUCKDB_EXTENSION_MAIN not defined
+#endif

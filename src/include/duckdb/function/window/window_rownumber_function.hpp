@@ -14,12 +14,11 @@ namespace duckdb {
 
 class WindowRowNumberExecutor : public WindowExecutor {
 public:
-	WindowRowNumberExecutor(BoundWindowExpression &wexpr, WindowSharedExpressions &shared);
+	WindowRowNumberExecutor(BoundWindowExpression &wexpr, ClientContext &context, WindowSharedExpressions &shared);
 
-	unique_ptr<GlobalSinkState> GetGlobalState(ClientContext &client, const idx_t payload_count,
-	                                           const ValidityMask &partition_mask,
-	                                           const ValidityMask &order_mask) const override;
-	unique_ptr<LocalSinkState> GetLocalState(ExecutionContext &context, const GlobalSinkState &gstate) const override;
+	unique_ptr<WindowExecutorGlobalState> GetGlobalState(const idx_t payload_count, const ValidityMask &partition_mask,
+	                                                     const ValidityMask &order_mask) const override;
+	unique_ptr<WindowExecutorLocalState> GetLocalState(const WindowExecutorGlobalState &gstate) const override;
 
 	//! The evaluation index of the NTILE column
 	column_t ntile_idx = DConstants::INVALID_INDEX;
@@ -27,20 +26,18 @@ public:
 	vector<column_t> arg_order_idx;
 
 protected:
-	void EvaluateInternal(ExecutionContext &context, DataChunk &eval_chunk, Vector &result, idx_t count, idx_t row_idx,
-	                      OperatorSinkInput &sink) const override;
+	void EvaluateInternal(WindowExecutorGlobalState &gstate, WindowExecutorLocalState &lstate, DataChunk &eval_chunk,
+	                      Vector &result, idx_t count, idx_t row_idx) const override;
 };
 
 // NTILE is just scaled ROW_NUMBER
 class WindowNtileExecutor : public WindowRowNumberExecutor {
 public:
-	WindowNtileExecutor(BoundWindowExpression &wexpr, WindowSharedExpressions &shared);
-
-	unique_ptr<LocalSinkState> GetLocalState(ExecutionContext &context, const GlobalSinkState &gstate) const override;
+	WindowNtileExecutor(BoundWindowExpression &wexpr, ClientContext &context, WindowSharedExpressions &shared);
 
 protected:
-	void EvaluateInternal(ExecutionContext &context, DataChunk &eval_chunk, Vector &result, idx_t count, idx_t row_idx,
-	                      OperatorSinkInput &sink) const override;
+	void EvaluateInternal(WindowExecutorGlobalState &gstate, WindowExecutorLocalState &lstate, DataChunk &eval_chunk,
+	                      Vector &result, idx_t count, idx_t row_idx) const override;
 };
 
 } // namespace duckdb

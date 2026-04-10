@@ -5,11 +5,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
-
 namespace duckdb {
 
-namespace {
 struct CurrentSettingBindData : public FunctionData {
 	explicit CurrentSettingBindData(Value value_p) : value(std::move(value_p)) {
 	}
@@ -27,7 +24,7 @@ public:
 	}
 };
 
-void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.bind_info->Cast<CurrentSettingBindData>();
 	result.Reference(info.value);
@@ -35,6 +32,7 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 
 unique_ptr<FunctionData> CurrentSettingBind(ClientContext &context, ScalarFunction &bound_function,
                                             vector<unique_ptr<Expression>> &arguments) {
+
 	auto &key_child = arguments[0];
 	if (key_child->return_type.id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
@@ -52,20 +50,18 @@ unique_ptr<FunctionData> CurrentSettingBind(ClientContext &context, ScalarFuncti
 	auto key = StringUtil::Lower(StringValue::Get(key_val));
 	Value val;
 	if (!context.TryGetCurrentSetting(key, val)) {
-		auto extension_name = Catalog::AutoloadExtensionByConfigName(context, key);
+		Catalog::AutoloadExtensionByConfigName(context, key);
 		// If autoloader didn't throw, the config is now available
 		context.TryGetCurrentSetting(key, val);
 	}
 
-	bound_function.SetReturnType(val.type());
+	bound_function.return_type = val.type();
 	return make_uniq<CurrentSettingBindData>(val);
 }
 
-} // namespace
-
 ScalarFunction CurrentSettingFun::GetFunction() {
 	auto fun = ScalarFunction({LogicalType::VARCHAR}, LogicalType::ANY, CurrentSettingFunction, CurrentSettingBind);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 

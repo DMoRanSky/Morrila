@@ -18,11 +18,11 @@ public:
 
 public:
 	//! INSERT INTO
-	PhysicalBatchInsert(PhysicalPlan &physical_plan, vector<LogicalType> types, TableCatalogEntry &table,
+	PhysicalBatchInsert(vector<LogicalType> types, TableCatalogEntry &table,
 	                    vector<unique_ptr<BoundConstraint>> bound_constraints, idx_t estimated_cardinality);
 	//! CREATE TABLE AS
-	PhysicalBatchInsert(PhysicalPlan &physical_plan, LogicalOperator &op, SchemaCatalogEntry &schema,
-	                    unique_ptr<BoundCreateTableInfo> info, idx_t estimated_cardinality);
+	PhysicalBatchInsert(LogicalOperator &op, SchemaCatalogEntry &schema, unique_ptr<BoundCreateTableInfo> info,
+	                    idx_t estimated_cardinality);
 
 	//! The table to insert into
 	optional_ptr<TableCatalogEntry> insert_table;
@@ -37,8 +37,7 @@ public:
 
 public:
 	// Source interface
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

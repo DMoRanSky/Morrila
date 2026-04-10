@@ -13,6 +13,7 @@
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/enums/compression_type.hpp"
 #include "duckdb/catalog/catalog_entry/table_column_type.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -46,10 +47,6 @@ public:
 	//! comment
 	DUCKDB_API const Value &Comment() const;
 	void SetComment(const Value &comment);
-
-	//! tags
-	DUCKDB_API const InsertionOrderPreservingMap<string> &Tags() const;
-	void SetTags(InsertionOrderPreservingMap<string> new_tags);
 
 	//! compression_type
 	const duckdb::CompressionType &CompressionType() const;
@@ -108,7 +105,7 @@ private:
 	//! Comment on this column
 	Value comment;
 	//! Tags on this column
-	InsertionOrderPreservingMap<string> tags;
+	unordered_map<string, string> tags;
 };
 
 } // namespace duckdb

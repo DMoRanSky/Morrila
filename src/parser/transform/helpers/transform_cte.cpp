@@ -1,16 +1,8 @@
 #include "duckdb/common/enums/set_operation_type.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
-#include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/parser/query_node/cte_node.hpp"
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
-#include "duckdb/parser/query_node/insert_query_node.hpp"
-#include "duckdb/parser/query_node/update_query_node.hpp"
-#include "duckdb/parser/query_node/delete_query_node.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
-#include "duckdb/parser/statement/insert_statement.hpp"
-#include "duckdb/parser/statement/update_statement.hpp"
-#include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/transformer.hpp"
 
 namespace duckdb {
@@ -18,56 +10,19 @@ namespace duckdb {
 unique_ptr<CommonTableExpressionInfo> CommonTableExpressionInfo::Copy() {
 	auto result = make_uniq<CommonTableExpressionInfo>();
 	result->aliases = aliases;
-	if (query_node) {
-		result->query_node = query_node->Copy();
-	}
-	for (auto &key : key_targets) {
+	result->query = unique_ptr_cast<SQLStatement, SelectStatement>(query->Copy());
+
+	for (auto &key : result->key_targets) {
 		result->key_targets.push_back(key->Copy());
 	}
-	for (auto &agg : payload_aggregates) {
-		result->payload_aggregates.push_back(agg->Copy());
-	}
+
 	result->materialized = materialized;
 	return result;
 }
 
-CommonTableExpressionInfo::~CommonTableExpressionInfo() {
-}
-
-CTEMaterialize CommonTableExpressionInfo::GetMaterializedForSerialization(Serializer &serializer) const {
-	if (serializer.ShouldSerialize(7)) {
-		return materialized;
-	}
-	return CTEMaterialize::CTE_MATERIALIZE_DEFAULT;
-}
-
-unique_ptr<SelectStatement> CommonTableExpressionInfo::GetQueryForSerialization(Serializer &serializer) const {
-	// Field 101 is only written for old storage versions (v7 and earlier).
-	// For v8+ this method is not called; the QueryNode is written directly as field 106.
-	if (!query_node ||
-	    (query_node->type != QueryNodeType::SELECT_NODE && query_node->type != QueryNodeType::SET_OPERATION_NODE &&
-	     query_node->type != QueryNodeType::RECURSIVE_CTE_NODE)) {
-		throw SerializationException(
-		    "DML CTEs (INSERT/UPDATE/DELETE) require storage version v2.0.0 or higher and cannot be "
-		    "serialized to older storage formats");
-	}
-	auto select = make_uniq<SelectStatement>();
-	select->node = query_node->Copy();
-	return select;
-}
-
-CommonTableExpressionInfo::CommonTableExpressionInfo(unique_ptr<SelectStatement> query,
-                                                     unique_ptr<QueryNode> query_node) {
-	if (query_node) {
-		this->query_node = std::move(query_node);
-	} else if (query) {
-		this->query_node = std::move(query->node);
-	}
-}
-
 void Transformer::ExtractCTEsRecursive(CommonTableExpressionMap &cte_map) {
 	for (auto &cte_entry : stored_cte_map) {
-		for (auto &entry : cte_entry.get().map) {
+		for (auto &entry : cte_entry->map) {
 			auto found_entry = cte_map.map.find(entry.first);
 			if (found_entry != cte_map.map.end()) {
 				// entry already present - use top-most entry
@@ -82,7 +37,7 @@ void Transformer::ExtractCTEsRecursive(CommonTableExpressionMap &cte_map) {
 }
 
 void Transformer::TransformCTE(duckdb_libpgquery::PGWithClause &de_with_clause, CommonTableExpressionMap &cte_map) {
-	stored_cte_map.push_back(cte_map);
+	stored_cte_map.push_back(&cte_map);
 
 	// TODO: might need to update in case of future lawsuit
 	D_ASSERT(de_with_clause.ctes);
@@ -90,11 +45,10 @@ void Transformer::TransformCTE(duckdb_libpgquery::PGWithClause &de_with_clause, 
 		auto info = make_uniq<CommonTableExpressionInfo>();
 
 		auto &cte = *PGPointerCast<duckdb_libpgquery::PGCommonTableExpr>(cte_ele->data.ptr_value);
-
-		if (cte.using_key_list) {
-			for (auto key_ele = cte.using_key_list->head; key_ele != nullptr; key_ele = key_ele->next) {
-				auto expr_ele = TransformExpression(*PGPointerCast<duckdb_libpgquery::PGNode>(key_ele->data.ptr_value));
-				info->key_targets.push_back(std::move(expr_ele));
+		if (cte.recursive_keys) {
+			auto key_target = PGPointerCast<duckdb_libpgquery::PGNode>(cte.recursive_keys->head->data.ptr_value);
+			if (key_target) {
+				TransformExpressionList(*cte.recursive_keys, info->key_targets);
 			}
 		}
 
@@ -118,42 +72,19 @@ void Transformer::TransformCTE(duckdb_libpgquery::PGWithClause &de_with_clause, 
 			throw NotImplementedException("CTE collations not supported");
 		}
 		// we need a query
-		if (!cte.ctequery) {
-			throw ParserException("A CTE body must be a SELECT, INSERT, UPDATE, or DELETE statement");
+		if (!cte.ctequery || cte.ctequery->type != duckdb_libpgquery::T_PGSelectStmt) {
+			throw NotImplementedException("A CTE needs a SELECT");
 		}
-
-		bool is_recursive = cte.cterecursive || de_with_clause.recursive;
 
 		// CTE transformation can either result in inlining for non recursive CTEs, or in recursive CTE bindings
 		// otherwise.
-		if (cte.ctequery->type == duckdb_libpgquery::T_PGSelectStmt) {
-			if (is_recursive) {
-				info->query_node = TransformRecursiveCTE(cte, *info);
-			} else {
-				Transformer cte_transformer(*this);
-				auto select = cte_transformer.TransformSelectStmt(*cte.ctequery);
-				info->query_node = std::move(select->node);
-			}
+		if (cte.cterecursive || de_with_clause.recursive) {
+			info->query = TransformRecursiveCTE(cte, *info);
 		} else {
-			// DML body (INSERT / UPDATE / DELETE)
-			if (is_recursive) {
-				throw ParserException("Recursive CTEs with DML statements are not supported");
-			}
 			Transformer cte_transformer(*this);
-			if (cte.ctequery->type == duckdb_libpgquery::T_PGInsertStmt) {
-				auto stmt = cte_transformer.TransformInsert(PGCast<duckdb_libpgquery::PGInsertStmt>(*cte.ctequery));
-				info->query_node = unique_ptr_cast<InsertQueryNode, QueryNode>(std::move(stmt->node));
-			} else if (cte.ctequery->type == duckdb_libpgquery::T_PGUpdateStmt) {
-				auto stmt = cte_transformer.TransformUpdate(PGCast<duckdb_libpgquery::PGUpdateStmt>(*cte.ctequery));
-				info->query_node = unique_ptr_cast<UpdateQueryNode, QueryNode>(std::move(stmt->node));
-			} else if (cte.ctequery->type == duckdb_libpgquery::T_PGDeleteStmt) {
-				auto stmt = cte_transformer.TransformDelete(PGCast<duckdb_libpgquery::PGDeleteStmt>(*cte.ctequery));
-				info->query_node = unique_ptr_cast<DeleteQueryNode, QueryNode>(std::move(stmt->node));
-			} else {
-				throw ParserException("A CTE body must be a SELECT, INSERT, UPDATE, or DELETE statement");
-			}
+			info->query = cte_transformer.TransformSelectStmt(*cte.ctequery);
 		}
-		D_ASSERT(info->query_node);
+		D_ASSERT(info->query);
 		auto cte_name = string(cte.ctename);
 
 		auto it = cte_map.map.find(cte_name);
@@ -178,14 +109,16 @@ void Transformer::TransformCTE(duckdb_libpgquery::PGWithClause &de_with_clause, 
 	}
 }
 
-unique_ptr<QueryNode> Transformer::TransformRecursiveCTE(duckdb_libpgquery::PGCommonTableExpr &cte,
-                                                         CommonTableExpressionInfo &info) {
+unique_ptr<SelectStatement> Transformer::TransformRecursiveCTE(duckdb_libpgquery::PGCommonTableExpr &cte,
+                                                               CommonTableExpressionInfo &info) {
 	auto &stmt = *PGPointerCast<duckdb_libpgquery::PGSelectStmt>(cte.ctequery);
 
+	unique_ptr<SelectStatement> select;
 	switch (stmt.op) {
 	case duckdb_libpgquery::PG_SETOP_UNION: {
-		auto node = make_uniq_base<QueryNode, RecursiveCTENode>();
-		auto &result = node->Cast<RecursiveCTENode>();
+		select = make_uniq<SelectStatement>();
+		select->node = make_uniq_base<QueryNode, RecursiveCTENode>();
+		auto &result = select->node->Cast<RecursiveCTENode>();
 		result.ctename = string(cte.ctename);
 		result.union_all = stmt.all;
 		if (stmt.withClause) {
@@ -198,18 +131,26 @@ unique_ptr<QueryNode> Transformer::TransformRecursiveCTE(duckdb_libpgquery::PGCo
 		for (auto &key : info.key_targets) {
 			result.key_targets.emplace_back(key->Copy());
 		}
-		if (stmt.limitCount || stmt.limitOffset) {
-			throw ParserException("LIMIT or OFFSET in a recursive query is not allowed");
-		}
-		if (stmt.sortClause) {
-			throw ParserException("ORDER BY in a recursive query is not allowed");
-		}
-		return node;
+		break;
 	}
-	default:
+	case duckdb_libpgquery::PG_SETOP_EXCEPT:
+	case duckdb_libpgquery::PG_SETOP_INTERSECT:
+	default: {
 		// This CTE is not recursive. Fallback to regular query transformation.
-		return TransformSelectNode(*cte.ctequery);
+		auto node = TransformSelectNode(*cte.ctequery);
+		auto result = make_uniq<SelectStatement>();
+		result->node = std::move(node);
+		return result;
 	}
+	}
+
+	if (stmt.limitCount || stmt.limitOffset) {
+		throw ParserException("LIMIT or OFFSET in a recursive query is not allowed");
+	}
+	if (stmt.sortClause) {
+		throw ParserException("ORDER BY in a recursive query is not allowed");
+	}
+	return select;
 }
 
 } // namespace duckdb

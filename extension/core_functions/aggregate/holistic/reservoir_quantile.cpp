@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/reservoir_sample.hpp"
 #include "core_functions/aggregate/holistic_functions.hpp"
@@ -12,8 +10,6 @@
 #include <stdlib.h>
 
 namespace duckdb {
-
-namespace {
 
 template <typename T>
 struct ReservoirQuantileState {
@@ -226,7 +222,7 @@ struct ReservoirQuantileListOperation : public ReservoirQuantileOperation {
 		auto &result = ListVector::GetEntry(finalize_data.result);
 		auto ridx = ListVector::GetListSize(finalize_data.result);
 		ListVector::Reserve(finalize_data.result, ridx + bind_data.quantiles.size());
-		auto rdata = FlatVector::GetDataMutable<CHILD_TYPE>(result);
+		auto rdata = FlatVector::GetData<CHILD_TYPE>(result);
 
 		auto v_t = state.v;
 		D_ASSERT(v_t);
@@ -246,7 +242,7 @@ struct ReservoirQuantileListOperation : public ReservoirQuantileOperation {
 };
 
 template <class STATE, class INPUT_TYPE, class RESULT_TYPE, class OP>
-AggregateFunction ReservoirQuantileListAggregate(const LogicalType &input_type, const LogicalType &child_type) {
+static AggregateFunction ReservoirQuantileListAggregate(const LogicalType &input_type, const LogicalType &child_type) {
 	LogicalType result_type = LogicalType::LIST(child_type);
 	return AggregateFunction(
 	    {input_type}, result_type, AggregateFunction::StateSize<STATE>, AggregateFunction::StateInitialize<STATE, OP>,
@@ -298,7 +294,7 @@ AggregateFunction GetReservoirQuantileListAggregateFunction(const LogicalType &t
 	}
 }
 
-double CheckReservoirQuantile(const Value &quantile_val) {
+static double CheckReservoirQuantile(const Value &quantile_val) {
 	if (quantile_val.IsNull()) {
 		throw BinderException("RESERVOIR_QUANTILE QUANTILE parameter cannot be NULL");
 	}
@@ -366,33 +362,43 @@ unique_ptr<FunctionData> BindReservoirQuantileDecimal(ClientContext &context, Ag
 	function = GetReservoirQuantileAggregateFunction(arguments[0]->return_type.InternalType());
 	auto bind_data = BindReservoirQuantile(context, function, arguments);
 	function.name = "reservoir_quantile";
-	function.SetSerializeCallback(ReservoirQuantileBindData::Serialize);
-	function.SetDeserializeCallback(ReservoirQuantileBindData::Deserialize);
+	function.serialize = ReservoirQuantileBindData::Serialize;
+	function.deserialize = ReservoirQuantileBindData::Deserialize;
 	return bind_data;
 }
 
 AggregateFunction GetReservoirQuantileAggregate(PhysicalType type) {
 	auto fun = GetReservoirQuantileAggregateFunction(type);
-	fun.SetBindCallback(BindReservoirQuantile);
-	fun.SetSerializeCallback(ReservoirQuantileBindData::Serialize);
-	fun.SetDeserializeCallback(ReservoirQuantileBindData::Deserialize);
+	fun.bind = BindReservoirQuantile;
+	fun.serialize = ReservoirQuantileBindData::Serialize;
+	fun.deserialize = ReservoirQuantileBindData::Deserialize;
 	// temporarily push an argument so we can bind the actual quantile
 	fun.arguments.emplace_back(LogicalType::DOUBLE);
 	return fun;
 }
 
+unique_ptr<FunctionData> BindReservoirQuantileDecimalList(ClientContext &context, AggregateFunction &function,
+                                                          vector<unique_ptr<Expression>> &arguments) {
+	function = GetReservoirQuantileListAggregateFunction(arguments[0]->return_type);
+	auto bind_data = BindReservoirQuantile(context, function, arguments);
+	function.serialize = ReservoirQuantileBindData::Serialize;
+	function.deserialize = ReservoirQuantileBindData::Deserialize;
+	function.name = "reservoir_quantile";
+	return bind_data;
+}
+
 AggregateFunction GetReservoirQuantileListAggregate(const LogicalType &type) {
 	auto fun = GetReservoirQuantileListAggregateFunction(type);
-	fun.SetBindCallback(BindReservoirQuantile);
-	fun.SetSerializeCallback(ReservoirQuantileBindData::Serialize);
-	fun.SetDeserializeCallback(ReservoirQuantileBindData::Deserialize);
+	fun.bind = BindReservoirQuantile;
+	fun.serialize = ReservoirQuantileBindData::Serialize;
+	fun.deserialize = ReservoirQuantileBindData::Deserialize;
 	// temporarily push an argument so we can bind the actual quantile
 	auto list_of_double = LogicalType::LIST(LogicalType::DOUBLE);
 	fun.arguments.push_back(list_of_double);
 	return fun;
 }
 
-void DefineReservoirQuantile(AggregateFunctionSet &set, const LogicalType &type) {
+static void DefineReservoirQuantile(AggregateFunctionSet &set, const LogicalType &type) {
 	//	Four versions: type, scalar/list[, count]
 	auto fun = GetReservoirQuantileAggregate(type.InternalType());
 	set.AddFunction(fun);
@@ -408,19 +414,17 @@ void DefineReservoirQuantile(AggregateFunctionSet &set, const LogicalType &type)
 	set.AddFunction(fun);
 }
 
-void GetReservoirQuantileDecimalFunction(AggregateFunctionSet &set, const vector<LogicalType> &arguments,
-                                         const LogicalType &return_value) {
+static void GetReservoirQuantileDecimalFunction(AggregateFunctionSet &set, const vector<LogicalType> &arguments,
+                                                const LogicalType &return_value) {
 	AggregateFunction fun(arguments, return_value, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 	                      BindReservoirQuantileDecimal);
-	fun.SetSerializeCallback(ReservoirQuantileBindData::Serialize);
-	fun.SetDeserializeCallback(ReservoirQuantileBindData::Deserialize);
+	fun.serialize = ReservoirQuantileBindData::Serialize;
+	fun.deserialize = ReservoirQuantileBindData::Deserialize;
 	set.AddFunction(fun);
 
 	fun.arguments.emplace_back(LogicalType::INTEGER);
 	set.AddFunction(fun);
 }
-
-} // namespace
 
 AggregateFunctionSet ReservoirQuantileFun::GetFunctions() {
 	AggregateFunctionSet reservoir_quantile;

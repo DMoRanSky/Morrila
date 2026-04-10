@@ -8,6 +8,8 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/planner/semantic_placeholder.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
@@ -18,7 +20,6 @@
 #include "duckdb/planner/expression_binder/base_select_binder.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/query_node/bound_select_node.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -114,7 +115,26 @@ static void NegatePercentileFractions(ClientContext &context, unique_ptr<ParsedE
 }
 
 BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFunctionCatalogEntry &func, idx_t depth) {
-	// first bind the child of the aggregate expression (if any)
+	// If this is a semantic_* function and the first argument is a constant template string,
+	// expand the template into a ParsedExpression so later binding will replace placeholders
+	// like {text} with proper column references. Mirror SelectBinder behavior.
+	if (!aggr.children.empty()) {
+		const string fname = aggr.function_name;
+		if (StringUtil::CIEquals(fname, "semantic") || StringUtil::CIEquals(fname, "semantic_int") ||
+			StringUtil::CIEquals(fname, "semantic_string") || StringUtil::CIEquals(fname, "semantic_double") ||
+			StringUtil::CIEquals(fname, "semantic_bool")) {
+			if (aggr.children[0] && aggr.children[0]->GetExpressionClass() == ExpressionClass::CONSTANT) {
+				auto &tmpl_const = aggr.children[0]->Cast<ConstantExpression>();
+				auto tid = tmpl_const.value.type().id();
+				if (tid == LogicalTypeId::VARCHAR || tid == LogicalTypeId::STRING_LITERAL) {
+					string tmpl = tmpl_const.value.ToString();
+					auto prompt_expr = BuildSemanticPromptFromTemplate(tmpl);
+					aggr.children[0] = std::move(prompt_expr);
+				}
+			}
+		}
+	}
+
 	this->bound_aggregate = true;
 	unique_ptr<Expression> bound_filter;
 	AggregateBinder aggregate_binder(binder, context);
@@ -140,7 +160,8 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 
 			auto &config = DBConfig::GetConfig(context);
 			const auto &order = aggr.order_bys->orders[0];
-			const auto sense = config.ResolveOrder(context, order.type);
+			const auto sense =
+			    (order.type == OrderType::ORDER_DEFAULT) ? config.options.default_order_type : order.type;
 			negate_fractions = (sense == OrderType::DESCENDING);
 		}
 	}
@@ -160,8 +181,8 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 			if (order.expression->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
 				auto &const_expr = order.expression->Cast<ConstantExpression>();
 				if (!const_expr.value.type().IsIntegral()) {
-					auto order_by_non_integer_literal = Settings::Get<OrderByNonIntegerLiteralSetting>(context);
-					if (!order_by_non_integer_literal) {
+					auto &config = ClientConfig::GetConfig(context);
+					if (!config.order_by_non_integer_literal) {
 						throw BinderException(
 						    *order.expression,
 						    "ORDER BY non-integer literal has no effect.\n* SET order_by_non_integer_literal=true to "
@@ -264,13 +285,6 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 	// found a matching function!
 	auto bound_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 
-	if (!bound_function.CanAggregate() && bound_function.CanWindow()) {
-		auto msg = StringUtil::Format("Function '%s' can only be used as a window function", bound_function.name);
-		error = BinderException(msg);
-		error.AddQueryLocation(aggr);
-		error.Throw();
-	}
-
 	// Bind any sort columns, unless the aggregate is order-insensitive
 	unique_ptr<BoundOrderModifier> order_bys;
 	if (!aggr.order_bys->orders.empty()) {
@@ -279,8 +293,8 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 		for (auto &order : aggr.order_bys->orders) {
 			auto &order_expr = BoundExpression::GetExpression(*order.expression);
 			PushCollation(context, order_expr, order_expr->return_type);
-			const auto sense = config.ResolveOrder(context, order.type);
-			const auto null_order = config.ResolveNullOrder(context, sense, order.null_order);
+			const auto sense = config.ResolveOrder(order.type);
+			const auto null_order = config.ResolveNullOrder(sense, order.null_order);
 			order_bys->orders.emplace_back(sense, null_order, std::move(order_expr));
 		}
 	}
@@ -306,23 +320,22 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 	aggregate->order_bys = std::move(order_bys);
 
 	// check for all the aggregates if this aggregate already exists
-	ProjectionIndex aggr_index;
+	idx_t aggr_index;
 	auto entry = node.aggregate_map.find(*aggregate);
 	if (entry == node.aggregate_map.end()) {
 		// new aggregate: insert into aggregate list
-		auto &aggr_ref = *aggregate;
-		aggr_index = ColumnBinding::PushExpression(node.aggregates, std::move(aggregate));
-		node.aggregate_map[aggr_ref] = aggr_index;
+		aggr_index = node.aggregates.size();
+		node.aggregate_map[*aggregate] = aggr_index;
+		node.aggregates.push_back(std::move(aggregate));
 	} else {
 		// duplicate aggregate: simplify refer to this aggregate
 		aggr_index = entry->second;
 	}
-	auto &bound_aggr = *node.aggregates[aggr_index];
 
 	// now create a column reference referring to the aggregate
-	auto colref = make_uniq<BoundColumnRefExpression>(aggr.GetAlias().empty() ? bound_aggr.ToString() : aggr.GetAlias(),
-	                                                  bound_aggr.return_type,
-	                                                  ColumnBinding(node.aggregate_index, aggr_index), depth);
+	auto colref = make_uniq<BoundColumnRefExpression>(
+	    aggr.GetAlias().empty() ? node.aggregates[aggr_index]->ToString() : aggr.GetAlias(),
+	    node.aggregates[aggr_index]->return_type, ColumnBinding(node.aggregate_index, aggr_index), depth);
 	// move the aggregate expression into the set of bound aggregates
 	return BindResult(std::move(colref));
 }

@@ -2,6 +2,9 @@
 # description: Test generate_series/range function
 # group: [list]
 
+statement ok
+PRAGMA enable_verification
+
 # range with a single parameter
 query I
 SELECT range(3)
@@ -220,45 +223,45 @@ SELECT * FROM (SELECT 1 UNION ALL SELECT 0 UNION ALL SELECT 2) AS _(x), generate
 query II
 EXPLAIN FROM range(0);
 ----
-physical_plan	<REGEX>:.*~0 rows.*
+physical_plan	<REGEX>:.*~0 Rows.*
 
 query II
 EXPLAIN FROM range(-1);
 ----
-physical_plan	<REGEX>:.*~0 rows.*
+physical_plan	<REGEX>:.*~0 Rows.*
 
 query II
 EXPLAIN FROM range(-5, -20, -1);
 ----
-physical_plan	<REGEX>:.*~15 rows.*
+physical_plan	<REGEX>:.*~15 Rows.*
 
 query II
 EXPLAIN FROM range(1, 4, 2);
 ----
-physical_plan	<REGEX>:.*~2 rows.*
+physical_plan	<REGEX>:.*~2 Rows.*
 
 query II
 EXPLAIN FROM range(1, 5, 2);
 ----
-physical_plan	<REGEX>:.*~2 rows.*
+physical_plan	<REGEX>:.*~2 Rows.*
 
 query II
 EXPLAIN FROM generate_series(0);
 ----
-physical_plan	<REGEX>:.*~1 row.*
+physical_plan	<REGEX>:.*~1 Rows.*
 
 query II
 EXPLAIN FROM generate_series(1);
 ----
-physical_plan	<REGEX>:.*~2 rows.*
+physical_plan	<REGEX>:.*~2 Rows.*
 
 query II
 EXPLAIN FROM generate_series(1, 4, 2);
 ----
-physical_plan	<REGEX>:.*~2 rows.*
+physical_plan	<REGEX>:.*~2 Rows.*
 
 query II
 EXPLAIN FROM generate_series(1, 5, 2);
 ----
-physical_plan	<REGEX>:.*~3 rows.*
+physical_plan	<REGEX>:.*~3 Rows.*
 

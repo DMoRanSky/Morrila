@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
 #include "core_functions/scalar/array_functions.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/storage/statistics/array_stats.hpp"
@@ -6,9 +5,7 @@
 
 namespace duckdb {
 
-namespace {
-
-void ArrayValueFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void ArrayValueFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto array_type = result.GetType();
 
 	D_ASSERT(array_type.id() == LogicalTypeId::ARRAY);
@@ -45,8 +42,8 @@ void ArrayValueFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	result.Verify(args.size());
 }
 
-unique_ptr<FunctionData> ArrayValueBind(ClientContext &context, ScalarFunction &bound_function,
-                                        vector<unique_ptr<Expression>> &arguments) {
+static unique_ptr<FunctionData> ArrayValueBind(ClientContext &context, ScalarFunction &bound_function,
+                                               vector<unique_ptr<Expression>> &arguments) {
 	if (arguments.empty()) {
 		throw InvalidInputException("array_value requires at least one argument");
 	}
@@ -63,8 +60,8 @@ unique_ptr<FunctionData> ArrayValueBind(ClientContext &context, ScalarFunction &
 
 	// this is more for completeness reasons
 	bound_function.varargs = child_type;
-	bound_function.SetReturnType(LogicalType::ARRAY(child_type, arguments.size()));
-	return make_uniq<VariableReturnBindData>(bound_function.GetReturnType());
+	bound_function.return_type = LogicalType::ARRAY(child_type, arguments.size());
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
 }
 
 unique_ptr<BaseStatistics> ArrayValueStats(ClientContext &context, FunctionStatisticsInput &input) {
@@ -75,18 +72,15 @@ unique_ptr<BaseStatistics> ArrayValueStats(ClientContext &context, FunctionStati
 	for (idx_t i = 0; i < child_stats.size(); i++) {
 		list_child_stats.Merge(child_stats[i]);
 	}
-	list_stats.SetHasNoNullFast();
 	return list_stats.ToUnique();
 }
-
-} // namespace
 
 ScalarFunction ArrayValueFun::GetFunction() {
 	// the arguments and return types are actually set in the binder function
 	ScalarFunction fun("array_value", {}, LogicalTypeId::ARRAY, ArrayValueFunction, ArrayValueBind, nullptr,
 	                   ArrayValueStats);
 	fun.varargs = LogicalType::ANY;
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return fun;
 }
 

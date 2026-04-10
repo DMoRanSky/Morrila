@@ -30,8 +30,8 @@ UCharsTrie::~UCharsTrie() {
 
 UStringTrieResult
 UCharsTrie::current() const {
-    const char16_t *pos=pos_;
-    if(pos==nullptr) {
+    const UChar *pos=pos_;
+    if(pos==NULL) {
         return USTRINGTRIE_NO_MATCH;
     } else {
         int32_t node;
@@ -59,7 +59,7 @@ UCharsTrie::nextForCodePoint(UChar32 cp) {
 }
 
 UStringTrieResult
-UCharsTrie::branchNext(const char16_t *pos, int32_t length, int32_t uchar) {
+UCharsTrie::branchNext(const UChar *pos, int32_t length, int32_t uchar) {
     // Branch according to the current unit.
     if(length==0) {
         length=*pos++;
@@ -121,7 +121,7 @@ UCharsTrie::branchNext(const char16_t *pos, int32_t length, int32_t uchar) {
 }
 
 UStringTrieResult
-UCharsTrie::nextImpl(const char16_t *pos, int32_t uchar) {
+UCharsTrie::nextImpl(const UChar *pos, int32_t uchar) {
     int32_t node=*pos++;
     for(;;) {
         if(node<kMinLinearMatch) {
@@ -153,8 +153,8 @@ UCharsTrie::nextImpl(const char16_t *pos, int32_t uchar) {
 
 UStringTrieResult
 UCharsTrie::next(int32_t uchar) {
-    const char16_t *pos=pos_;
-    if(pos==nullptr) {
+    const UChar *pos=pos_;
+    if(pos==NULL) {
         return USTRINGTRIE_NO_MATCH;
     }
     int32_t length=remainingMatchLength_;  // Actual remaining match length minus 1.
@@ -176,13 +176,13 @@ UCharsTrie::next(int32_t uchar) {
 
 UStringTrieResult
 UCharsTrie::next(ConstChar16Ptr ptr, int32_t sLength) {
-    const char16_t *s=ptr;
+    const UChar *s=ptr;
     if(sLength<0 ? *s==0 : sLength==0) {
         // Empty input.
         return current();
     }
-    const char16_t *pos=pos_;
-    if(pos==nullptr) {
+    const UChar *pos=pos_;
+    if(pos==NULL) {
         return USTRINGTRIE_NO_MATCH;
     }
     int32_t length=remainingMatchLength_;  // Actual remaining match length minus 1.
@@ -282,13 +282,13 @@ UCharsTrie::next(ConstChar16Ptr ptr, int32_t sLength) {
     }
 }
 
-const char16_t *
-UCharsTrie::findUniqueValueFromBranch(const char16_t *pos, int32_t length,
+const UChar *
+UCharsTrie::findUniqueValueFromBranch(const UChar *pos, int32_t length,
                                       UBool haveUniqueValue, int32_t &uniqueValue) {
     while(length>kMaxBranchLinearSubNodeLength) {
         ++pos;  // ignore the comparison unit
-        if(nullptr==findUniqueValueFromBranch(jumpByDelta(pos), length>>1, haveUniqueValue, uniqueValue)) {
-            return nullptr;
+        if(NULL==findUniqueValueFromBranch(jumpByDelta(pos), length>>1, haveUniqueValue, uniqueValue)) {
+            return NULL;
         }
         length=length-(length>>1);
         pos=skipDelta(pos);
@@ -297,31 +297,31 @@ UCharsTrie::findUniqueValueFromBranch(const char16_t *pos, int32_t length,
         ++pos;  // ignore a comparison unit
         // handle its value
         int32_t node=*pos++;
-        UBool isFinal = static_cast<UBool>(node >> 15);
+        UBool isFinal=(UBool)(node>>15);
         node&=0x7fff;
         int32_t value=readValue(pos, node);
         pos=skipValue(pos, node);
         if(isFinal) {
             if(haveUniqueValue) {
                 if(value!=uniqueValue) {
-                    return nullptr;
+                    return NULL;
                 }
             } else {
                 uniqueValue=value;
-                haveUniqueValue=true;
+                haveUniqueValue=TRUE;
             }
         } else {
             if(!findUniqueValue(pos+value, haveUniqueValue, uniqueValue)) {
-                return nullptr;
+                return NULL;
             }
-            haveUniqueValue=true;
+            haveUniqueValue=TRUE;
         }
     } while(--length>1);
     return pos+1;  // ignore the last comparison unit
 }
 
 UBool
-UCharsTrie::findUniqueValue(const char16_t *pos, UBool haveUniqueValue, int32_t &uniqueValue) {
+UCharsTrie::findUniqueValue(const UChar *pos, UBool haveUniqueValue, int32_t &uniqueValue) {
     int32_t node=*pos++;
     for(;;) {
         if(node<kMinLinearMatch) {
@@ -329,17 +329,17 @@ UCharsTrie::findUniqueValue(const char16_t *pos, UBool haveUniqueValue, int32_t 
                 node=*pos++;
             }
             pos=findUniqueValueFromBranch(pos, node+1, haveUniqueValue, uniqueValue);
-            if(pos==nullptr) {
-                return false;
+            if(pos==NULL) {
+                return FALSE;
             }
-            haveUniqueValue=true;
+            haveUniqueValue=TRUE;
             node=*pos++;
         } else if(node<kMinValueLead) {
             // linear-match node
             pos+=node-kMinLinearMatch+1;  // Ignore the match units.
             node=*pos++;
         } else {
-            UBool isFinal = static_cast<UBool>(node >> 15);
+            UBool isFinal=(UBool)(node>>15);
             int32_t value;
             if(isFinal) {
                 value=readValue(pos, node&0x7fff);
@@ -348,14 +348,14 @@ UCharsTrie::findUniqueValue(const char16_t *pos, UBool haveUniqueValue, int32_t 
             }
             if(haveUniqueValue) {
                 if(value!=uniqueValue) {
-                    return false;
+                    return FALSE;
                 }
             } else {
                 uniqueValue=value;
-                haveUniqueValue=true;
+                haveUniqueValue=TRUE;
             }
             if(isFinal) {
-                return true;
+                return TRUE;
             }
             pos=skipNodeValue(pos, node);
             node&=kNodeTypeMask;
@@ -365,8 +365,8 @@ UCharsTrie::findUniqueValue(const char16_t *pos, UBool haveUniqueValue, int32_t 
 
 int32_t
 UCharsTrie::getNextUChars(Appendable &out) const {
-    const char16_t *pos=pos_;
-    if(pos==nullptr) {
+    const UChar *pos=pos_;
+    if(pos==NULL) {
         return 0;
     }
     if(remainingMatchLength_>=0) {
@@ -397,7 +397,7 @@ UCharsTrie::getNextUChars(Appendable &out) const {
 }
 
 void
-UCharsTrie::getNextBranchUChars(const char16_t *pos, int32_t length, Appendable &out) {
+UCharsTrie::getNextBranchUChars(const UChar *pos, int32_t length, Appendable &out) {
     while(length>kMaxBranchLinearSubNodeLength) {
         ++pos;  // ignore the comparison unit
         getNextBranchUChars(jumpByDelta(pos), length>>1, out);

@@ -7,16 +7,16 @@
 #include "parquet_reader.hpp"
 #include "reader/string_column_reader.hpp"
 #include "reader/struct_column_reader.hpp"
-#include "reader/variant_column_reader.hpp"
 #include "zstd/common/xxhash.hpp"
+
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/storage/statistics/struct_stats.hpp"
-#include "duckdb/storage/statistics/list_stats.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "reader/uuid_column_reader.hpp"
-#include "duckdb/common/type_visitor.hpp"
+#endif
 
 namespace duckdb {
 
@@ -214,25 +214,6 @@ Value ParquetStatisticsUtils::ConvertValueInternal(const LogicalType &type, cons
 			return Value::TIME(dtime_t(val));
 		}
 	}
-	case LogicalTypeId::TIME_NS: {
-		int64_t val;
-		if (stats.size() == sizeof(int32_t)) {
-			val = Load<int32_t>(stats_data);
-		} else if (stats.size() == sizeof(int64_t)) {
-			val = Load<int64_t>(stats_data);
-		} else {
-			throw InvalidInputException("Incorrect stats size for type TIME");
-		}
-		switch (schema_ele.type_info) {
-		case ParquetExtraTypeInfo::UNIT_MS:
-			return Value::TIME_NS(ParquetMsIntToTimeNs(NumericCast<int32_t>(val)));
-		case ParquetExtraTypeInfo::UNIT_NS:
-			return Value::TIME_NS(ParquetIntToTimeNs(val));
-		case ParquetExtraTypeInfo::UNIT_MICROS:
-		default:
-			return Value::TIME_NS(dtime_ns_t(val));
-		}
-	}
 	case LogicalTypeId::TIME_TZ: {
 		int64_t val;
 		if (stats.size() == sizeof(int32_t)) {
@@ -322,102 +303,18 @@ Value ParquetStatisticsUtils::ConvertValueInternal(const LogicalType &type, cons
 	}
 }
 
-static bool ConvertUnshreddedStats(BaseStatistics &result, optional_ptr<BaseStatistics> input_p) {
-	D_ASSERT(result.GetType().id() == LogicalTypeId::UINTEGER);
-
-	if (!input_p) {
-		return false;
-	}
-	auto &input = *input_p;
-	D_ASSERT(input.GetType().id() == LogicalTypeId::BLOB);
-	result.CopyValidity(input);
-
-	auto min = StringStats::Min(input);
-	auto max = StringStats::Max(input);
-
-	if (!result.CanHaveNoNull()) {
-		return true;
-	}
-
-	if (min.empty() && max.empty()) {
-		//! All non-shredded values are NULL or VARIANT_NULL, set the stats to indicate this
-		NumericStats::SetMin<uint32_t>(result, 0);
-		NumericStats::SetMax<uint32_t>(result, 0);
-		result.SetHasNoNull();
-	}
-	return true;
-}
-
-static bool ConvertShreddedStats(BaseStatistics &result, optional_ptr<BaseStatistics> input_p);
-
-static bool ConvertShreddedStatsItem(BaseStatistics &result, BaseStatistics &input) {
-	D_ASSERT(result.GetType().id() == LogicalTypeId::STRUCT);
-	D_ASSERT(input.GetType().id() == LogicalTypeId::STRUCT);
-
-	// result variant stats
-	auto &untyped_value_index_stats = StructStats::GetChildStats(result, VariantStats::UNTYPED_VALUE_INDEX);
-	auto &typed_value_result = StructStats::GetChildStats(result, VariantStats::TYPED_VALUE_INDEX);
-
-	// input parquet stats
-	auto &value_stats = StructStats::GetChildStats(input, 0);
-	auto &typed_value_input = StructStats::GetChildStats(input, 1);
-
-	if (!ConvertUnshreddedStats(untyped_value_index_stats, value_stats)) {
-		return false;
-	}
-	if (!ConvertShreddedStats(typed_value_result, typed_value_input)) {
-		return false;
-	}
-	return true;
-}
-
-static bool ConvertShreddedStats(BaseStatistics &result, optional_ptr<BaseStatistics> input_p) {
-	if (!input_p) {
-		return false;
-	}
-	auto &input = *input_p;
-	result.CopyValidity(input);
-
-	auto type_id = result.GetType().id();
-	if (type_id == LogicalTypeId::LIST) {
-		auto &child_result = ListStats::GetChildStats(result);
-		auto &child_input = ListStats::GetChildStats(input);
-		return ConvertShreddedStatsItem(child_result, child_input);
-	}
-	if (type_id == LogicalTypeId::STRUCT) {
-		auto field_count = StructType::GetChildCount(result.GetType());
-		for (idx_t i = 0; i < field_count; i++) {
-			auto &result_field = StructStats::GetChildStats(result, i);
-			auto &input_field = StructStats::GetChildStats(input, i);
-			if (!ConvertShreddedStatsItem(result_field, input_field)) {
-				return false;
-			}
-		}
-		return true;
-	}
-	result.Copy(input);
-	return true;
-}
-
 unique_ptr<BaseStatistics> ParquetStatisticsUtils::TransformColumnStatistics(const ParquetColumnSchema &schema,
                                                                              const vector<ColumnChunk> &columns,
                                                                              bool can_have_nan) {
+
 	// Not supported types
 	auto &type = schema.type;
-	if (type.id() == LogicalTypeId::ARRAY || type.id() == LogicalTypeId::MAP) {
+	if (type.id() == LogicalTypeId::ARRAY || type.id() == LogicalTypeId::MAP || type.id() == LogicalTypeId::LIST) {
 		return nullptr;
 	}
 
 	unique_ptr<BaseStatistics> row_group_stats;
 
-	if (type.id() == LogicalTypeId::LIST) {
-		auto list_stats = ListStats::CreateUnknown(type);
-		auto &child_schema = schema.children[0];
-		auto child_stats = ParquetStatisticsUtils::TransformColumnStatistics(child_schema, columns, can_have_nan);
-		ListStats::SetChildStats(list_stats, std::move(child_stats));
-		row_group_stats = list_stats.ToUnique();
-		return row_group_stats;
-	}
 	// Structs are handled differently (they dont have stats)
 	if (type.id() == LogicalTypeId::STRUCT) {
 		auto struct_stats = StructStats::CreateUnknown(type);
@@ -428,52 +325,16 @@ unique_ptr<BaseStatistics> ParquetStatisticsUtils::TransformColumnStatistics(con
 			StructStats::SetChildStats(struct_stats, i, std::move(child_stats));
 		}
 		row_group_stats = struct_stats.ToUnique();
+
+		// null count is generic
+		if (row_group_stats) {
+			row_group_stats->Set(StatsInfo::CAN_HAVE_NULL_AND_VALID_VALUES);
+		}
 		return row_group_stats;
-	} else if (schema.schema_type == ParquetColumnSchemaType::VARIANT) {
-		auto children_count = schema.children.size();
-		if (children_count != 3) {
-			return nullptr;
-		}
-		//! Create the VARIANT stats
-		auto &typed_value = schema.children[2];
-		LogicalType logical_type;
-		if (!VariantColumnReader::TypedValueLayoutToType(typed_value.type, logical_type)) {
-			//! We couldn't convert the parquet typed_value to a structured type (likely because a nested 'typed_value'
-			//! field is missing)
-			return nullptr;
-		}
-		auto shredding_type = TypeVisitor::VisitReplace(logical_type, [](const LogicalType &type) {
-			return LogicalType::STRUCT({{"typed_value", type}, {"untyped_value_index", LogicalType::UINTEGER}});
-		});
-		auto variant_stats = VariantStats::CreateShredded(shredding_type);
-
-		//! Take the root stats
-		auto &shredded_stats = VariantStats::GetShreddedStats(variant_stats);
-		auto &untyped_value_index_stats = StructStats::GetChildStats(shredded_stats, VariantStats::UNTYPED_VALUE_INDEX);
-		auto &typed_value_stats = StructStats::GetChildStats(shredded_stats, VariantStats::TYPED_VALUE_INDEX);
-
-		//! Convert the root 'value' -> 'untyped_value_index'
-		auto &value = schema.children[1];
-		D_ASSERT(value.name == "value");
-		auto value_stats = ParquetStatisticsUtils::TransformColumnStatistics(value, columns, can_have_nan);
-		if (!ConvertUnshreddedStats(untyped_value_index_stats, value_stats.get())) {
-			//! Couldn't convert the stats, or there are no stats
-			return nullptr;
-		}
-
-		auto parquet_typed_value_stats =
-		    ParquetStatisticsUtils::TransformColumnStatistics(typed_value, columns, can_have_nan);
-		if (!ConvertShreddedStats(typed_value_stats, parquet_typed_value_stats.get())) {
-			//! Couldn't convert the stats, or there are no stats
-			return nullptr;
-		}
-		//! Set validity to UNKNOWN
-		variant_stats.SetHasNoNull();
-		variant_stats.SetHasNull();
-		return variant_stats.ToUnique();
 	}
 
 	// Otherwise, its a standard column with stats
+
 	auto &column_chunk = columns[schema.column_index];
 	if (!column_chunk.__isset.meta_data || !column_chunk.meta_data.__isset.statistics) {
 		// no stats present for row group
@@ -514,74 +375,33 @@ unique_ptr<BaseStatistics> ParquetStatisticsUtils::TransformColumnStatistics(con
 			row_group_stats = CreateNumericStats(type, schema, parquet_stats);
 		}
 		break;
-	case LogicalTypeId::BLOB:
 	case LogicalTypeId::VARCHAR: {
-		auto string_stats = StringStats::CreateUnknown(type);
-		const bool is_varchar = type.id() == LogicalTypeId::VARCHAR;
-		if (parquet_stats.__isset.min_value && StringColumnReader::IsValid(parquet_stats.min_value, is_varchar)) {
-			StringStats::SetMin(string_stats, parquet_stats.min_value);
-		} else if (parquet_stats.__isset.min && StringColumnReader::IsValid(parquet_stats.min, is_varchar)) {
-			StringStats::SetMin(string_stats, parquet_stats.min);
+		auto string_stats = StringStats::CreateEmpty(type);
+		if (parquet_stats.__isset.min_value) {
+			StringColumnReader::VerifyString(parquet_stats.min_value.c_str(), parquet_stats.min_value.size(), true);
+			StringStats::Update(string_stats, parquet_stats.min_value);
+		} else if (parquet_stats.__isset.min) {
+			StringColumnReader::VerifyString(parquet_stats.min.c_str(), parquet_stats.min.size(), true);
+			StringStats::Update(string_stats, parquet_stats.min);
+		} else {
+			return nullptr;
 		}
-		if (parquet_stats.__isset.max_value && StringColumnReader::IsValid(parquet_stats.max_value, is_varchar)) {
-			StringStats::SetMax(string_stats, parquet_stats.max_value);
-		} else if (parquet_stats.__isset.max && StringColumnReader::IsValid(parquet_stats.max, is_varchar)) {
-			StringStats::SetMax(string_stats, parquet_stats.max);
+		if (parquet_stats.__isset.max_value) {
+			StringColumnReader::VerifyString(parquet_stats.max_value.c_str(), parquet_stats.max_value.size(), true);
+			StringStats::Update(string_stats, parquet_stats.max_value);
+		} else if (parquet_stats.__isset.max) {
+			StringColumnReader::VerifyString(parquet_stats.max.c_str(), parquet_stats.max.size(), true);
+			StringStats::Update(string_stats, parquet_stats.max);
+		} else {
+			return nullptr;
 		}
+		StringStats::SetContainsUnicode(string_stats);
+		StringStats::ResetMaxStringLength(string_stats);
 		row_group_stats = string_stats.ToUnique();
 		break;
 	}
-	case LogicalTypeId::GEOMETRY: {
-		auto geo_stats = GeometryStats::CreateUnknown(type);
-		if (column_chunk.meta_data.__isset.geospatial_statistics) {
-			if (column_chunk.meta_data.geospatial_statistics.__isset.bbox) {
-				auto &bbox = column_chunk.meta_data.geospatial_statistics.bbox;
-				auto &stats_bbox = GeometryStats::GetExtent(geo_stats);
-
-				// xmin > xmax is allowed if the geometry crosses the antimeridian,
-				// but we don't handle this right now
-				if (bbox.xmin <= bbox.xmax) {
-					stats_bbox.x_min = bbox.xmin;
-					stats_bbox.x_max = bbox.xmax;
-				}
-
-				if (bbox.ymin <= bbox.ymax) {
-					stats_bbox.y_min = bbox.ymin;
-					stats_bbox.y_max = bbox.ymax;
-				}
-
-				if (bbox.__isset.zmin && bbox.__isset.zmax && bbox.zmin <= bbox.zmax) {
-					stats_bbox.z_min = bbox.zmin;
-					stats_bbox.z_max = bbox.zmax;
-				}
-
-				if (bbox.__isset.mmin && bbox.__isset.mmax && bbox.mmin <= bbox.mmax) {
-					stats_bbox.m_min = bbox.mmin;
-					stats_bbox.m_max = bbox.mmax;
-				}
-			}
-			if (column_chunk.meta_data.geospatial_statistics.__isset.geospatial_types) {
-				auto &types = column_chunk.meta_data.geospatial_statistics.geospatial_types;
-				auto &stats_types = GeometryStats::GetTypes(geo_stats);
-
-				// if types are set but empty, that still means "any type" - so we leave stats_types as-is (unknown)
-				// otherwise, clear and set to the actual types
-
-				if (!types.empty()) {
-					stats_types.Clear();
-					for (auto &geom_type : types) {
-						stats_types.AddWKBType(geom_type);
-					}
-				}
-			}
-		}
-		row_group_stats = geo_stats.ToUnique();
-		break;
-	}
 	default:
-		// no specific stats, only create unknown stats to hold validity information
-		auto unknown_stats = BaseStatistics::CreateUnknown(type);
-		row_group_stats = unknown_stats.ToUnique();
+		// no stats for you
 		break;
 	} // end of type switch
 
@@ -590,9 +410,6 @@ unique_ptr<BaseStatistics> ParquetStatisticsUtils::TransformColumnStatistics(con
 		row_group_stats->Set(StatsInfo::CAN_HAVE_NULL_AND_VALID_VALUES);
 		if (parquet_stats.__isset.null_count && parquet_stats.null_count == 0) {
 			row_group_stats->Set(StatsInfo::CANNOT_HAVE_NULL_VALUES);
-		}
-		if (parquet_stats.__isset.null_count && parquet_stats.null_count == column_chunk.meta_data.num_values) {
-			row_group_stats->Set(StatsInfo::CANNOT_HAVE_VALID_VALUES);
 		}
 	}
 	return row_group_stats;
@@ -626,7 +443,7 @@ static bool HasFilterConstants(const TableFilter &duckdb_filter) {
 }
 
 template <class T>
-static uint64_t ValueXH64FixedWidth(const Value &constant) {
+uint64_t ValueXH64FixedWidth(const Value &constant) {
 	T val = constant.GetValue<T>();
 	return duckdb_zstd::XXH64(&val, sizeof(val), 0);
 }
@@ -745,6 +562,7 @@ bool ParquetStatisticsUtils::BloomFilterExcludes(const TableFilter &duckdb_filte
 }
 
 ParquetBloomFilter::ParquetBloomFilter(idx_t num_entries, double bloom_filter_false_positive_ratio) {
+
 	// aim for hit ratio of 0.01%
 	// see http://tfk.mit.edu/pdf/bloom.pdf
 	double f = bloom_filter_false_positive_ratio;

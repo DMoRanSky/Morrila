@@ -39,7 +39,7 @@ main_header_files = [
     os.path.join(include_dir, 'duckdb', 'common', 'serializer', 'memory_stream.hpp'),
     os.path.join(include_dir, 'duckdb', 'main', 'appender.hpp'),
     os.path.join(include_dir, 'duckdb', 'main', 'client_context.hpp'),
-    os.path.join(include_dir, 'duckdb', 'main', 'extension', 'extension_loader.hpp'),
+    os.path.join(include_dir, 'duckdb', 'main', 'extension_util.hpp'),
     os.path.join(include_dir, 'duckdb', 'function', 'function.hpp'),
     os.path.join(include_dir, 'duckdb', 'function', 'table_function.hpp'),
     os.path.join(include_dir, 'duckdb', 'parser', 'parsed_data', 'create_table_function_info.hpp'),
@@ -91,7 +91,7 @@ import package_build
 # include paths for where to search for include files during amalgamation
 include_paths = [include_dir] + package_build.third_party_includes()
 # paths of where to look for files to compile and include to the final amalgamation
-compile_directories = [src_dir] + package_build.third_party_sources() + ['extension/loader']
+compile_directories = [src_dir] + package_build.third_party_sources()
 
 # files always excluded
 always_excluded = normalize_path(
@@ -277,8 +277,9 @@ def git_commit_hash():
 # - CMakeLists.txt
 # - scripts/amalgamation.py
 # - scripts/package_build.py
+# - tools/pythonpkg/setup.py
 ######
-MAIN_BRANCH_VERSIONING = True
+MAIN_BRANCH_VERSIONING = False
 if os.getenv('MAIN_BRANCH_VERSIONING') == "0":
     MAIN_BRANCH_VERSIONING = False
 if os.getenv('MAIN_BRANCH_VERSIONING') == "1":

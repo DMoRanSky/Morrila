@@ -13,13 +13,12 @@
 
 namespace duckdb {
 
-RadixPartitionedHashTable::RadixPartitionedHashTable(GroupingSet &grouping_set_p, const GroupedAggregateData &op_p,
-                                                     TupleDataValidityType group_validity_p)
-    : grouping_set(grouping_set_p), op(op_p), group_validity(group_validity_p) {
+RadixPartitionedHashTable::RadixPartitionedHashTable(GroupingSet &grouping_set_p, const GroupedAggregateData &op_p)
+    : grouping_set(grouping_set_p), op(op_p) {
 	auto groups_count = op.GroupCount();
-	for (auto group_idx : ProjectionIndex::GetIndexes(groups_count)) {
-		if (grouping_set.find(group_idx) == grouping_set.end()) {
-			null_groups.push_back(group_idx);
+	for (idx_t i = 0; i < groups_count; i++) {
+		if (grouping_set.find(i) == grouping_set.end()) {
+			null_groups.push_back(i);
 		}
 	}
 	if (grouping_set.empty()) {
@@ -27,6 +26,7 @@ RadixPartitionedHashTable::RadixPartitionedHashTable(GroupingSet &grouping_set_p
 		group_types.emplace_back(LogicalType::TINYINT);
 	}
 	for (auto &entry : grouping_set) {
+		D_ASSERT(entry < op.group_types.size());
 		group_types.push_back(op.group_types[entry]);
 	}
 	SetGroupingValues();
@@ -35,8 +35,7 @@ RadixPartitionedHashTable::RadixPartitionedHashTable(GroupingSet &grouping_set_p
 	group_types_copy.emplace_back(LogicalType::HASH);
 
 	auto layout = make_shared_ptr<TupleDataLayout>();
-	auto aggregate_objects = AggregateObject::CreateAggregateObjects(op.bindings);
-	layout->Initialize(std::move(group_types_copy), std::move(aggregate_objects), group_validity);
+	layout->Initialize(std::move(group_types_copy), AggregateObject::CreateAggregateObjects(op.bindings));
 	layout_ptr = std::move(layout);
 }
 
@@ -70,7 +69,7 @@ const TupleDataLayout &RadixPartitionedHashTable::GetLayout() const {
 unique_ptr<GroupedAggregateHashTable> RadixPartitionedHashTable::CreateHT(ClientContext &context, const idx_t capacity,
                                                                           const idx_t radix_bits) const {
 	return make_uniq<GroupedAggregateHashTable>(context, BufferAllocator::Get(context), group_types, op.payload_types,
-	                                            op.bindings, capacity, radix_bits, group_validity);
+	                                            op.bindings, capacity, radix_bits);
 }
 
 //===--------------------------------------------------------------------===//
@@ -106,11 +105,11 @@ public:
 	bool SetRadixBitsToExternal();
 	idx_t GetRadixBits() const;
 	idx_t GetMaximumSinkRadixBits() const;
+	idx_t GetExternalRadixBits() const;
 
 private:
 	void SetRadixBitsInternal(idx_t radix_bits_p, bool external);
 	idx_t InitialSinkRadixBits() const;
-	idx_t ExternalRadixBits(bool dynamic) const;
 	idx_t MaximumSinkRadixBits() const;
 	idx_t SinkCapacity() const;
 
@@ -119,12 +118,21 @@ private:
 	RadixHTGlobalSinkState &sink;
 
 public:
+	//! Number of threads (from TaskScheduler)
+	const idx_t number_of_threads;
 	//! Width of tuples
 	const idx_t row_width;
 	//! Capacity of HTs during the Sink
 	const idx_t sink_capacity;
 
 private:
+	//! Assume (1 << 15) = 32KB L1 cache per core, divided by two because hyperthreading
+	static constexpr idx_t L1_CACHE_SIZE = 32768 / 2;
+	//! Assume (1 << 20) = 1MB L2 cache per core, divided by two because hyperthreading
+	static constexpr idx_t L2_CACHE_SIZE = 1048576 / 2;
+	//! Assume (1 << 20) + (1 << 19) = 1.5MB L3 cache per core (shared), divided by two because hyperthreading
+	static constexpr idx_t L3_CACHE_SIZE = 1572864 / 2;
+
 	//! Sink radix bits to initialize with
 	static constexpr idx_t MAXIMUM_INITIAL_SINK_RADIX_BITS = 4;
 	//! Maximum Sink radix bits (independent of threads)
@@ -132,7 +140,7 @@ private:
 
 	//! Current thread-global sink radix bits
 	atomic<idx_t> sink_radix_bits;
-	//! Maximum Sink radix bits (set based on number of threads, if not external)
+	//! Maximum Sink radix bits (set based on number of threads)
 	const idx_t maximum_sink_radix_bits;
 
 	//! Thresholds at which we reduce the sink radix bits
@@ -144,7 +152,7 @@ public:
 	//! If we have this many or less threads, we grow the HT, otherwise we abandon
 	static constexpr idx_t GROW_STRATEGY_THREAD_THRESHOLD = 2;
 	//! If we fill this many blocks per partition, we trigger a repartition
-	static constexpr double BLOCK_FILL_FACTOR = 0.5;
+	static constexpr double BLOCK_FILL_FACTOR = 1.8;
 	//! By how many bits to repartition if a repartition is triggered
 	static constexpr idx_t REPARTITION_RADIX_BITS = 2;
 };
@@ -156,11 +164,6 @@ public:
 	//! Destroys aggregate states (if multi-scan)
 	~RadixHTGlobalSinkState() override;
 	void Destroy();
-
-public:
-	idx_t GetThreadLimit() const {
-		return temporary_memory_state->GetReservation() / number_of_threads / 10 * 8;
-	}
 
 public:
 	ClientContext &context;
@@ -176,10 +179,6 @@ public:
 	atomic<idx_t> active_threads;
 	//! Number of threads (from TaskScheduler)
 	const idx_t number_of_threads;
-	//! Memory limit (from BufferManager)
-	const idx_t memory_limit;
-	//! Block size (from BufferManager)
-	const idx_t block_alloc_size;
 	//! If any thread has called combine
 	atomic<bool> any_combined;
 
@@ -211,12 +210,12 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
     : context(context_p), temporary_memory_state(TemporaryMemoryManager::Get(context).Register(context)),
       finalized(false), external(false), active_threads(0),
       number_of_threads(NumericCast<idx_t>(TaskScheduler::GetScheduler(context).NumberOfThreads())),
-      memory_limit(BufferManager::GetBufferManager(context).GetOperatorMemoryLimit()),
-      block_alloc_size(BufferManager::GetBufferManager(context).GetBlockAllocSize()), any_combined(false),
-      radix_ht(radix_ht_p), config(*this), stored_allocators_size(0), finalize_done(0),
+      any_combined(false), radix_ht(radix_ht_p), config(*this), stored_allocators_size(0), finalize_done(0),
       scan_pin_properties(TupleDataPinProperties::DESTROY_AFTER_DONE), count_before_combining(0),
       max_partition_size(0) {
+
 	// Compute minimum reservation
+	auto block_alloc_size = BufferManager::GetBufferManager(context).GetBlockAllocSize();
 	auto tuples_per_block = block_alloc_size / radix_ht.GetLayout().GetRowWidth();
 	idx_t ht_count =
 	    LossyNumericCast<idx_t>(static_cast<double>(config.sink_capacity) / GroupedAggregateHashTable::LOAD_FACTOR);
@@ -254,7 +253,7 @@ void RadixHTGlobalSinkState::Destroy() {
 	}
 
 	// There are aggregates with destructors: Call the destructor for each of the aggregates
-	const annotated_lock_guard<annotated_mutex> guard {lock};
+	auto guard = Lock();
 	RowOperationsState row_state(*stored_allocators.back());
 	for (auto &partition : partitions) {
 		auto &data_collection = *partition->data;
@@ -272,17 +271,17 @@ void RadixHTGlobalSinkState::Destroy() {
 // LCOV_EXCL_STOP
 
 RadixHTConfig::RadixHTConfig(RadixHTGlobalSinkState &sink_p)
-    : sink(sink_p), row_width(sink.radix_ht.GetLayout().GetRowWidth()), sink_capacity(SinkCapacity()),
-      sink_radix_bits(InitialSinkRadixBits()), maximum_sink_radix_bits(MaximumSinkRadixBits()) {
+    : sink(sink_p), number_of_threads(sink.number_of_threads), row_width(sink.radix_ht.GetLayout().GetRowWidth()),
+      sink_capacity(SinkCapacity()), sink_radix_bits(InitialSinkRadixBits()),
+      maximum_sink_radix_bits(MaximumSinkRadixBits()) {
 }
 
 void RadixHTConfig::SetRadixBits(const idx_t &radix_bits_p) {
-	const auto max_bits = MinValue(maximum_sink_radix_bits, ExternalRadixBits(true));
-	SetRadixBitsInternal(MinValue(radix_bits_p, max_bits), false);
+	SetRadixBitsInternal(MinValue(radix_bits_p, maximum_sink_radix_bits), false);
 }
 
 bool RadixHTConfig::SetRadixBitsToExternal() {
-	SetRadixBitsInternal(ExternalRadixBits(true), true);
+	SetRadixBitsInternal(MAXIMUM_FINAL_SINK_RADIX_BITS, true);
 	return sink.external;
 }
 
@@ -294,12 +293,16 @@ idx_t RadixHTConfig::GetMaximumSinkRadixBits() const {
 	return maximum_sink_radix_bits;
 }
 
+idx_t RadixHTConfig::GetExternalRadixBits() const {
+	return MAXIMUM_FINAL_SINK_RADIX_BITS;
+}
+
 void RadixHTConfig::SetRadixBitsInternal(const idx_t radix_bits_p, bool external) {
 	if (sink_radix_bits > radix_bits_p || sink.any_combined) {
 		return;
 	}
 
-	const annotated_lock_guard<annotated_mutex> guard {sink.lock};
+	auto guard = sink.Lock();
 	if (sink_radix_bits > radix_bits_p || sink.any_combined) {
 		return;
 	}
@@ -315,55 +318,36 @@ void RadixHTConfig::SetRadixBitsInternal(const idx_t radix_bits_p, bool external
 }
 
 idx_t RadixHTConfig::InitialSinkRadixBits() const {
-	return MinValue(RadixPartitioning::RadixBitsOfPowerOfTwo(NextPowerOfTwo(sink.number_of_threads)),
+	return MinValue(RadixPartitioning::RadixBitsOfPowerOfTwo(NextPowerOfTwo(number_of_threads)),
 	                MAXIMUM_INITIAL_SINK_RADIX_BITS);
 }
 
-idx_t RadixHTConfig::ExternalRadixBits(const bool dynamic) const {
-	// Going to many partitions is great for reducing memory usage during the GetData phase
-	// However, we can't go to, e.g., 256 partitions when we have 8 threads and 200 MiB of memory
-	// Because we'll have too many pages in memory to do the partitioning in the first place
-
-	// Assume we can fill half of RAM with pages, and pessimistically assume 4 pages per partition
-	const auto memory_limit = dynamic ? sink.temporary_memory_state->GetReservation() : sink.memory_limit / 2;
-	const auto max_partitions = memory_limit / sink.number_of_threads / sink.block_alloc_size / 4;
-
-	// Compute number of bits, rounded down, at least as much as initial bits
-	const auto bits = MaxValue(RadixPartitioning::RadixBits(max_partitions) - 1, InitialSinkRadixBits());
-
-	// Avoid returning 0 or underflowed bits
-	if (max_partitions == 0 || bits == 0) {
-		return 1;
-	}
-
-	// Capped by global maximum
-	return MinValue(bits, MAXIMUM_FINAL_SINK_RADIX_BITS);
-}
-
 idx_t RadixHTConfig::MaximumSinkRadixBits() const {
-	if (sink.number_of_threads <= GROW_STRATEGY_THREAD_THRESHOLD) {
+	if (number_of_threads <= GROW_STRATEGY_THREAD_THRESHOLD) {
 		return InitialSinkRadixBits(); // Don't repartition unless we go external
 	}
 	// If rows are very wide we have to reduce the number of partitions, otherwise cache misses get out of hand
-	idx_t bits = DConstants::INVALID_INDEX;
 	if (row_width >= ROW_WIDTH_THRESHOLD_TWO) {
-		bits = MAXIMUM_FINAL_SINK_RADIX_BITS - 2;
-	} else if (row_width >= ROW_WIDTH_THRESHOLD_ONE) {
-		bits = MAXIMUM_FINAL_SINK_RADIX_BITS - 1;
-	} else {
-		bits = MAXIMUM_FINAL_SINK_RADIX_BITS;
+		return MAXIMUM_FINAL_SINK_RADIX_BITS - 2;
 	}
-	// Capped by external radix bits
-	return MinValue(bits, ExternalRadixBits(false));
+	if (row_width >= ROW_WIDTH_THRESHOLD_ONE) {
+		return MAXIMUM_FINAL_SINK_RADIX_BITS - 1;
+	}
+	return MAXIMUM_FINAL_SINK_RADIX_BITS;
 }
 
 idx_t RadixHTConfig::SinkCapacity() const {
-	if (sink.number_of_threads <= GROW_STRATEGY_THREAD_THRESHOLD) {
-		// Grow strategy, start off a bit bigger
-		return 262144;
-	}
-	// Start off tiny, we can adapt with DecideAdaptation later
-	return 32768;
+	// Compute cache size per active thread (assuming cache is shared)
+	const auto total_shared_cache_size = number_of_threads * L3_CACHE_SIZE;
+	const auto cache_per_active_thread = L1_CACHE_SIZE + L2_CACHE_SIZE + total_shared_cache_size / number_of_threads;
+
+	// Divide cache per active thread by entry size, round up to next power of two, to get capacity
+	const auto size_per_entry = LossyNumericCast<idx_t>(sizeof(ht_entry_t) * GroupedAggregateHashTable::LOAD_FACTOR) +
+	                            MinValue(row_width, ROW_WIDTH_THRESHOLD_TWO);
+	const auto capacity = NextPowerOfTwo(cache_per_active_thread / size_per_entry);
+
+	// Capacity must be at least the minimum capacity
+	return MaxValue<idx_t>(capacity, GroupedAggregateHashTable::InitialCapacity());
 }
 
 class RadixHTLocalSinkState : public LocalSinkState {
@@ -460,8 +444,7 @@ void DecideAdaptation(RadixHTGlobalSinkState &gstate, RadixHTLocalSinkState &lst
 	}
 }
 
-void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, RadixHTLocalSinkState &lstate,
-                      const bool combine) {
+void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, RadixHTLocalSinkState &lstate) {
 	auto &config = gstate.config;
 	auto &ht = *lstate.ht;
 
@@ -470,29 +453,32 @@ void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, Ra
 	const auto aggregate_allocator_size = ht.GetAggregateAllocator()->AllocationSize();
 	const auto total_size =
 	    aggregate_allocator_size + ht.GetPartitionedData().SizeInBytes() + ht.Capacity() * sizeof(ht_entry_t);
-	if (total_size > gstate.GetThreadLimit()) {
+	idx_t thread_limit = temporary_memory_state.GetReservation() / gstate.number_of_threads;
+	if (total_size > thread_limit) {
 		// We're over the thread memory limit
 		if (!gstate.external) {
 			// We haven't yet triggered out-of-core behavior, but maybe we don't have to, grab the lock and check again
-			const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
-			if (total_size > gstate.GetThreadLimit()) {
+			auto guard = gstate.Lock();
+			thread_limit = temporary_memory_state.GetReservation() / gstate.number_of_threads;
+			if (total_size > thread_limit) {
 				// Out-of-core would be triggered below, update minimum reservation and try to increase the reservation
 				temporary_memory_state.SetMinimumReservation(aggregate_allocator_size * gstate.number_of_threads +
 				                                             gstate.minimum_reservation);
 				auto remaining_size =
 				    MaxValue<idx_t>(gstate.number_of_threads * total_size, temporary_memory_state.GetRemainingSize());
 				temporary_memory_state.SetRemainingSizeAndUpdateReservation(context, 2 * remaining_size);
+				thread_limit = temporary_memory_state.GetReservation() / gstate.number_of_threads;
 			}
 		}
 	}
 
-	if (total_size > gstate.GetThreadLimit()) {
+	if (total_size > thread_limit) {
 		if (gstate.config.SetRadixBitsToExternal()) {
 			// We're approaching the memory limit, unpin the data
 			if (!lstate.abandoned_data) {
 				lstate.abandoned_data = make_uniq<RadixPartitionedTupleData>(
-				    BufferManager::GetBufferManager(context), gstate.radix_ht.GetLayoutPtr(), MemoryTag::HASH_TABLE,
-				    config.GetRadixBits(), gstate.radix_ht.GetLayout().ColumnCount() - 1);
+				    BufferManager::GetBufferManager(context), gstate.radix_ht.GetLayoutPtr(), config.GetRadixBits(),
+				    gstate.radix_ht.GetLayout().ColumnCount() - 1);
 			}
 			ht.SetRadixBits(gstate.config.GetRadixBits());
 			ht.AcquirePartitionedData()->Repartition(context, *lstate.abandoned_data);
@@ -500,7 +486,7 @@ void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, Ra
 	}
 
 	// We can go external when there are few threads, but we shouldn't repartition here
-	if (!combine && gstate.number_of_threads <= RadixHTConfig::GROW_STRATEGY_THREAD_THRESHOLD) {
+	if (gstate.number_of_threads <= RadixHTConfig::GROW_STRATEGY_THREAD_THRESHOLD) {
 		return;
 	}
 
@@ -508,10 +494,10 @@ void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, Ra
 	const auto current_radix_bits = RadixPartitioning::RadixBitsOfPowerOfTwo(partition_count);
 	D_ASSERT(current_radix_bits <= config.GetRadixBits());
 
+	const auto block_size = BufferManager::GetBufferManager(context).GetBlockSize();
 	const auto row_size_per_partition =
 	    ht.GetMaterializedCount() * ht.GetPartitionedData().GetLayout().GetRowWidth() / partition_count;
-	if (row_size_per_partition >
-	    LossyNumericCast<idx_t>(config.BLOCK_FILL_FACTOR * static_cast<double>(gstate.block_alloc_size))) {
+	if (row_size_per_partition > LossyNumericCast<idx_t>(config.BLOCK_FILL_FACTOR * static_cast<double>(block_size))) {
 		// We crossed our block filling threshold, try to increment radix bits
 		config.SetRadixBits(current_radix_bits + config.REPARTITION_RADIX_BITS);
 	}
@@ -569,7 +555,7 @@ void RadixPartitionedHashTable::Sink(ExecutionContext &context, DataChunk &chunk
 
 	// Check if we need to repartition
 	const auto radix_bits_before = ht.GetRadixBits();
-	MaybeRepartition(context.client, gstate, lstate, false);
+	MaybeRepartition(context.client, gstate, lstate);
 	const auto repartitioned = radix_bits_before != ht.GetRadixBits();
 
 	if (repartitioned && ht.Count() != 0) {
@@ -593,7 +579,7 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 
 	// Set any_combined, then check one last time whether we need to repartition
 	gstate.any_combined = true;
-	MaybeRepartition(context.client, gstate, lstate, true);
+	MaybeRepartition(context.client, gstate, lstate);
 
 	auto &ht = *lstate.ht;
 	auto lstate_data = ht.AcquirePartitionedData();
@@ -607,26 +593,18 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 		lstate.abandoned_data = std::move(lstate_data);
 	}
 
-	auto aggregate_allocator = ht.GetAggregateAllocator();
-
-	// Eagerly destroy the HT
-	lstate.ht.reset();
-
-	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
-	D_ASSERT(!gstate.finalized);
+	auto guard = gstate.Lock();
 	if (gstate.uncombined_data) {
 		gstate.uncombined_data->Combine(*lstate.abandoned_data);
 	} else {
 		gstate.uncombined_data = std::move(lstate.abandoned_data);
 	}
-	gstate.stored_allocators.emplace_back(std::move(aggregate_allocator));
+	gstate.stored_allocators.emplace_back(ht.GetAggregateAllocator());
 	gstate.stored_allocators_size += gstate.stored_allocators.back()->AllocationSize();
 }
 
 void RadixPartitionedHashTable::Finalize(ClientContext &context, GlobalSinkState &gstate_p) const {
 	auto &gstate = gstate_p.Cast<RadixHTGlobalSinkState>();
-	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
-	D_ASSERT(!gstate.finalized);
 
 	if (gstate.uncombined_data) {
 		auto &uncombined_data = *gstate.uncombined_data;
@@ -715,7 +693,7 @@ public:
 	vector<column_t> column_ids;
 
 	//! For synchronizing tasks
-	atomic<idx_t> task_idx;
+	idx_t task_idx;
 	atomic<idx_t> task_done;
 };
 
@@ -775,15 +753,16 @@ RadixHTGlobalSourceState::RadixHTGlobalSourceState(ClientContext &context_p, con
 SourceResultType RadixHTGlobalSourceState::AssignTask(RadixHTGlobalSinkState &sink, RadixHTLocalSourceState &lstate,
                                                       InterruptState &interrupt_state) {
 	// First, try to get a partition index
-	lstate.task_idx = task_idx++;
-	if (finished || lstate.task_idx >= sink.partitions.size()) {
+	auto guard = sink.Lock();
+	if (finished || task_idx == sink.partitions.size()) {
 		lstate.ht.reset();
 		return SourceResultType::FINISHED;
 	}
+	lstate.task_idx = task_idx++;
 
 	// We got a partition index
 	auto &partition = *sink.partitions[lstate.task_idx];
-	const annotated_lock_guard<annotated_mutex> partition_guard {partition.lock};
+	auto partition_guard = partition.Lock();
 	switch (partition.state) {
 	case AggregatePartitionState::READY_TO_FINALIZE:
 		partition.state = AggregatePartitionState::FINALIZE_IN_PROGRESS;
@@ -792,7 +771,7 @@ SourceResultType RadixHTGlobalSourceState::AssignTask(RadixHTGlobalSinkState &si
 	case AggregatePartitionState::FINALIZE_IN_PROGRESS:
 		lstate.task = RadixHTSourceTaskType::SCAN;
 		lstate.scan_status = RadixHTScanStatus::INIT;
-		return partition.BlockSource(interrupt_state);
+		return partition.BlockSource(partition_guard, interrupt_state);
 	case AggregatePartitionState::READY_TO_SCAN:
 		lstate.task = RadixHTSourceTaskType::SCAN;
 		lstate.scan_status = RadixHTScanStatus::INIT;
@@ -859,12 +838,12 @@ void RadixHTLocalSourceState::Finalize(RadixHTGlobalSinkState &sink, RadixHTGlob
 	partition.progress = 1;
 
 	// Move the combined data back to the partition
-	partition.data = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(gstate.context),
-	                                                sink.radix_ht.GetLayoutPtr(), MemoryTag::HASH_TABLE);
+	partition.data =
+	    make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(gstate.context), sink.radix_ht.GetLayoutPtr());
 	partition.data->Combine(*ht->AcquirePartitionedData()->GetPartitions()[0]);
 
 	// Update thread-global state
-	const annotated_lock_guard<annotated_mutex> guard {sink.lock};
+	auto guard = sink.Lock();
 	sink.stored_allocators.emplace_back(ht->GetAggregateAllocator());
 	if (task_idx == sink.partitions.size()) {
 		ht.reset();
@@ -877,9 +856,9 @@ void RadixHTLocalSourceState::Finalize(RadixHTGlobalSinkState &sink, RadixHTGlob
 	}
 
 	// Update partition state
-	const annotated_lock_guard<annotated_mutex> partition_guard {partition.lock};
+	auto partition_guard = partition.Lock();
 	partition.state = AggregatePartitionState::READY_TO_SCAN;
-	partition.UnblockTasks();
+	partition.UnblockTasks(partition_guard);
 
 	// This thread will scan the partition
 	task = RadixHTSourceTaskType::SCAN;
@@ -904,7 +883,7 @@ void RadixHTLocalSourceState::Scan(RadixHTGlobalSinkState &sink, RadixHTGlobalSo
 			data_collection.Reset();
 		}
 		scan_status = RadixHTScanStatus::DONE;
-		const annotated_lock_guard<annotated_mutex> guard {sink.lock};
+		auto guard = sink.Lock();
 		if (++gstate.task_done == sink.partitions.size()) {
 			gstate.finished = true;
 		}
@@ -924,7 +903,8 @@ void RadixHTLocalSourceState::Scan(RadixHTGlobalSinkState &sink, RadixHTGlobalSo
 		chunk.data[entry].Reference(scan_chunk.data[chunk_index++]);
 	}
 	for (auto null_group : radix_ht.null_groups) {
-		ConstantVector::SetNull(chunk.data[null_group]);
+		chunk.data[null_group].SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::SetNull(chunk.data[null_group], true);
 	}
 	D_ASSERT(radix_ht.grouping_set.size() + radix_ht.null_groups.size() == radix_ht.op.GroupCount());
 	for (idx_t col_idx = 0; col_idx < radix_ht.op.aggregates.size(); col_idx++) {
@@ -972,22 +952,21 @@ SourceResultType RadixPartitionedHashTable::GetData(ExecutionContext &context, D
 			// For each column in the aggregates, set to initial state
 			chunk.SetCardinality(1);
 			for (auto null_group : null_groups) {
-				ConstantVector::SetNull(chunk.data[null_group]);
+				chunk.data[null_group].SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(chunk.data[null_group], true);
 			}
 			ArenaAllocator allocator(BufferAllocator::Get(context.client));
 			for (idx_t i = 0; i < op.aggregates.size(); i++) {
 				D_ASSERT(op.aggregates[i]->GetExpressionClass() == ExpressionClass::BOUND_AGGREGATE);
 				auto &aggr = op.aggregates[i]->Cast<BoundAggregateExpression>();
-				auto aggr_state =
-				    make_unsafe_uniq_array_uninitialized<data_t>(aggr.function.GetStateSizeCallback()(aggr.function));
-				aggr.function.GetStateInitCallback()(aggr.function, aggr_state.get());
+				auto aggr_state = make_unsafe_uniq_array_uninitialized<data_t>(aggr.function.state_size(aggr.function));
+				aggr.function.initialize(aggr.function, aggr_state.get());
 
 				AggregateInputData aggr_input_data(aggr.bind_info.get(), allocator);
 				Vector state_vector(Value::POINTER(CastPointerToValue(aggr_state.get())));
-				aggr.function.GetStateFinalizeCallback()(state_vector, aggr_input_data,
-				                                         chunk.data[null_groups.size() + i], 1, 0);
-				if (aggr.function.HasStateDestructorCallback()) {
-					aggr.function.GetStateDestructorCallback()(state_vector, aggr_input_data, 1);
+				aggr.function.finalize(state_vector, aggr_input_data, chunk.data[null_groups.size() + i], 1, 0);
+				if (aggr.function.destructor) {
+					aggr.function.destructor(state_vector, aggr_input_data, 1);
 				}
 			}
 			// Place the grouping values (all the groups of the grouping_set condensed into a single value)

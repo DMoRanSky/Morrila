@@ -10,6 +10,7 @@
 #include <thread>
 
 using namespace duckdb;
+using namespace std;
 
 class TestProgressBar {
 	class TestFailure {

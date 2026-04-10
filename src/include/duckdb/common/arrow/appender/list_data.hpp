@@ -10,7 +10,6 @@
 
 #include "duckdb/common/arrow/appender/append_data.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 
 namespace duckdb {
 
@@ -29,7 +28,7 @@ public:
 		input.ToUnifiedFormat(input_size, format);
 		idx_t size = to - from;
 		vector<sel_t> child_indices;
-		append_data.AppendValidity(format, from, to);
+		AppendValidity(append_data, format, from, to);
 		AppendOffsets(append_data, format, from, to, child_indices);
 
 		// append the child vector of the list

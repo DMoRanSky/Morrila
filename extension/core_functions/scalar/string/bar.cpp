@@ -69,13 +69,12 @@ static void BarFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	auto &max_arg = args.data[2];
 	string buffer;
 
-	auto &heap = StringVector::GetStringHeap(result);
 	if (args.ColumnCount() == 3) {
 		GenericExecutor::ExecuteTernary<PrimitiveType<double>, PrimitiveType<double>, PrimitiveType<double>,
 		                                PrimitiveType<string_t>>(
 		    x_arg, min_arg, max_arg, result, args.size(),
 		    [&](PrimitiveType<double> x, PrimitiveType<double> min, PrimitiveType<double> max) {
-			    return heap.AddString(BarScalarFunction(x.val, min.val, max.val, 80, buffer));
+			    return StringVector::AddString(result, BarScalarFunction(x.val, min.val, max.val, 80, buffer));
 		    });
 	} else {
 		auto &width_arg = args.data[3];
@@ -84,7 +83,7 @@ static void BarFunction(DataChunk &args, ExpressionState &state, Vector &result)
 		    x_arg, min_arg, max_arg, width_arg, result, args.size(),
 		    [&](PrimitiveType<double> x, PrimitiveType<double> min, PrimitiveType<double> max,
 		        PrimitiveType<double> width) {
-			    return heap.AddString(BarScalarFunction(x.val, min.val, max.val, width.val, buffer));
+			    return StringVector::AddString(result, BarScalarFunction(x.val, min.val, max.val, width.val, buffer));
 		    });
 	}
 }

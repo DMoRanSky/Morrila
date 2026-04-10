@@ -8,15 +8,12 @@
 
 #pragma once
 
-#include "duckdb/common/enums/compression_type.hpp"
-#include "duckdb/common/helper.hpp"
-#include "duckdb/common/typedefs.hpp"
-#include "duckdb/common/unique_ptr.hpp"
-#include "duckdb/common/vector.hpp"
-#include "duckdb/common/winapi.hpp"
-#include "duckdb/storage/block.hpp"
+#include "duckdb/common/common.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/storage_info.hpp"
+#include "duckdb/storage/block.hpp"
+#include "duckdb/storage/table/row_group.hpp"
+#include "duckdb/common/enums/compression_type.hpp"
 
 namespace duckdb {
 
@@ -74,11 +71,6 @@ struct RowGroupPointer {
 	vector<MetaBlockPointer> data_pointers;
 	//! Data pointers to the delete information of the row group (if any)
 	vector<MetaBlockPointer> deletes_pointers;
-	//! Whether or not we have all metadata blocks defined in the pointer
-	bool has_metadata_blocks = false;
-	//! Metadata blocks of the columns that are not mentioned in "data_pointers"
-	//! This is often empty - but can be set for wide columns with a lot of metadata
-	vector<idx_t> extra_metadata_blocks;
 };
 
 } // namespace duckdb

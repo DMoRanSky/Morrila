@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "reader/struct_column_reader.hpp"
 
 namespace duckdb {
@@ -7,7 +5,7 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Struct Column Reader
 //===--------------------------------------------------------------------===//
-StructColumnReader::StructColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema,
+StructColumnReader::StructColumnReader(ParquetReader &reader, const ParquetColumnSchema &schema,
                                        vector<unique_ptr<ColumnReader>> child_readers_p)
     : ColumnReader(reader, schema), child_readers(std::move(child_readers_p)) {
 	D_ASSERT(Type().InternalType() == PhysicalType::STRUCT);
@@ -45,10 +43,11 @@ idx_t StructColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_
 	optional_idx read_count;
 	for (idx_t i = 0; i < child_readers.size(); i++) {
 		auto &child = child_readers[i];
-		auto &target_vector = struct_entries[i];
+		auto &target_vector = *struct_entries[i];
 		if (!child) {
 			// if we are not scanning this vector - set it to NULL
-			ConstantVector::SetNull(target_vector);
+			target_vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(target_vector, true);
 			continue;
 		}
 		auto child_num_values = child->Read(num_values, define_out, repeat_out, target_vector);

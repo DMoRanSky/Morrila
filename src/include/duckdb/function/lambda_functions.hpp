@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -101,7 +100,8 @@ public:
 			result_validity = &FlatVector::Validity(result);
 
 			if (list_column.GetType().id() == LogicalTypeId::SQLNULL) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 				result_is_null = true;
 				return;
 			}

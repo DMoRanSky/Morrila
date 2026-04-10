@@ -6,7 +6,6 @@
 
 namespace duckdb {
 
-namespace {
 struct GetVariableBindData : FunctionData {
 	explicit GetVariableBindData(Value value_p) : value(std::move(value_p)) {
 	}
@@ -23,8 +22,8 @@ struct GetVariableBindData : FunctionData {
 	}
 };
 
-unique_ptr<FunctionData> GetVariableBind(ClientContext &context, ScalarFunction &function,
-                                         vector<unique_ptr<Expression>> &arguments) {
+static unique_ptr<FunctionData> GetVariableBind(ClientContext &context, ScalarFunction &function,
+                                                vector<unique_ptr<Expression>> &arguments) {
 	if (arguments[0]->HasParameter() || arguments[0]->return_type.id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}
@@ -36,7 +35,7 @@ unique_ptr<FunctionData> GetVariableBind(ClientContext &context, ScalarFunction 
 	if (!variable_name.IsNull()) {
 		ClientConfig::GetConfig(context).GetUserVariable(variable_name.ToString(), value);
 	}
-	function.SetReturnType(value.type());
+	function.return_type = value.type();
 	return make_uniq<GetVariableBindData>(std::move(value));
 }
 
@@ -50,11 +49,9 @@ unique_ptr<Expression> BindGetVariableExpression(FunctionBindExpressionInput &in
 	return make_uniq<BoundConstantExpression>(bind_data.value);
 }
 
-} // namespace
-
 ScalarFunction GetVariableFun::GetFunction() {
 	ScalarFunction getvar("getvariable", {LogicalType::VARCHAR}, LogicalType::ANY, nullptr, GetVariableBind, nullptr);
-	getvar.SetBindExpressionCallback(BindGetVariableExpression);
+	getvar.bind_expression = BindGetVariableExpression;
 	return getvar;
 }
 

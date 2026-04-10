@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb.h"
 #include "duckdb/common/fast_mem.hpp"
 #include "duckdb/common/exception.hpp"
 

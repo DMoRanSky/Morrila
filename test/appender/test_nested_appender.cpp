@@ -5,6 +5,7 @@
 #include <vector>
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test appender with lists", "[appender]") {
 	duckdb::unique_ptr<QueryResult> result;

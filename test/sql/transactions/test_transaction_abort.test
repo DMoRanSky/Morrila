@@ -20,7 +20,6 @@ BEGIN TRANSACTION
 statement error
 SELEC 42
 ----
-syntax error
 
 query I
 SELECT 42

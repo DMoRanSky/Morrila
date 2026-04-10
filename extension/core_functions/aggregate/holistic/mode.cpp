@@ -1,11 +1,17 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/uhugeint.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "core_functions/aggregate/distributive_functions.hpp"
 #include "core_functions/aggregate/holistic_functions.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/owning_string_map.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/function/aggregate/sort_key_helpers.hpp"
+#include "duckdb/common/algorithm.hpp"
+#include <functional>
 
 // MODE( <expr1> )
 // Returns the most frequent value for the values within expr1.
@@ -15,7 +21,6 @@ namespace std {} // namespace std
 
 namespace duckdb {
 
-namespace {
 struct ModeAttr {
 	ModeAttr() : count(0), first_row(std::numeric_limits<idx_t>::max()) {
 	}
@@ -38,18 +43,6 @@ struct ModeStandard {
 	static RESULT_TYPE Assign(Vector &result, INPUT_TYPE input) {
 		return RESULT_TYPE(input);
 	}
-
-	static void Destroy(T *mode) {
-	}
-
-	static T *Update(T *mode, const T &key) {
-		if (!mode) {
-			mode = new T(key);
-		}
-		*mode = key;
-
-		return mode;
-	}
 };
 
 struct ModeString {
@@ -65,42 +58,6 @@ struct ModeString {
 	template <class INPUT_TYPE, class RESULT_TYPE>
 	static RESULT_TYPE Assign(Vector &result, INPUT_TYPE input) {
 		return StringVector::AddStringOrBlob(result, input);
-	}
-
-	static void Destroy(string_t *mode) {
-		if (mode && !mode->IsInlined()) {
-			delete[] mode->GetData();
-			mode->SetPointer(nullptr);
-		}
-	}
-
-	static string_t *Update(string_t *mode, const string_t &key) {
-		if (key.IsInlined()) {
-			Destroy(mode);
-			if (!mode) {
-				mode = new string_t(nullptr, 0);
-			}
-			*mode = key;
-			return mode;
-		}
-
-		// non-inlined string, need to allocate space for it somehow
-		const auto len = key.GetSize();
-		char *ptr;
-		if (!mode || mode->GetSize() < len) {
-			// we cannot fit this into the current slot - destroy it and re-allocate
-			Destroy(mode);
-			if (!mode) {
-				mode = new string_t(nullptr, 0);
-			}
-			ptr = new char[len];
-		} else {
-			// this fits into the current slot - take over the pointer
-			ptr = mode->GetDataWriteable();
-		}
-		memcpy(ptr, key.GetData(), len);
-		*mode = string_t(ptr, UnsafeNumericCast<uint32_t>(len));
-		return mode;
 	}
 };
 
@@ -134,7 +91,6 @@ struct ModeState {
 			delete frequency_map;
 		}
 		if (mode) {
-			TYPE_OP::Destroy(mode);
 			delete mode;
 		}
 		if (scan) {
@@ -206,7 +162,11 @@ struct ModeState {
 		if (new_count > count) {
 			valid = true;
 			count = new_count;
-			Update(key);
+			if (mode) {
+				*mode = key;
+			} else {
+				mode = new KEY_TYPE(key);
+			}
 		}
 	}
 
@@ -220,10 +180,6 @@ struct ModeState {
 		if (count == old_count && key == *mode) {
 			valid = false;
 		}
-	}
-
-	void Update(const KEY_TYPE &key) {
-		mode = TYPE_OP::Update(mode, key);
 	}
 
 	typename Counts::const_iterator Scan() const {
@@ -277,12 +233,15 @@ struct BaseModeFunction {
 	}
 
 	template <class STATE, class OP>
-	static void Combine(const STATE &source, STATE &target, AggregateInputData &aggr_input_data) {
+	static void Combine(const STATE &source, STATE &target, AggregateInputData &) {
 		if (!source.frequency_map) {
 			return;
 		}
 		if (!target.frequency_map) {
-			target.frequency_map = TYPE_OP::CreateEmpty(aggr_input_data.allocator);
+			// Copy - don't destroy! Otherwise windowing will break.
+			target.frequency_map = new typename STATE::Counts(*source.frequency_map);
+			target.count = source.count;
+			return;
 		}
 		for (auto &val : *source.frequency_map) {
 			auto &i = (*target.frequency_map)[val.first];
@@ -372,7 +331,7 @@ struct ModeFunction : TypedModeFunction<TYPE_OP> {
 		state.InitializePage(partition);
 		const auto &fmask = partition.filter_mask;
 
-		auto rdata = FlatVector::GetDataMutable<RESULT_TYPE>(result);
+		auto rdata = FlatVector::GetData<RESULT_TYPE>(result);
 		auto &rmask = FlatVector::Validity(result);
 		auto &prevs = state.prevs;
 		if (prevs.empty()) {
@@ -406,7 +365,7 @@ struct ModeFunction : TypedModeFunction<TYPE_OP> {
 			// Rescan
 			auto highest_frequency = state.Scan();
 			if (highest_frequency != state.frequency_map->end()) {
-				state.Update(highest_frequency->first);
+				*(state.mode) = highest_frequency->first;
 				state.count = highest_frequency->second.count;
 				state.valid = (state.count > 0);
 			}
@@ -448,7 +407,7 @@ AggregateFunction GetFallbackModeFunction(const LogicalType &type) {
 	                       AggregateFunction::StateInitialize<STATE, OP, AggregateDestructorType::LEGACY>,
 	                       AggregateSortKeyHelpers::UnaryUpdate<STATE, OP>, AggregateFunction::StateCombine<STATE, OP>,
 	                       AggregateFunction::StateVoidFinalize<STATE, OP>, nullptr);
-	aggr.SetStateDestructorCallback(AggregateFunction::StateDestroy<STATE, OP>);
+	aggr.destructor = AggregateFunction::StateDestroy<STATE, OP>;
 	return aggr;
 }
 
@@ -459,7 +418,7 @@ AggregateFunction GetTypedModeFunction(const LogicalType &type) {
 	auto func =
 	    AggregateFunction::UnaryAggregateDestructor<STATE, INPUT_TYPE, INPUT_TYPE, OP, AggregateDestructorType::LEGACY>(
 	        type, type);
-	func.SetWindowCallback(OP::template Window<STATE, INPUT_TYPE, INPUT_TYPE>);
+	func.window = OP::template Window<STATE, INPUT_TYPE, INPUT_TYPE>;
 	return func;
 }
 
@@ -507,8 +466,6 @@ unique_ptr<FunctionData> BindModeAggregate(ClientContext &context, AggregateFunc
 	return nullptr;
 }
 
-} // namespace
-
 AggregateFunctionSet ModeFun::GetFunctions() {
 	AggregateFunctionSet mode("mode");
 	mode.AddFunction(AggregateFunction({LogicalTypeId::ANY}, LogicalTypeId::ANY, nullptr, nullptr, nullptr, nullptr,
@@ -519,10 +476,8 @@ AggregateFunctionSet ModeFun::GetFunctions() {
 //===--------------------------------------------------------------------===//
 // Entropy
 //===--------------------------------------------------------------------===//
-namespace {
-
 template <class STATE>
-double FinalizeEntropy(STATE &state) {
+static double FinalizeEntropy(STATE &state) {
 	if (!state.frequency_map) {
 		return 0;
 	}
@@ -558,7 +513,7 @@ AggregateFunction GetTypedEntropyFunction(const LogicalType &type) {
 	auto func =
 	    AggregateFunction::UnaryAggregateDestructor<STATE, INPUT_TYPE, double, OP, AggregateDestructorType::LEGACY>(
 	        type, LogicalType::DOUBLE);
-	func.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	func.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return func;
 }
 
@@ -569,8 +524,8 @@ AggregateFunction GetFallbackEntropyFunction(const LogicalType &type) {
 	                       AggregateFunction::StateInitialize<STATE, OP, AggregateDestructorType::LEGACY>,
 	                       AggregateSortKeyHelpers::UnaryUpdate<STATE, OP>, AggregateFunction::StateCombine<STATE, OP>,
 	                       AggregateFunction::StateFinalize<STATE, double, OP>, nullptr);
-	func.SetStateDestructorCallback(AggregateFunction::StateDestroy<STATE, OP>);
-	func.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	func.destructor = AggregateFunction::StateDestroy<STATE, OP>;
+	func.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	return func;
 }
 
@@ -607,8 +562,6 @@ unique_ptr<FunctionData> BindEntropyAggregate(ClientContext &context, AggregateF
 	function.name = "entropy";
 	return nullptr;
 }
-
-} // namespace
 
 AggregateFunctionSet EntropyFun::GetFunctions() {
 	AggregateFunctionSet entropy("entropy");

@@ -37,10 +37,10 @@ public:
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 
 public:
-	ExpressionType LowerComparisonType() const {
+	ExpressionType LowerComparisonType() {
 		return lower_inclusive ? ExpressionType::COMPARE_GREATERTHANOREQUALTO : ExpressionType::COMPARE_GREATERTHAN;
 	}
-	ExpressionType UpperComparisonType() const {
+	ExpressionType UpperComparisonType() {
 		return upper_inclusive ? ExpressionType::COMPARE_LESSTHANOREQUALTO : ExpressionType::COMPARE_LESSTHAN;
 	}
 

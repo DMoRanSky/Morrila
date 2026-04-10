@@ -3,6 +3,9 @@
 # group: [asof]
 
 statement ok
+PRAGMA enable_verification
+
+statement ok
 CREATE OR REPLACE TABLE right_pushdown(time INTEGER, value FLOAT);
 
 statement ok
@@ -32,7 +35,7 @@ INSERT INTO issue13899 VALUES
 foreach threshold 0 32
 
 statement ok
-PRAGMA asof_loop_join_threshold = {threshold};
+PRAGMA asof_loop_join_threshold = ${threshold};
 
 query IIII
 SELECT 

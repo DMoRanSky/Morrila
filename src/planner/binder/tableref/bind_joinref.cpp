@@ -8,10 +8,17 @@
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/bound_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/planner/expression_binder/lateral_binder.hpp"
 #include "duckdb/planner/query_node/bound_select_node.hpp"
+#include "duckdb/planner/semantic_placeholder.hpp"
+#include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/vector.hpp"
+#include <iostream>
 
 namespace duckdb {
 
@@ -55,7 +62,7 @@ bool Binder::TryFindBinding(const string &using_column, const string &join_side,
 			}
 			throw BinderException(error);
 		} else {
-			result = binding.get().GetBindingAlias();
+			result = binding.get().alias;
 		}
 	}
 	return true;
@@ -122,14 +129,14 @@ static vector<string> RemoveDuplicateUsingColumns(const vector<string> &using_co
 	return result;
 }
 
-BoundStatement Binder::BindJoin(Binder &parent_binder, TableRef &ref) {
+unique_ptr<BoundTableRef> Binder::BindJoin(Binder &parent_binder, TableRef &ref) {
 	unnamed_subquery_index = parent_binder.unnamed_subquery_index;
 	auto result = Bind(ref);
 	parent_binder.unnamed_subquery_index = unnamed_subquery_index;
 	return result;
 }
 
-BoundStatement Binder::Bind(JoinRef &ref) {
+unique_ptr<BoundTableRef> Binder::Bind(JoinRef &ref) {
 	auto result = make_uniq<BoundJoinRef>(ref.ref_type);
 	result->left_binder = Binder::CreateBinder(context, this);
 	result->right_binder = Binder::CreateBinder(context, this);
@@ -188,7 +195,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 		case_insensitive_set_t lhs_columns;
 		auto &lhs_binding_list = left_binder.bind_context.GetBindingsList();
 		for (auto &binding : lhs_binding_list) {
-			for (auto &column_name : binding->GetColumnNames()) {
+			for (auto &column_name : binding->names) {
 				lhs_columns.insert(column_name);
 			}
 		}
@@ -215,7 +222,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 			auto &rhs_binding_list = right_binder.bind_context.GetBindingsList();
 			for (auto &binding_ref : lhs_binding_list) {
 				auto &binding = *binding_ref;
-				for (auto &column_name : binding.GetColumnNames()) {
+				for (auto &column_name : binding.names) {
 					if (!left_candidates.empty()) {
 						left_candidates += ", ";
 					}
@@ -224,7 +231,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 			}
 			for (auto &binding_ref : rhs_binding_list) {
 				auto &binding = *binding_ref;
-				for (auto &column_name : binding.GetColumnNames()) {
+				for (auto &column_name : binding.names) {
 					if (!right_candidates.empty()) {
 						right_candidates += ", ";
 					}
@@ -332,7 +339,75 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 			ref.condition = std::move(condition);
 		}
 	}
+	// Intercept ON SEMANTIC("...{...}...") before binding the condition
 	if (ref.condition) {
+		// Helper: try to rewrite SEMANTIC(template) into <left_desc, right_desc>
+		auto TryRewriteSemantic = [&](unique_ptr<ParsedExpression> &cond_expr) {
+			// Only handle FunctionExpression with name "semantic"
+			if (cond_expr->GetExpressionClass() != ExpressionClass::FUNCTION) {
+				return;
+			}
+			auto &fexpr = cond_expr->Cast<FunctionExpression>();
+			if (!StringUtil::CIEquals(fexpr.function_name, "semantic")) {
+				return;
+			}
+			// NOTE (Qiuyang) Now we only support SEMANTIC('') instead of SEMANTIC("") due to unknown issues.
+			if (fexpr.children.empty() || fexpr.children[0]->GetExpressionClass() != ExpressionClass::CONSTANT) {
+				return;
+			}
+			auto &tmpl_const = fexpr.children[0]->Cast<ConstantExpression>();
+			if (tmpl_const.value.type().id() != LogicalTypeId::VARCHAR && tmpl_const.value.type().id() != LogicalTypeId::STRING_LITERAL) {
+				return;
+			}
+			string tmpl = tmpl_const.value.ToString();
+					
+			// Gather left/right known aliases from previously captured bindings
+
+			auto IsInAliases = [&](const vector<BindingAlias> &alist, const string &alias) {
+				for (auto &a : alist) {
+					if (StringUtil::CIEquals(a.GetAlias(), alias)){
+						return true;
+					}
+				}
+				return false;
+			};
+
+			auto BuildDesc = [&](const vector<string> &cols) -> unique_ptr<ParsedExpression> {
+				vector<unique_ptr<ParsedExpression>> parts;
+				for (idx_t k = 0; k < cols.size(); k++) {
+					auto dot = cols[k].find('.');
+					string alias = cols[k].substr(0, dot);
+					string col = cols[k].substr(dot + 1);
+					auto colref = make_uniq<ColumnRefExpression>(col, alias);
+					auto castv = make_uniq<CastExpression>(LogicalType::VARCHAR, std::move(colref));
+					vector<unique_ptr<ParsedExpression>> coalesce_children;
+					coalesce_children.push_back(std::move(castv));
+					coalesce_children.push_back(make_uniq<ConstantExpression>(Value("")));
+					auto coalesce = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_COALESCE, std::move(coalesce_children));
+					parts.push_back(std::move(coalesce));
+					// add separator between columns
+					if (k + 1 < cols.size()) {
+						parts.push_back(make_uniq<ConstantExpression>(Value("|")));
+					}
+				}
+				if (parts.empty()) {
+					return make_uniq<ConstantExpression>(Value(""));
+				}
+				if (parts.size() == 1) {
+					return std::move(parts[0]);
+				}
+				return make_uniq<FunctionExpression>("concat", std::move(parts));
+			};
+
+			// Build full prompt expression from the original template: keep literal text and replace { ... } blocks by concatenated columns
+			// Build prompt from SQL template with placeholders replaced to concat(...) of proper columns
+			auto prompt_expr = BuildSemanticPromptFromTemplate(tmpl);
+			vector<unique_ptr<ParsedExpression>> fn_args;
+			fn_args.push_back(std::move(prompt_expr));
+			ref.condition = make_uniq<FunctionExpression>("semantic", std::move(fn_args));
+		};
+
+		TryRewriteSemantic(ref.condition);
 		WhereBinder binder(*this, context);
 		result->condition = binder.Bind(ref.condition);
 	}
@@ -341,7 +416,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 		bind_context.RemoveContext(right_bindings);
 		if (result->type == JoinType::MARK) {
 			auto mark_join_idx = GenerateTableIndex();
-			string mark_join_alias = "__internal_mark_join_ref" + to_string(mark_join_idx.index);
+			string mark_join_alias = "__internal_mark_join_ref" + to_string(mark_join_idx);
 			bind_context.AddGenericBinding(mark_join_idx, mark_join_alias, {"__mark_index_column"},
 			                               {LogicalType::BOOLEAN});
 			result->mark_index = mark_join_idx;
@@ -351,13 +426,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 		bind_context.RemoveContext(left_bindings);
 	}
 
-	BoundStatement result_stmt;
-	result_stmt.types.insert(result_stmt.types.end(), result->left.types.begin(), result->left.types.end());
-	result_stmt.types.insert(result_stmt.types.end(), result->right.types.begin(), result->right.types.end());
-	result_stmt.names.insert(result_stmt.names.end(), result->left.names.begin(), result->left.names.end());
-	result_stmt.names.insert(result_stmt.names.end(), result->right.names.begin(), result->right.names.end());
-	result_stmt.plan = CreatePlan(*result);
-	return result_stmt;
+	return std::move(result);
 }
 
 } // namespace duckdb

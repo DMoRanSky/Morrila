@@ -90,9 +90,7 @@ int mbedtls_asn1_write_raw_buffer(unsigned char **p, const unsigned char *start,
 
     len = size;
     (*p) -= len;
-    if (len != 0) {
-        memcpy(*p, buf, len);
-    }
+    memcpy(*p, buf, len);
 
     return (int) len;
 }
@@ -414,20 +412,19 @@ mbedtls_asn1_named_data *mbedtls_asn1_store_named_data(
     } else if (val_len == 0) {
         mbedtls_free(cur->val.p);
         cur->val.p = NULL;
-        cur->val.len = 0;
     } else if (cur->val.len != val_len) {
         /*
          * Enlarge existing value buffer if needed
          * Preserve old data until the allocation succeeded, to leave list in
          * a consistent state in case allocation fails.
          */
-        void *p = (unsigned char *) mbedtls_calloc(1, val_len);
+        void *p = mbedtls_calloc(1, val_len);
         if (p == NULL) {
             return NULL;
         }
 
         mbedtls_free(cur->val.p);
-        cur->val.p = (unsigned char *) p;
+        cur->val.p = (unsigned char *)p;
         cur->val.len = val_len;
     }
 

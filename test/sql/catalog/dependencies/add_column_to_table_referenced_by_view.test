@@ -21,7 +21,7 @@ abc
 statement ok
 alter table tbl add column b integer default 5;
 
-query II
+statement error
 select * from vw;
 ----
-abc	5
+Contents of view were altered: types don't match! Expected [VARCHAR], but found [VARCHAR, INTEGER] instead

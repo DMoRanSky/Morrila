@@ -11,7 +11,6 @@
 #include "duckdb.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "sqllogic_command.hpp"
-#include "test_config.hpp"
 
 namespace duckdb {
 
@@ -21,34 +20,11 @@ class SQLLogicParser;
 
 enum class RequireResult { PRESENT, MISSING };
 
-struct CachedLabelData {
-public:
-	CachedLabelData(const string &hash, string result_str_p) : hash(hash), result_str(std::move(result_str_p)) {
-	}
-
-public:
-	string hash;
-	string result_str;
-};
-
-struct HashLabelMap {
-public:
-	void WithLock(std::function<void(unordered_map<string, CachedLabelData> &map)> cb) {
-		std::lock_guard<std::mutex> guard(lock);
-		cb(map);
-	}
-
-public:
-	std::mutex lock;
-	unordered_map<string, CachedLabelData> map;
-};
-
 class SQLLogicTestRunner {
 public:
-	explicit SQLLogicTestRunner(string dbpath);
+	SQLLogicTestRunner(string dbpath);
 	~SQLLogicTestRunner();
 
-	string file_name;
 	string dbpath;
 	vector<string> loaded_databases;
 	duckdb::unique_ptr<DuckDB> db;
@@ -69,8 +45,6 @@ public:
 	bool skip_reload = false;
 	unordered_map<string, string> environment_variables;
 	string local_extension_repo;
-	TestConfiguration::ExtensionAutoLoadingMode autoloading_mode;
-	bool autoinstall_is_checked;
 
 	// If these error msgs occur in a test, the test will abort but still count as passed
 	unordered_set<string> ignore_error_messages = {"HTTP", "Unable to connect"};
@@ -78,7 +52,8 @@ public:
 	unordered_set<string> always_fail_error_messages = {"differs from original result!", "INTERNAL"};
 
 	//! The map converting the labels to the hash values
-	HashLabelMap hash_label_map;
+	unordered_map<string, string> hash_label_map;
+	unordered_map<string, duckdb::unique_ptr<QueryResult>> result_label_map;
 	mutex log_lock;
 
 public:
@@ -97,7 +72,6 @@ public:
 	string ReplaceLoopIterator(string text, string loop_iterator_name, string replacement);
 	string LoopReplacement(string text, const vector<LoopDefinition> &loops);
 	bool ForEachTokenReplace(const string &parameter, vector<string> &result);
-	static ExtensionLoadResult LoadExtension(DuckDB &db, const std::string &extension);
 
 private:
 	RequireResult CheckRequire(SQLLogicParser &parser, const vector<string> &params);

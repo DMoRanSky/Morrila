@@ -18,8 +18,7 @@ enum class DebugVectorVerification : uint8_t {
 	DICTIONARY_OPERATOR,
 	CONSTANT_OPERATOR,
 	SEQUENCE_OPERATOR,
-	NESTED_SHUFFLE,
-	VARIANT_VECTOR
+	NESTED_SHUFFLE
 };
 
 } // namespace duckdb

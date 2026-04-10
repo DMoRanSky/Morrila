@@ -16,6 +16,7 @@ static const int64_t SUPPORTED_UPPER_BOUND = NumericLimits<uint32_t>::Maximum();
 static const int64_t SUPPORTED_LOWER_BOUND = -SUPPORTED_UPPER_BOUND - 1;
 
 static inline void AssertInSupportedRange(idx_t input_size, int64_t offset, int64_t length) {
+
 	if (input_size > (uint64_t)SUPPORTED_UPPER_BOUND) {
 		throw OutOfRangeException("Substring input size is too large (> %d)", SUPPORTED_UPPER_BOUND);
 	}
@@ -33,13 +34,13 @@ static inline void AssertInSupportedRange(idx_t input_size, int64_t offset, int6
 	}
 }
 
-static string_t SubstringEmptyString(Vector &result) {
+string_t SubstringEmptyString(Vector &result) {
 	auto result_string = StringVector::EmptyString(result, 0);
 	result_string.Finalize();
 	return result_string;
 }
 
-static string_t SubstringSlice(Vector &result, const char *input_data, int64_t offset, int64_t length) {
+string_t SubstringSlice(Vector &result, const char *input_data, int64_t offset, int64_t length) {
 	auto result_string = StringVector::EmptyString(result, UnsafeNumericCast<idx_t>(length));
 	auto result_data = result_string.GetDataWriteable();
 	memcpy(result_data, input_data + offset, UnsafeNumericCast<size_t>(length));
@@ -48,7 +49,7 @@ static string_t SubstringSlice(Vector &result, const char *input_data, int64_t o
 }
 
 // compute start and end characters from the given input size and offset/length
-static bool SubstringStartEnd(int64_t input_size, int64_t offset, int64_t length, int64_t &start, int64_t &end) {
+bool SubstringStartEnd(int64_t input_size, int64_t offset, int64_t length, int64_t &start, int64_t &end) {
 	if (length == 0) {
 		return false;
 	}
@@ -249,8 +250,6 @@ string_t SubstringGrapheme(Vector &result, string_t input, int64_t offset, int64
 	                      UnsafeNumericCast<int64_t>(end_pos - start_pos));
 }
 
-namespace {
-
 struct SubstringUnicodeOp {
 	static string_t Substring(Vector &result, string_t input, int64_t offset, int64_t length) {
 		return SubstringUnicode(result, input, offset, length);
@@ -264,7 +263,7 @@ struct SubstringGraphemeOp {
 };
 
 template <class OP>
-void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &input_vector = args.data[0];
 	auto &offset_vector = args.data[1];
 	if (args.ColumnCount() == 3) {
@@ -283,7 +282,7 @@ void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 	}
 }
 
-void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &result) {
+static void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &input_vector = args.data[0];
 	auto &offset_vector = args.data[1];
 	if (args.ColumnCount() == 3) {
@@ -302,18 +301,16 @@ void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &res
 	}
 }
 
-unique_ptr<BaseStatistics> SubstringPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
+static unique_ptr<BaseStatistics> SubstringPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	// can only propagate stats if the children have stats
 	// we only care about the stats of the first child (i.e. the string)
 	if (!StringStats::CanContainUnicode(child_stats[0])) {
-		expr.function.SetFunctionCallback(SubstringFunctionASCII);
+		expr.function.function = SubstringFunctionASCII;
 	}
 	return nullptr;
 }
-
-} // namespace
 
 ScalarFunctionSet SubstringFun::GetFunctions() {
 	ScalarFunctionSet substr("substring");

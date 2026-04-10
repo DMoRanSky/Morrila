@@ -4,6 +4,7 @@
 #include <thread>
 
 using namespace duckdb;
+using namespace std;
 
 static void SelectTable(Connection con) {
 	for (idx_t i = 0; i < 1000; i++) {

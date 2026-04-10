@@ -34,8 +34,8 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXPORT;
 
 public:
-	PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> types, CopyFunction function,
-	               unique_ptr<CopyInfo> info, idx_t estimated_cardinality, unique_ptr<BoundExportData> exported_tables);
+	PhysicalExport(vector<LogicalType> types, CopyFunction function, unique_ptr<CopyInfo> info,
+	               idx_t estimated_cardinality, unique_ptr<BoundExportData> exported_tables);
 
 	//! The copy function to use to read the file
 	CopyFunction function;
@@ -47,8 +47,7 @@ public:
 public:
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

@@ -29,7 +29,7 @@ DROP TABLE tbl
 foreach type <numeric>
 
 statement ok
-CREATE TABLE five AS SELECT i::{type} AS i FROM range(1, 6, 1) t1(i)
+CREATE TABLE five AS SELECT i::${type} AS i FROM range(1, 6, 1) t1(i)
 
 query I
 SELECT ANY_VALUE(i) FROM five
@@ -64,7 +64,7 @@ endloop
 foreach type decimal(4,1) decimal(8,1) decimal(12,1) decimal(18,1)
 
 statement ok
-CREATE TABLE five AS SELECT i::{type} AS i FROM range(1, 6, 1) t1(i)
+CREATE TABLE five AS SELECT i::${type} AS i FROM range(1, 6, 1) t1(i)
 
 query I
 SELECT ANY_VALUE(i ORDER BY 5-i) FROM five
@@ -217,12 +217,10 @@ DROP TABLE five_complex
 
 # Window Function
 query I
-SELECT ANY_VALUE(i) OVER (PARTITION BY i) AS a 
-FROM generate_series(1, 5) t(i)
-ORDER BY ALL
+SELECT ANY_VALUE(i) OVER () AS a FROM generate_series(1, 5) t(i);
 ----
 1
-2
-3
-4
-5
+1
+1
+1
+1

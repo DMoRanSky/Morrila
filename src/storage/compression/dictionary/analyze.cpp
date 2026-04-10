@@ -15,7 +15,11 @@ void DictionaryAnalyzeState::AddNewString(string_t str) {
 	current_tuple_count++;
 	current_unique_count++;
 	current_dict_size += str.GetSize();
-	current_set.insert(heap.AddBlob(str));
+	if (str.IsInlined()) {
+		current_set.insert(str);
+	} else {
+		current_set.insert(heap.AddBlob(str));
+	}
 	current_width = next_width;
 }
 
@@ -40,13 +44,9 @@ bool DictionaryAnalyzeState::CalculateSpaceRequirements(bool new_string, idx_t s
 void DictionaryAnalyzeState::Flush(bool final) {
 	segment_count++;
 	current_tuple_count = 0;
-	max_unique_count_across_segments = MaxValue(max_unique_count_across_segments, current_unique_count);
 	current_unique_count = 0;
 	current_dict_size = 0;
 	current_set.clear();
-}
-void DictionaryAnalyzeState::UpdateMaxUniqueCount() {
-	max_unique_count_across_segments = MaxValue(max_unique_count_across_segments, current_unique_count);
 }
 void DictionaryAnalyzeState::Verify() {
 }

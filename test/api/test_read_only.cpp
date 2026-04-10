@@ -3,6 +3,7 @@
 #include "test_helpers.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test connection using a read only database", "[readonly]") {
 	auto dbdir = TestCreatePath("read_only_test");

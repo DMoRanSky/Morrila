@@ -47,10 +47,11 @@ private:
 	SelectionVector valid_sel;
 	SelectionVector dictionary_selection_vector;
 	idx_t dictionary_size;
-	buffer_ptr<DictionaryEntry> dictionary;
+	unique_ptr<Vector> dictionary;
 	unsafe_unique_array<bool> filter_result;
 	idx_t filter_count;
 	bool can_have_nulls;
+	string dictionary_id;
 };
 
 } // namespace duckdb

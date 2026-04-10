@@ -21,15 +21,11 @@ public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_MATERIALIZED_CTE;
 
 public:
-	LogicalMaterializedCTE(string ctename_p, TableIndex table_index, idx_t column_count,
-	                       unique_ptr<LogicalOperator> cte, unique_ptr<LogicalOperator> child,
-	                       CTEMaterialize materialize)
+	LogicalMaterializedCTE(string ctename_p, idx_t table_index, idx_t column_count, unique_ptr<LogicalOperator> cte,
+	                       unique_ptr<LogicalOperator> child)
 	    : LogicalCTE(std::move(ctename_p), table_index, column_count, std::move(cte), std::move(child),
-	                 LogicalOperatorType::LOGICAL_MATERIALIZED_CTE),
-	      materialize(materialize) {
+	                 LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
 	}
-
-	CTEMaterialize materialize = CTEMaterialize::CTE_MATERIALIZE_ALWAYS;
 
 public:
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
@@ -40,7 +36,7 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
 
-	vector<TableIndex> GetTableIndex() const override;
+	vector<idx_t> GetTableIndex() const override;
 
 protected:
 	void ResolveTypes() override {

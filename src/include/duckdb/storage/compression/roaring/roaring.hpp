@@ -223,11 +223,7 @@ public:
 	bool HasEnoughSpaceInSegment(idx_t required_space);
 	void FlushSegment();
 	void FlushContainer();
-	template <PhysicalType TYPE>
-	void Analyze(Vector &input, idx_t count) {
-		static_assert(AlwaysFalse<std::integral_constant<PhysicalType, TYPE>>::VALUE,
-		              "No specialization exists for this type");
-	}
+	void Analyze(Vector &input, idx_t count);
 
 public:
 	unsafe_unique_array<BitmaskTableEntry> bitmask_table;
@@ -264,10 +260,6 @@ public:
 	ContainerMetadataCollection metadata_collection;
 	vector<ContainerMetadata> container_metadata;
 };
-template <>
-void RoaringAnalyzeState::Analyze<PhysicalType::BIT>(Vector &input, idx_t count);
-template <>
-void RoaringAnalyzeState::Analyze<PhysicalType::BOOL>(Vector &input, idx_t count);
 
 //===--------------------------------------------------------------------===//
 // Compress
@@ -342,21 +334,15 @@ public:
 
 public:
 	idx_t GetContainerIndex();
-	idx_t GetUsedDataSpace();
-	idx_t GetAvailableSpace();
+	idx_t GetRemainingSpace();
 	bool CanStore(idx_t container_size, const ContainerMetadata &metadata);
 	void InitializeContainer();
-	void CreateEmptySegment();
+	void CreateEmptySegment(idx_t row_start);
 	void FlushSegment();
 	void Finalize();
 	void FlushContainer();
 	void NextContainer();
 	void Compress(Vector &input, idx_t count);
-	template <PhysicalType TYPE>
-	void Compress(Vector &input, idx_t count) {
-		static_assert(AlwaysFalse<std::integral_constant<PhysicalType, TYPE>>::VALUE,
-		              "No specialization exists for this type");
-	}
 
 public:
 	unique_ptr<AnalyzeState> owned_analyze_state;
@@ -367,7 +353,7 @@ public:
 	vector<ContainerMetadata> &container_metadata;
 
 	ColumnDataCheckpointData &checkpoint_data;
-	const CompressionFunction &function;
+	CompressionFunction &function;
 	unique_ptr<ColumnSegment> current_segment;
 	BufferHandle handle;
 
@@ -378,11 +364,6 @@ public:
 	//! The amount of values already compressed
 	idx_t total_count = 0;
 };
-
-template <>
-void RoaringCompressState::Compress<PhysicalType::BIT>(Vector &input, idx_t count);
-template <>
-void RoaringCompressState::Compress<PhysicalType::BOOL>(Vector &input, idx_t count);
 
 //===--------------------------------------------------------------------===//
 // Scan
@@ -397,7 +378,7 @@ public:
 	}
 
 public:
-	virtual void ScanPartial(ValidityMask &result, idx_t result_offset, idx_t to_scan) = 0;
+	virtual void ScanPartial(Vector &result, idx_t result_offset, idx_t to_scan) = 0;
 	virtual void Skip(idx_t count) = 0;
 	virtual void Verify() const = 0;
 
@@ -437,7 +418,7 @@ public:
 	RunContainerScanState(idx_t container_index, idx_t container_size, idx_t count, data_ptr_t data_p);
 
 public:
-	void ScanPartial(ValidityMask &result, idx_t result_offset, idx_t to_scan) override;
+	void ScanPartial(Vector &result, idx_t result_offset, idx_t to_scan) override;
 	void Skip(idx_t to_skip) override;
 	void Verify() const override;
 
@@ -486,7 +467,9 @@ public:
 	}
 
 public:
-	void ScanPartial(ValidityMask &result_mask, idx_t result_offset, idx_t to_scan) override {
+	void ScanPartial(Vector &result, idx_t result_offset, idx_t to_scan) override {
+		auto &result_mask = FlatVector::Validity(result);
+
 		// This method assumes that the validity mask starts off as having all bits set for the entries that are being
 		// scanned.
 
@@ -597,7 +580,7 @@ public:
 	BitsetContainerScanState(idx_t container_index, idx_t count, validity_t *bitset);
 
 public:
-	void ScanPartial(ValidityMask &result_mask, idx_t result_offset, idx_t to_scan) override;
+	void ScanPartial(Vector &result, idx_t result_offset, idx_t to_scan) override;
 	void Skip(idx_t to_skip) override;
 	void Verify() const override;
 
@@ -615,9 +598,9 @@ public:
 	ContainerMetadata GetContainerMetadata(idx_t container_index);
 	data_ptr_t GetStartOfContainerData(idx_t container_index);
 	ContainerScanState &LoadContainer(idx_t container_index, idx_t internal_offset);
-	void ScanInternal(ContainerScanState &scan_state, idx_t to_scan, ValidityMask &result, idx_t offset);
+	void ScanInternal(ContainerScanState &scan_state, idx_t to_scan, Vector &result, idx_t offset);
 	idx_t GetContainerIndex(idx_t start_index, idx_t &offset);
-	void ScanPartial(idx_t start_idx, ValidityMask &result, idx_t offset, idx_t count);
+	void ScanPartial(idx_t start_idx, Vector &result, idx_t offset, idx_t count);
 	void Skip(ContainerScanState &scan_state, idx_t skip_count);
 
 public:
@@ -630,69 +613,6 @@ public:
 	vector<idx_t> data_start_position;
 };
 
-//! Boolean BitPacking
-
-template <bool UPDATE_STATS, bool ALL_VALID>
-static void BitPackBooleans(data_ptr_t dst, const bool *src, const idx_t count,
-                            const ValidityMask *validity_mask = nullptr, BaseStatistics *statistics = nullptr) {
-	uint8_t byte = 0;
-	int bit_pos = 0;
-	uint8_t src_bit = false;
-
-	if (ALL_VALID) {
-		if (UPDATE_STATS) {
-			statistics->SetHasNoNullFast();
-		}
-		for (idx_t i = 0; i < count; i++) {
-			src_bit = src[i];
-
-			if (UPDATE_STATS) {
-				statistics->UpdateNumericStats<bool>(src_bit);
-			}
-			byte |= src_bit << bit_pos;
-			bit_pos++;
-
-			// flush
-			if (bit_pos == 8) {
-				*dst++ = byte;
-				byte = 0;
-				bit_pos = 0;
-			}
-		}
-	} else {
-		bool last_bit_value = false;
-		for (idx_t i = 0; i < count; i++) {
-			const uint8_t valid = validity_mask->RowIsValid(i);
-			src_bit = valid ? src[i] : src_bit;
-			const uint8_t bit = (src_bit & valid) | (last_bit_value & ~valid);
-
-			byte |= bit << bit_pos;
-			bit_pos++;
-
-			last_bit_value = src_bit;
-
-			if (UPDATE_STATS) {
-				if (valid) {
-					statistics->UpdateNumericStats<bool>(src_bit);
-					statistics->SetHasNoNullFast();
-				} else {
-					statistics->SetHasNullFast();
-				}
-			}
-
-			// flush
-			if (bit_pos == 8) {
-				*dst++ = byte;
-				byte = 0;
-				bit_pos = 0;
-			}
-		}
-	}
-	// flush last partial byte
-	if (bit_pos != 0) {
-		*dst = byte;
-	}
-}
 } // namespace roaring
 
 } // namespace duckdb

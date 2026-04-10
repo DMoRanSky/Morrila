@@ -13,7 +13,7 @@
 namespace duckdb {
 
 struct WindowAggregateStates {
-	WindowAggregateStates(ClientContext &client, const AggregateObject &aggr);
+	explicit WindowAggregateStates(const AggregateObject &aggr);
 	~WindowAggregateStates() {
 		Destroy();
 	}
@@ -23,7 +23,7 @@ struct WindowAggregateStates {
 		return states.size() / state_size;
 	}
 	data_ptr_t *GetData() {
-		return FlatVector::GetDataMutable<data_ptr_t>(*statef);
+		return FlatVector::GetData<data_ptr_t>(*statef);
 	}
 	data_ptr_t GetStatePtr(idx_t idx) {
 		return states.data() + idx * state_size;
@@ -34,14 +34,13 @@ struct WindowAggregateStates {
 	//! Initialise all the states
 	void Initialize(idx_t count);
 	//! Combine the states into the target
-	void Combine(WindowAggregateStates &target);
+	void Combine(WindowAggregateStates &target,
+	             AggregateCombineType combine_type = AggregateCombineType::PRESERVE_INPUT);
 	//! Finalize the states into an output vector
 	void Finalize(Vector &result);
 	//! Destroy the states
 	void Destroy();
 
-	//! The context to use for memory etc.
-	ClientContext &client;
 	//! A description of the aggregator
 	const AggregateObject aggr;
 	//! The size of each state

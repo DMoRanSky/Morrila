@@ -241,12 +241,7 @@ BoundStatement Relation::Bind(Binder &binder) {
 }
 
 shared_ptr<Relation> Relation::InsertRel(const string &schema_name, const string &table_name) {
-	return InsertRel(INVALID_CATALOG, schema_name, table_name);
-}
-
-shared_ptr<Relation> Relation::InsertRel(const string &catalog_name, const string &schema_name,
-                                         const string &table_name) {
-	return make_shared_ptr<InsertRelation>(shared_from_this(), catalog_name, schema_name, table_name);
+	return make_shared_ptr<InsertRelation>(shared_from_this(), schema_name, table_name);
 }
 
 void Relation::Insert(const string &table_name) {
@@ -254,11 +249,7 @@ void Relation::Insert(const string &table_name) {
 }
 
 void Relation::Insert(const string &schema_name, const string &table_name) {
-	Insert(INVALID_CATALOG, schema_name, table_name);
-}
-
-void Relation::Insert(const string &catalog_name, const string &schema_name, const string &table_name) {
-	auto insert = InsertRel(catalog_name, schema_name, table_name);
+	auto insert = InsertRel(schema_name, table_name);
 	auto res = insert->Execute();
 	if (res->HasError()) {
 		const string prepended_message = "Failed to insert into table '" + table_name + "': ";
@@ -267,40 +258,30 @@ void Relation::Insert(const string &catalog_name, const string &schema_name, con
 }
 
 void Relation::Insert(const vector<vector<Value>> &values) {
-	throw InvalidInputException("INSERT with values can only be used on base tables!");
+	vector<string> column_names;
+	auto rel = make_shared_ptr<ValueRelation>(context->GetContext(), values, std::move(column_names), "values");
+	rel->Insert(GetAlias());
 }
 
 void Relation::Insert(vector<vector<unique_ptr<ParsedExpression>>> &&expressions) {
-	(void)std::move(expressions);
-	throw InvalidInputException("INSERT with expressions can only be used on base tables!");
+	vector<string> column_names;
+	auto rel = make_shared_ptr<ValueRelation>(context->GetContext(), std::move(expressions), std::move(column_names),
+	                                          "values");
+	rel->Insert(GetAlias());
 }
 
 shared_ptr<Relation> Relation::CreateRel(const string &schema_name, const string &table_name, bool temporary,
                                          OnCreateConflict on_conflict) {
-	return CreateRel(INVALID_CATALOG, schema_name, table_name, temporary, on_conflict);
-}
-
-shared_ptr<Relation> Relation::CreateRel(const string &catalog_name, const string &schema_name,
-                                         const string &table_name, bool temporary, OnCreateConflict on_conflict) {
-	return make_shared_ptr<CreateTableRelation>(shared_from_this(), catalog_name, schema_name, table_name, temporary,
-	                                            on_conflict);
+	return make_shared_ptr<CreateTableRelation>(shared_from_this(), schema_name, table_name, temporary, on_conflict);
 }
 
 void Relation::Create(const string &table_name, bool temporary, OnCreateConflict on_conflict) {
-	Create(INVALID_CATALOG, INVALID_SCHEMA, table_name, temporary, on_conflict);
+	Create(INVALID_SCHEMA, table_name, temporary, on_conflict);
 }
 
 void Relation::Create(const string &schema_name, const string &table_name, bool temporary,
                       OnCreateConflict on_conflict) {
-	Create(INVALID_CATALOG, schema_name, table_name, temporary, on_conflict);
-}
-
-void Relation::Create(const string &catalog_name, const string &schema_name, const string &table_name, bool temporary,
-                      OnCreateConflict on_conflict) {
-	if (table_name.empty()) {
-		throw ParserException("Empty table name not supported");
-	}
-	auto create = CreateRel(catalog_name, schema_name, table_name, temporary, on_conflict);
+	auto create = CreateRel(schema_name, table_name, temporary, on_conflict);
 	auto res = create->Execute();
 	if (res->HasError()) {
 		const string prepended_message = "Failed to create table '" + table_name + "': ";
@@ -356,9 +337,7 @@ unique_ptr<QueryResult> Relation::Query(const string &sql) const {
 }
 
 unique_ptr<QueryResult> Relation::Query(const string &name, const string &sql) {
-	bool replace = true;
-	bool temp = IsReadOnly();
-	CreateView(name, replace, temp);
+	CreateView(name);
 	return Query(sql);
 }
 
@@ -415,8 +394,8 @@ string Relation::ToString() {
 }
 
 // LCOV_EXCL_START
-string Relation::GetQuery() {
-	return GetQueryNode()->ToString();
+unique_ptr<QueryNode> Relation::GetQueryNode() {
+	throw InternalException("Cannot create a query node from this node type");
 }
 
 void Relation::Head(idx_t limit) {

@@ -4,6 +4,7 @@
 #include "duckdb/main/appender.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test interleaving of insertions/updates/deletes on multiple tables", "[storage][.]") {
 	auto config = GetTestConfig();

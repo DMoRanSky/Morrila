@@ -3,6 +3,8 @@
 # group: [filter]
 
 # no force storage otherwise test to check scanned tupls fails
+require noforcestorage
+
 statement ok
 PRAGMA explain_output = PHYSICAL_ONLY;
 

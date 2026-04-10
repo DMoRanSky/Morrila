@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 function_groups = {
-    ('src', 'include/duckdb', 'function'): ['scalar', 'aggregate', 'window'],
+    ('src', 'include/duckdb', 'function'): ['scalar', 'aggregate'],
     ('extension', 'core_functions/include', 'core_functions'): ['scalar', 'aggregate'],
 }
 
@@ -64,16 +64,7 @@ def get_struct_name(function_name):
 
 
 def get_parameter_line(variants):
-    if not all(
-        isinstance(variant['parameters'], list)
-        and all(isinstance(param, dict) for param in variant['parameters'])
-        and all('name' in param.keys() for param in variant['parameters'])
-        for variant in variants
-    ):
-        raise ValueError(
-            f"invalid parameters for variants {variants}\nParameters should have format: \"parameters\": [{{\"name\": <param_name>, \"type\": <param_type>}}, ...]"
-        )
-    return "\\001".join(
+    return "\\1".join(
         ",".join(
             param['name'] + "::" + param['type'] if ('type' in param) else param['name']
             for param in variant['parameters']
@@ -83,11 +74,11 @@ def get_parameter_line(variants):
 
 
 def get_description_line(variants):
-    return "\\001".join([variant['description'] for variant in variants])
+    return "\\1".join([variant['description'] for variant in variants])
 
 
 def get_example_line(variants):
-    return "\\001".join([example_from_json(variant) for variant in variants])
+    return "\\1".join([example_from_json(variant) for variant in variants])
 
 
 def example_from_json(json_record):
@@ -101,11 +92,11 @@ def example_from_json(json_record):
 
 
 def examples_to_line(example_list):
-    return "\\002".join([sanitize_string(example) for example in example_list])
+    return "\\2".join([sanitize_string(example) for example in example_list])
 
 
 def get_category_line(variants):
-    return "\\001".join([categories_from_json(variant) for variant in variants])
+    return "\\1".join([categories_from_json(variant) for variant in variants])
 
 
 def categories_from_json(json_record):
@@ -150,12 +141,6 @@ def create_header_file(root, include_dir, path, all_function_list, function_type
         elif entry['type'] == 'aggregate_function_set':
             function_text = 'static AggregateFunctionSet GetFunctions();'
             all_function_list.append([entry['name'], f"DUCKDB_AGGREGATE_FUNCTION_SET({struct_name})"])
-        elif entry['type'] == 'window_function':
-            function_text = 'static WindowFunction GetFunction();'
-            all_function_list.append([entry['name'], f"DUCKDB_WINDOW_FUNCTION({struct_name})"])
-        elif entry['type'] == 'window_function_set':
-            function_text = 'static WindowFunctionSet GetFunctions();'
-            all_function_list.append([entry['name'], f"DUCKDB_WINDOW_FUNCTION_SET({struct_name})"])
         else:
             print("Unknown entry type " + entry['type'] + ' for entry ' + struct_name)
             exit(1)
@@ -165,7 +150,7 @@ def create_header_file(root, include_dir, path, all_function_list, function_type
             example_line = get_example_line(entry['variants'])
             category_line = get_category_line(entry['variants'])
         else:
-            parameter_line = entry['parameters'].replace(' ', '') if 'parameters' in entry else ''
+            parameter_line = entry['parameters'] if 'parameters' in entry else ''
             description_line = sanitize_string(entry['description'])
             example_line = example_from_json(entry)
             category_line = categories_from_json(entry)
@@ -212,10 +197,6 @@ def create_header_file(root, include_dir, path, all_function_list, function_type
                     all_function_list.append([alias, f"DUCKDB_AGGREGATE_FUNCTION_ALIAS({alias_struct_name})"])
                 elif aliased_type == 'aggregate_function_set':
                     all_function_list.append([alias, f"DUCKDB_AGGREGATE_FUNCTION_SET_ALIAS({alias_struct_name})"])
-                elif aliased_type == 'window_function':
-                    all_function_list.append([alias, f"DUCKDB_WINDOW_FUNCTION_ALIAS({alias_struct_name})"])
-                elif aliased_type == 'window_function_set':
-                    all_function_list.append([alias, f"DUCKDB_WINDOW_FUNCTION_SET_ALIAS({alias_struct_name})"])
                 else:
                     print("Unknown entry type " + aliased_type + ' for entry ' + struct_name)
                     exit(1)

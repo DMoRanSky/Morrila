@@ -3,12 +3,11 @@
 
 namespace duckdb {
 
-namespace {
 struct StatsBindData : public FunctionData {
-	explicit StatsBindData(Value stats_p = Value(LogicalType::VARIANT())) : stats(std::move(stats_p)) {
+	explicit StatsBindData(string stats_p = string()) : stats(std::move(stats_p)) {
 	}
 
-	Value stats;
+	string stats;
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
@@ -17,14 +16,18 @@ public:
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<StatsBindData>();
-		return Value::NotDistinctFrom(stats, other.stats);
+		return stats == other.stats;
 	}
 };
 
-void StatsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void StatsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.bind_info->Cast<StatsBindData>();
-	result.Reference(info.stats);
+	if (info.stats.empty()) {
+		info.stats = "No statistics";
+	}
+	Value v(info.stats);
+	result.Reference(v);
 }
 
 unique_ptr<FunctionData> StatsBind(ClientContext &context, ScalarFunction &bound_function,
@@ -32,21 +35,19 @@ unique_ptr<FunctionData> StatsBind(ClientContext &context, ScalarFunction &bound
 	return make_uniq<StatsBindData>();
 }
 
-unique_ptr<BaseStatistics> StatsPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
+static unique_ptr<BaseStatistics> StatsPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &bind_data = input.bind_data;
 	auto &info = bind_data->Cast<StatsBindData>();
-	info.stats = child_stats[0].ToStruct().CastAs(context, LogicalType::VARIANT());
+	info.stats = child_stats[0].ToString();
 	return nullptr;
 }
 
-} // namespace
-
 ScalarFunction StatsFun::GetFunction() {
-	ScalarFunction stats({LogicalType::ANY}, LogicalType::VARIANT(), StatsFunction, StatsBind, nullptr,
+	ScalarFunction stats({LogicalType::ANY}, LogicalType::VARCHAR, StatsFunction, StatsBind, nullptr,
 	                     StatsPropagateStats);
-	stats.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
-	stats.SetStability(FunctionStability::VOLATILE);
+	stats.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	stats.stability = FunctionStability::VOLATILE;
 	return stats;
 }
 

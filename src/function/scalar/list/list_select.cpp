@@ -8,11 +8,9 @@
 
 namespace duckdb {
 
-namespace {
-
 struct SetSelectionVectorSelect {
 	static void SetSelectionVector(SelectionVector &selection_vector, ValidityMask &validity_mask,
-	                               const ValidityMask &input_validity, const Vector &selection_entry, idx_t child_idx,
+	                               ValidityMask &input_validity, Vector &selection_entry, idx_t child_idx,
 	                               idx_t &target_offset, idx_t selection_offset, idx_t input_offset,
 	                               idx_t target_length) {
 		auto sel_idx = selection_entry.GetValue(selection_offset + child_idx).GetValue<int64_t>() - 1;
@@ -29,25 +27,18 @@ struct SetSelectionVectorSelect {
 		target_offset++;
 	}
 
-	static void GetResultLength(const DataChunk &args, idx_t &result_length, const list_entry_t *selection_data,
-	                            const Vector &selection_entry, idx_t selection_idx) {
+	static void GetResultLength(DataChunk &args, idx_t &result_length, const list_entry_t *selection_data,
+	                            Vector selection_entry, idx_t selection_idx) {
 		result_length += selection_data[selection_idx].length;
 	}
 };
 
 struct SetSelectionVectorWhere {
 	static void SetSelectionVector(SelectionVector &selection_vector, ValidityMask &validity_mask,
-	                               const ValidityMask &input_validity, const Vector &selection_entry, idx_t child_idx,
+	                               ValidityMask &input_validity, Vector &selection_entry, idx_t child_idx,
 	                               idx_t &target_offset, idx_t selection_offset, idx_t input_offset,
 	                               idx_t target_length) {
 		if (!selection_entry.GetValue(selection_offset + child_idx).GetValue<bool>()) {
-			return;
-		}
-
-		if (child_idx >= target_length) {
-			selection_vector.set_index(target_offset, 0);
-			validity_mask.SetInvalid(target_offset);
-			target_offset++;
 			return;
 		}
 
@@ -56,11 +47,16 @@ struct SetSelectionVectorWhere {
 			validity_mask.SetInvalid(target_offset);
 		}
 
+		if (child_idx >= target_length) {
+			selection_vector.set_index(target_offset, 0);
+			validity_mask.SetInvalid(target_offset);
+		}
+
 		target_offset++;
 	}
 
-	static void GetResultLength(const DataChunk &args, idx_t &result_length, const list_entry_t *selection_data,
-	                            const Vector &selection_entry, idx_t selection_idx) {
+	static void GetResultLength(DataChunk &args, idx_t &result_length, const list_entry_t *selection_data,
+	                            Vector selection_entry, idx_t selection_idx) {
 		for (idx_t child_idx = 0; child_idx < selection_data[selection_idx].length; child_idx++) {
 			if (selection_entry.GetValue(selection_data[selection_idx].offset + child_idx).IsNull()) {
 				throw InvalidInputException("NULLs are not allowed as list elements in the second input parameter.");
@@ -73,11 +69,15 @@ struct SetSelectionVectorWhere {
 };
 
 template <class OP>
-void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &result) {
+static void ListSelectFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data.size() == 2);
-	auto &list = args.data[0];
-	auto &selection_list = args.data[1];
+	Vector &list = args.data[0];
+	Vector &selection_list = args.data[1];
 	idx_t count = args.size();
+
+	list_entry_t *result_data;
+	result_data = FlatVector::GetData<list_entry_t>(result);
+	auto &result_entry = ListVector::GetEntry(result);
 
 	UnifiedVectorFormat selection_lists;
 	selection_list.ToUnifiedFormat(count, selection_lists);
@@ -102,9 +102,7 @@ void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &r
 	ListVector::Reserve(result, result_length);
 	SelectionVector result_selection_vec = SelectionVector(result_length);
 	ValidityMask entry_validity_mask = ValidityMask(result_length);
-
-	auto result_data = FlatVector::Writer<list_entry_t>(result, count);
-	auto &result_entry = ListVector::GetEntry(result);
+	ValidityMask &result_validity_mask = FlatVector::Validity(result);
 
 	idx_t offset = 0;
 	for (idx_t j = 0; j < count; j++) {
@@ -116,7 +114,7 @@ void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &r
 			selection_len = selection_lists_data[selection_list_idx].length;
 			selection_offset = selection_lists_data[selection_list_idx].offset;
 		} else {
-			result_data.SetInvalid(j);
+			result_validity_mask.SetInvalid(j);
 			continue;
 		}
 		// Get length and offset of input list for current output row
@@ -127,7 +125,7 @@ void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &r
 			input_length = input_lists_data[input_list_idx].length;
 			input_offset = input_lists_data[input_list_idx].offset;
 		} else {
-			result_data.SetInvalid(j);
+			result_validity_mask.SetInvalid(j);
 			continue;
 		}
 		result_data[j].offset = offset;
@@ -141,29 +139,44 @@ void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &r
 		}
 		result_data[j].length = offset - result_data[j].offset;
 	}
+	result_entry.Slice(input_entry, result_selection_vec, count);
+	result_entry.Flatten(offset);
 	ListVector::SetListSize(result, offset);
-
-	if (result_length > 0) {
-		result_entry.Slice(input_entry, result_selection_vec, offset);
-		result_entry.Flatten(offset);
-
-		FlatVector::SetValidity(result_entry, entry_validity_mask);
-	}
+	FlatVector::SetValidity(result_entry, entry_validity_mask);
+	result.SetVectorType(args.AllConstant() ? VectorType::CONSTANT_VECTOR : VectorType::FLAT_VECTOR);
 }
 
-} // namespace
+static unique_ptr<FunctionData> ListSelectBind(ClientContext &context, ScalarFunction &bound_function,
+                                               vector<unique_ptr<Expression>> &arguments) {
+	D_ASSERT(bound_function.arguments.size() == 2);
 
+	// If the first argument is an array, cast it to a list
+	arguments[0] = BoundCastExpression::AddArrayCastToList(context, std::move(arguments[0]));
+
+	LogicalType child_type;
+	if (arguments[0]->return_type == LogicalTypeId::UNKNOWN || arguments[1]->return_type == LogicalTypeId::UNKNOWN) {
+		bound_function.arguments[0] = LogicalTypeId::UNKNOWN;
+		bound_function.return_type = LogicalType::SQLNULL;
+		return make_uniq<VariableReturnBindData>(bound_function.return_type);
+	}
+
+	D_ASSERT(LogicalTypeId::LIST == arguments[0]->return_type.id() ||
+	         LogicalTypeId::SQLNULL == arguments[0]->return_type.id());
+
+	bound_function.return_type = arguments[0]->return_type;
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
+}
 ScalarFunction ListWhereFun::GetFunction() {
-	auto fun =
-	    ScalarFunction({LogicalType::LIST(LogicalType::TEMPLATE("T")), LogicalType::LIST(LogicalType::BOOLEAN)},
-	                   LogicalType::LIST(LogicalType::TEMPLATE("T")), ListSelectFunction<SetSelectionVectorWhere>);
+	auto fun = ScalarFunction({LogicalType::LIST(LogicalTypeId::ANY), LogicalType::LIST(LogicalType::BOOLEAN)},
+	                          LogicalType::LIST(LogicalTypeId::ANY), ListSelectFunction<SetSelectionVectorWhere>,
+	                          ListSelectBind);
 	return fun;
 }
 
 ScalarFunction ListSelectFun::GetFunction() {
-	auto fun =
-	    ScalarFunction({LogicalType::LIST(LogicalType::TEMPLATE("T")), LogicalType::LIST(LogicalType::BIGINT)},
-	                   LogicalType::LIST(LogicalType::TEMPLATE("T")), ListSelectFunction<SetSelectionVectorSelect>);
+	auto fun = ScalarFunction({LogicalType::LIST(LogicalTypeId::ANY), LogicalType::LIST(LogicalType::BIGINT)},
+	                          LogicalType::LIST(LogicalTypeId::ANY), ListSelectFunction<SetSelectionVectorSelect>,
+	                          ListSelectBind);
 	return fun;
 }
 

@@ -10,11 +10,13 @@
 
 #include "duckdb/parser/tableref.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/common/vector.hpp"
 #include "duckdb/parser/query_node.hpp"
 
 namespace duckdb {
 
-enum class ShowType : uint8_t { SUMMARY, DESCRIBE, SHOW_FROM, SHOW_UNQUALIFIED };
+enum class ShowType : uint8_t { SUMMARY, DESCRIBE };
 
 //! Represents a SHOW/DESCRIBE/SUMMARIZE statement
 class ShowRef : public TableRef {
@@ -26,10 +28,6 @@ public:
 
 	//! The table name (if any)
 	string table_name;
-	//! The catalog name (if any)
-	string catalog_name;
-	//! The schema name (if any)
-	string schema_name;
 	//! The QueryNode of select query (if any)
 	unique_ptr<QueryNode> query;
 	//! Whether or not we are requesting a summary or a describe

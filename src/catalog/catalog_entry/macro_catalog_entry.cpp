@@ -11,7 +11,6 @@ MacroCatalogEntry::MacroCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
       macros(std::move(info.macros)) {
 	this->temporary = info.temporary;
 	this->internal = info.internal;
-	this->extension_name = info.extension_name;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
@@ -47,7 +46,6 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	for (auto &function : macros) {
 		info->macros.push_back(function->Copy());
 	}
-	info->extension_name = extension_name;
 	info->dependencies = dependencies;
 	info->comment = comment;
 	info->tags = tags;

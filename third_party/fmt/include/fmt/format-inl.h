@@ -629,11 +629,7 @@ class bigint {
     int num_bigits = static_cast<int>(bigits_.size());
     int num_result_bigits = 2 * num_bigits;
     bigits_.resize(num_result_bigits);
-#if FMT_USE_INT128
-    using accumulator_t = __uint128_t;
-#else
-    using accumulator_t = accumulator;
-#endif
+    using accumulator_t = conditional_t<FMT_USE_INT128, uint128_t, accumulator>;
     auto sum = accumulator_t();
     for (int bigit_index = 0; bigit_index < num_bigits; ++bigit_index) {
       // Compute bigit at position bigit_index of the result by adding

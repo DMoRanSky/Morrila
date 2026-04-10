@@ -1,9 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/types/list_segment.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/uhugeint.hpp"
@@ -245,6 +239,7 @@ static ListSegment *GetSegment(const ListSegmentFunctions &functions, ArenaAlloc
 template <class T>
 static void WriteDataToPrimitiveSegment(const ListSegmentFunctions &, ArenaAllocator &, ListSegment *segment,
                                         RecursiveUnifiedVectorFormat &input_data, idx_t &entry_idx) {
+
 	auto sel_entry_idx = input_data.unified.sel->get_index(entry_idx);
 
 	// write null validity
@@ -263,6 +258,7 @@ static void WriteDataToPrimitiveSegment(const ListSegmentFunctions &, ArenaAlloc
 static void WriteDataToVarcharSegment(const ListSegmentFunctions &functions, ArenaAllocator &allocator,
                                       ListSegment *segment, RecursiveUnifiedVectorFormat &input_data,
                                       idx_t &entry_idx) {
+
 	auto sel_entry_idx = input_data.unified.sel->get_index(entry_idx);
 
 	// write null validity
@@ -301,6 +297,7 @@ static void WriteDataToVarcharSegment(const ListSegmentFunctions &functions, Are
 
 static void WriteDataToListSegment(const ListSegmentFunctions &functions, ArenaAllocator &allocator,
                                    ListSegment *segment, RecursiveUnifiedVectorFormat &input_data, idx_t &entry_idx) {
+
 	auto sel_entry_idx = input_data.unified.sel->get_index(entry_idx);
 
 	// write null validity
@@ -334,6 +331,7 @@ static void WriteDataToListSegment(const ListSegmentFunctions &functions, ArenaA
 
 static void WriteDataToStructSegment(const ListSegmentFunctions &functions, ArenaAllocator &allocator,
                                      ListSegment *segment, RecursiveUnifiedVectorFormat &input_data, idx_t &entry_idx) {
+
 	auto sel_entry_idx = input_data.unified.sel->get_index(entry_idx);
 
 	// write null validity
@@ -378,6 +376,7 @@ static void WriteDataToArraySegment(const ListSegmentFunctions &functions, Arena
 
 void ListSegmentFunctions::AppendRow(ArenaAllocator &allocator, LinkedList &linked_list,
                                      RecursiveUnifiedVectorFormat &input_data, idx_t &entry_idx) const {
+
 	auto &write_data_to_segment = *this;
 	auto segment = GetSegment(write_data_to_segment, allocator, linked_list);
 	write_data_to_segment.write_data(write_data_to_segment, allocator, segment, input_data, entry_idx);
@@ -392,6 +391,7 @@ void ListSegmentFunctions::AppendRow(ArenaAllocator &allocator, LinkedList &link
 template <class T>
 static void ReadDataFromPrimitiveSegment(const ListSegmentFunctions &, const ListSegment *segment, Vector &result,
                                          idx_t &total_count) {
+
 	auto &aggr_vector_validity = FlatVector::Validity(result);
 
 	// set NULLs
@@ -402,7 +402,7 @@ static void ReadDataFromPrimitiveSegment(const ListSegmentFunctions &, const Lis
 		}
 	}
 
-	auto aggr_vector_data = FlatVector::GetDataMutable<T>(result);
+	auto aggr_vector_data = FlatVector::GetData<T>(result);
 
 	// load values
 	for (idx_t i = 0; i < segment->count; i++) {
@@ -418,7 +418,7 @@ static void ReadDataFromVarcharSegment(const ListSegmentFunctions &, const ListS
 	auto &aggr_vector_validity = FlatVector::Validity(result);
 
 	// use length and (reconstructed) offset to get the correct substrings
-	auto aggr_vector_data = FlatVector::GetDataMutable<string_t>(result);
+	auto aggr_vector_data = FlatVector::GetData<string_t>(result);
 	auto str_length_data = GetListLengthData(segment);
 
 	auto null_mask = GetNullMask(segment);
@@ -462,6 +462,7 @@ static void ReadDataFromVarcharSegment(const ListSegmentFunctions &, const ListS
 
 static void ReadDataFromListSegment(const ListSegmentFunctions &functions, const ListSegment *segment, Vector &result,
                                     idx_t &total_count) {
+
 	auto &aggr_vector_validity = FlatVector::Validity(result);
 
 	// set NULLs
@@ -472,7 +473,7 @@ static void ReadDataFromListSegment(const ListSegmentFunctions &functions, const
 		}
 	}
 
-	auto list_vector_data = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto list_vector_data = FlatVector::GetData<list_entry_t>(result);
 
 	// get the starting offset
 	idx_t offset = 0;
@@ -502,6 +503,7 @@ static void ReadDataFromListSegment(const ListSegmentFunctions &functions, const
 
 static void ReadDataFromStructSegment(const ListSegmentFunctions &functions, const ListSegment *segment, Vector &result,
                                       idx_t &total_count) {
+
 	auto &aggr_vector_validity = FlatVector::Validity(result);
 
 	// set NULLs
@@ -520,12 +522,13 @@ static void ReadDataFromStructSegment(const ListSegmentFunctions &functions, con
 	for (idx_t child_count = 0; child_count < children.size(); child_count++) {
 		auto struct_children_segment = Load<ListSegment *>(const_data_ptr_cast(struct_children + child_count));
 		auto &child_function = functions.child_functions[child_count];
-		child_function.read_data(child_function, struct_children_segment, children[child_count], total_count);
+		child_function.read_data(child_function, struct_children_segment, *children[child_count], total_count);
 	}
 }
 
 static void ReadDataFromArraySegment(const ListSegmentFunctions &functions, const ListSegment *segment, Vector &result,
                                      idx_t &total_count) {
+
 	auto &aggr_vector_validity = FlatVector::Validity(result);
 
 	// set NULLs
@@ -567,6 +570,7 @@ void SegmentPrimitiveFunction(ListSegmentFunctions &functions) {
 }
 
 void GetSegmentDataFunctions(ListSegmentFunctions &functions, const LogicalType &type) {
+
 	if (type.id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}

@@ -309,6 +309,7 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList &files,
                                        vector<LogicalType> &return_types, vector<string> &names,
                                        MultiFileReaderBindData &bind_data) {
+
 	// Disable all other multifilereader options
 	options.auto_detect_hive_partitioning = false;
 	options.hive_partitioning = false;
@@ -381,12 +382,14 @@ static SelectionVector DuckSVFromDeltaSV(const ffi::KernelBoolSlice &dv, Vector 
                                          idx_t &select_count) {
 	D_ASSERT(row_id_column.GetType() == LogicalType::BIGINT);
 
-	auto entries = row_id_column.Values<int64_t>(count);
+	UnifiedVectorFormat data;
+	row_id_column.ToUnifiedFormat(count, data);
+	auto row_ids = UnifiedVectorFormat::GetData<int64_t>(data);
 
 	SelectionVector result {count};
 	idx_t current_select = 0;
 	for (idx_t i = 0; i < count; i++) {
-		auto row_id = entries.GetValueUnsafe(i);
+		auto row_id = row_ids[data.sel->get_index(i)];
 
 		// TODO: why are deletion vectors not spanning whole data?
 		if (row_id >= dv.len || dv.ptr[row_id]) {

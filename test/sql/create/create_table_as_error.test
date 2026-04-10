@@ -8,4 +8,3 @@ PRAGMA enable_verification
 statement error
 CREATE TABLE tbl AS EXECUTE tbl;
 ----
-<REGEX>:.*Parser Error.*requires a SELECT clause.*

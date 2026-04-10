@@ -8,7 +8,7 @@ statement ok
 PREPARE q1 AS
 	COPY (
 		select $1 as 'col'
-	) to '{TEST_DIR}/res.csv' (
+	) to '__TEST_DIR__/res.csv' (
 		FORMAT csv
 	);
 
@@ -16,22 +16,18 @@ statement ok
 execute q1 (42);
 
 query I
-select i from '{TEST_DIR}/res.csv' tbl(i);
+select i from '__TEST_DIR__/res.csv' tbl(i);
 ----
 42
 
-statement ok
+# Can't use a prepared parameter for the destination
+
+statement error
 PREPARE q2 AS
 	COPY (
 		select 42 as 'col'
 	) to $1 (
 		FORMAT csv
 	);
-
-statement ok
-EXECUTE q2('{TEST_DIR}/res2.csv')
-
-query I
-select i from '{TEST_DIR}/res2.csv' tbl(i);
 ----
-42
+Parser Error: syntax error at or near "$1"

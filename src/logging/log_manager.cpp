@@ -5,8 +5,6 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
-#include "duckdb/main/settings.hpp"
-#include "duckdb/common/local_file_system.hpp"
 
 namespace duckdb {
 
@@ -51,7 +49,7 @@ shared_ptr<Logger> LogManager::GlobalLoggerReference() {
 
 void LogManager::Flush() {
 	unique_lock<mutex> lck(lock);
-	log_storage->FlushAll();
+	log_storage->Flush();
 }
 
 shared_ptr<LogStorage> LogManager::GetLogStorage() {
@@ -59,12 +57,12 @@ shared_ptr<LogStorage> LogManager::GetLogStorage() {
 	return log_storage;
 }
 
-bool LogManager::CanScan(LoggingTargetTable table) {
+bool LogManager::CanScan() {
 	unique_lock<mutex> lck(lock);
-	return log_storage->CanScan(table);
+	return log_storage->CanScan();
 }
 
-LogManager::LogManager(DatabaseInstance &db, LogConfig config_p) : config(std::move(config_p)), db_instance(db) {
+LogManager::LogManager(DatabaseInstance &db, LogConfig config_p) : config(std::move(config_p)) {
 	log_storage = make_uniq<InMemoryLogStorage>(db);
 }
 
@@ -96,25 +94,12 @@ RegisteredLoggingContext LogManager::RegisterLoggingContextInternal(LoggingConte
 
 void LogManager::WriteLogEntry(timestamp_t timestamp, const char *log_type, LogLevel log_level, const char *log_message,
                                const RegisteredLoggingContext &context) {
-	if (log_level == LogLevel::LOG_WARNING && Settings::Get<WarningsAsErrorsSetting>(db_instance)) {
-		throw InvalidInputException(log_message);
-	} else {
-		unique_lock<mutex> lck(lock);
-		log_storage->WriteLogEntry(timestamp, log_level, log_type, log_message, context);
-	}
+	unique_lock<mutex> lck(lock);
+	log_storage->WriteLogEntry(timestamp, log_level, log_type, log_message, context);
 }
 
 void LogManager::FlushCachedLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context) {
 	throw NotImplementedException("FlushCachedLogEntries");
-}
-
-void LogManager::SetConfig(DatabaseInstance &db, const LogConfig &config_p) {
-	unique_lock<mutex> lck(lock);
-
-	// We need extra handling for switching storage
-	SetLogStorageInternal(db, config_p.storage);
-
-	SetConfigInternal(config_p);
 }
 
 void LogManager::SetEnableLogging(bool enable) {
@@ -135,54 +120,35 @@ void LogManager::SetLogLevel(LogLevel level) {
 	global_logger->UpdateConfig(config);
 }
 
-void LogManager::SetEnabledLogTypes(optional_ptr<unordered_set<string>> enabled_log_types) {
+void LogManager::SetEnabledLogTypes(unordered_set<string> &enabled_log_types) {
 	unique_lock<mutex> lck(lock);
-	if (enabled_log_types) {
-		config.enabled_log_types = *enabled_log_types;
-	} else {
-		config.enabled_log_types = {};
-	}
+	config.enabled_log_types = enabled_log_types;
 	global_logger->UpdateConfig(config);
 }
 
-void LogManager::SetDisabledLogTypes(optional_ptr<unordered_set<string>> disabled_log_types) {
+void LogManager::SetDisabledLogTypes(unordered_set<string> &disabled_log_types) {
 	unique_lock<mutex> lck(lock);
-	if (disabled_log_types) {
-		config.disabled_log_types = *disabled_log_types;
-	} else {
-		config.disabled_log_types = {};
-	}
+	config.disabled_log_types = disabled_log_types;
 	global_logger->UpdateConfig(config);
 }
 
 void LogManager::SetLogStorage(DatabaseInstance &db, const string &storage_name) {
 	unique_lock<mutex> lck(lock);
-	SetLogStorageInternal(db, storage_name);
-}
-
-void LogManager::SetLogStorageInternal(DatabaseInstance &db, const string &storage_name) {
 	auto storage_name_to_lower = StringUtil::Lower(storage_name);
 
 	if (config.storage == storage_name_to_lower) {
 		return;
 	}
 
-	if (storage_name_to_lower == LogConfig::FILE_STORAGE_NAME) {
-		auto &fs = FileSystem::GetFileSystem(db);
-		if (fs.SubSystemIsDisabled(LocalFileSystem().GetName())) {
-			throw InvalidConfigurationException("Can not enable file logging with the LocalFileSystem disabled");
-		}
-	}
-
 	// Flush the old storage, we are going to replace it.
-	log_storage->FlushAll();
+	log_storage->Flush();
 
 	if (storage_name_to_lower == LogConfig::IN_MEMORY_STORAGE_NAME) {
 		log_storage = make_shared_ptr<InMemoryLogStorage>(db);
 	} else if (storage_name_to_lower == LogConfig::STDOUT_STORAGE_NAME) {
-		log_storage = make_shared_ptr<StdOutLogStorage>(db);
+		log_storage = make_shared_ptr<StdOutLogStorage>();
 	} else if (storage_name_to_lower == LogConfig::FILE_STORAGE_NAME) {
-		log_storage = make_shared_ptr<FileLogStorage>(db);
+		throw NotImplementedException("File log storage is not yet implemented");
 	} else if (registered_log_storages.find(storage_name_to_lower) != registered_log_storages.end()) {
 		log_storage = registered_log_storages[storage_name_to_lower];
 	} else {
@@ -191,16 +157,9 @@ void LogManager::SetLogStorageInternal(DatabaseInstance &db, const string &stora
 	config.storage = storage_name_to_lower;
 }
 
-void LogManager::UpdateLogStorageConfig(DatabaseInstance &db, case_insensitive_map_t<Value> &config_value) {
-	unique_lock<mutex> lck(lock);
-	log_storage->UpdateConfig(db, config_value);
-}
-
 void LogManager::SetEnableStructuredLoggers(vector<string> &enabled_logger_types) {
 	unique_lock<mutex> lck(lock);
-
-	LogConfig new_config = config;
-	new_config.enabled_log_types.clear();
+	config.enabled_log_types.clear();
 
 	LogLevel min_log_level = LogLevel::LOG_FATAL;
 
@@ -210,16 +169,14 @@ void LogManager::SetEnableStructuredLoggers(vector<string> &enabled_logger_types
 			throw InvalidInputException("Unknown log type: '%s'", enabled_logger_type);
 		}
 
-		new_config.enabled_log_types.insert(lookup->name);
+		config.enabled_log_types.insert(enabled_logger_type);
 
 		min_log_level = MinValue(min_log_level, lookup->level);
 	}
 
-	new_config.level = min_log_level;
-	new_config.mode = LogMode::ENABLE_SELECTED;
-	new_config.enabled = true;
-
-	SetConfigInternal(new_config);
+	config.level = min_log_level;
+	config.mode = LogMode::ENABLE_SELECTED;
+	config.enabled = true;
 }
 
 void LogManager::TruncateLogStorage() {
@@ -248,12 +205,6 @@ optional_ptr<const LogType> LogManager::LookupLogTypeInternal(const string &type
 	return nullptr;
 }
 
-void LogManager::SetConfigInternal(LogConfig config_p) {
-	// Apply the remainder of the config
-	config = std::move(config_p);
-	global_logger->UpdateConfig(config);
-}
-
 void LogManager::RegisterLogType(unique_ptr<LogType> type) {
 	unique_lock<mutex> lck(lock);
 
@@ -271,7 +222,6 @@ void LogManager::RegisterDefaultLogTypes() {
 	RegisterLogType(make_uniq<HTTPLogType>());
 	RegisterLogType(make_uniq<QueryLogType>());
 	RegisterLogType(make_uniq<PhysicalOperatorLogType>());
-	RegisterLogType(make_uniq<MetricsLogType>());
 }
 
 } // namespace duckdb

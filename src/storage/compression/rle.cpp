@@ -134,24 +134,24 @@ struct RLECompressState : public CompressionState {
 
 	idx_t MaxRLECount() {
 		auto entry_size = sizeof(T) + sizeof(rle_count_t);
-		return AlignValueFloor((info.GetBlockSize() - RLEConstants::RLE_HEADER_SIZE) / entry_size);
+		return (info.GetBlockSize() - RLEConstants::RLE_HEADER_SIZE) / entry_size;
 	}
 
 	RLECompressState(ColumnDataCheckpointData &checkpoint_data_p, const CompressionInfo &info)
 	    : CompressionState(info), checkpoint_data(checkpoint_data_p),
 	      function(checkpoint_data.GetCompressionFunction(CompressionType::COMPRESSION_RLE)) {
-		CreateEmptySegment();
+		CreateEmptySegment(checkpoint_data.GetRowGroup().start);
 
 		state.dataptr = (void *)this;
 		max_rle_count = MaxRLECount();
 	}
 
-	void CreateEmptySegment() {
+	void CreateEmptySegment(idx_t row_start) {
 		auto &db = checkpoint_data.GetDatabase();
 		auto &type = checkpoint_data.GetType();
 
-		auto column_segment =
-		    ColumnSegment::CreateTransientSegment(db, function, type, info.GetBlockSize(), info.GetBlockManager());
+		auto column_segment = ColumnSegment::CreateTransientSegment(db, function, type, row_start, info.GetBlockSize(),
+		                                                            info.GetBlockManager());
 		current_segment = std::move(column_segment);
 
 		auto &buffer_manager = BufferManager::GetBufferManager(db);
@@ -176,20 +176,16 @@ struct RLECompressState : public CompressionState {
 		entry_count++;
 
 		// update meta data
-		if (WRITE_STATISTICS) {
-			if (!is_null) {
-				current_segment->stats.statistics.SetHasNoNullFast();
-				current_segment->stats.statistics.UpdateNumericStats<T>(value);
-			} else {
-				current_segment->stats.statistics.SetHasNullFast();
-			}
+		if (WRITE_STATISTICS && !is_null) {
+			current_segment->stats.statistics.UpdateNumericStats<T>(value);
 		}
 		current_segment->count += count;
 
 		if (entry_count == max_rle_count) {
 			// we have finished writing this segment: flush it and create a new segment
+			auto row_start = current_segment->start + current_segment->count;
 			FlushSegment();
-			CreateEmptySegment();
+			CreateEmptySegment(row_start);
 			entry_count = 0;
 		}
 	}
@@ -223,7 +219,7 @@ struct RLECompressState : public CompressionState {
 	}
 
 	ColumnDataCheckpointData &checkpoint_data;
-	const CompressionFunction &function;
+	CompressionFunction &function;
 	unique_ptr<ColumnSegment> current_segment;
 	BufferHandle handle;
 
@@ -264,7 +260,7 @@ struct RLEScanState : public SegmentScanState {
 		entry_pos = 0;
 		position_in_entry = 0;
 		rle_count_offset = UnsafeNumericCast<uint32_t>(Load<uint64_t>(handle.Ptr() + segment.GetBlockOffset()));
-		D_ASSERT(rle_count_offset <= segment.GetBlockSize());
+		D_ASSERT(rle_count_offset <= segment.GetBlockManager().GetBlockSize());
 	}
 
 	inline void SkipInternal(rle_count_t *index_pointer, idx_t skip_count) {
@@ -293,7 +289,7 @@ struct RLEScanState : public SegmentScanState {
 		position_in_entry = 0;
 	}
 
-	inline bool ExhaustedRun(const rle_count_t *const index_pointer) const {
+	inline bool ExhaustedRun(rle_count_t *index_pointer) {
 		return position_in_entry >= index_pointer[entry_pos];
 	}
 
@@ -307,7 +303,7 @@ struct RLEScanState : public SegmentScanState {
 };
 
 template <class T>
-unique_ptr<SegmentScanState> RLEInitScan(const QueryContext &context, ColumnSegment &segment) {
+unique_ptr<SegmentScanState> RLEInitScan(ColumnSegment &segment) {
 	auto result = make_uniq<RLEScanState<T>>(segment);
 	return std::move(result);
 }
@@ -338,8 +334,8 @@ static bool CanEmitConstantVector(idx_t position, idx_t run_length, idx_t scan_c
 }
 
 template <class T>
-static void RLEScanConstant(RLEScanState<T> &scan_state, const rle_count_t *const index_pointer,
-                            const T *const data_pointer, idx_t scan_count, Vector &result) {
+static void RLEScanConstant(RLEScanState<T> &scan_state, rle_count_t *index_pointer, T *data_pointer, idx_t scan_count,
+                            Vector &result) {
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	auto result_data = ConstantVector::GetData<T>(result);
 	result_data[0] = data_pointer[scan_state.entry_pos];
@@ -347,6 +343,7 @@ static void RLEScanConstant(RLEScanState<T> &scan_state, const rle_count_t *cons
 	if (scan_state.ExhaustedRun(index_pointer)) {
 		scan_state.ForwardToNextRun();
 	}
+	return;
 }
 
 template <class T, bool ENTIRE_VECTOR>
@@ -354,9 +351,9 @@ void RLEScanPartialInternal(ColumnSegment &segment, ColumnScanState &state, idx_
                             idx_t result_offset) {
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
-	const auto data = scan_state.handle.Ptr() + segment.GetBlockOffset();
-	const auto data_pointer = reinterpret_cast<const T *const>(data + RLEConstants::RLE_HEADER_SIZE);
-	const auto index_pointer = reinterpret_cast<const rle_count_t *const>(data + scan_state.rle_count_offset);
+	auto data = scan_state.handle.Ptr() + segment.GetBlockOffset();
+	auto data_pointer = reinterpret_cast<T *>(data + RLEConstants::RLE_HEADER_SIZE);
+	auto index_pointer = reinterpret_cast<rle_count_t *>(data + scan_state.rle_count_offset);
 
 	// If we are scanning an entire Vector and it contains only a single run
 	if (CanEmitConstantVector<ENTIRE_VECTOR>(scan_state.position_in_entry, index_pointer[scan_state.entry_pos],
@@ -365,24 +362,28 @@ void RLEScanPartialInternal(ColumnSegment &segment, ColumnScanState &state, idx_
 		return;
 	}
 
-	auto result_data = FlatVector::GetDataMutable<T>(result);
+	auto result_data = FlatVector::GetData<T>(result);
+	result.SetVectorType(VectorType::FLAT_VECTOR);
 
-	const idx_t result_end = result_offset + scan_count;
+	idx_t result_end = result_offset + scan_count;
 	while (result_offset < result_end) {
-		const rle_count_t &run_end = index_pointer[scan_state.entry_pos];
-		const idx_t run_count = run_end - scan_state.position_in_entry;
-		const idx_t remaining = result_end - result_offset;
-		const idx_t to_write = run_count < remaining ? run_count : remaining;
-
-		const T &element = data_pointer[scan_state.entry_pos];
-		std::fill_n(result_data + result_offset, to_write, element);
-
-		result_offset += to_write;
-		scan_state.position_in_entry += to_write;
-
-		if (to_write != run_count) {
+		rle_count_t run_end = index_pointer[scan_state.entry_pos];
+		idx_t run_count = run_end - scan_state.position_in_entry;
+		idx_t remaining_scan_count = result_end - result_offset;
+		T element = data_pointer[scan_state.entry_pos];
+		if (DUCKDB_UNLIKELY(run_count > remaining_scan_count)) {
+			for (idx_t i = 0; i < remaining_scan_count; i++) {
+				result_data[result_offset + i] = element;
+			}
+			scan_state.position_in_entry += remaining_scan_count;
 			break;
 		}
+
+		for (idx_t i = 0; i < run_count; i++) {
+			result_data[result_offset + i] = element;
+		}
+
+		result_offset += run_count;
 		scan_state.ForwardToNextRun();
 	}
 }
@@ -416,7 +417,8 @@ void RLESelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		return;
 	}
 
-	auto result_data = FlatVector::Writer<T>(result, sel_count);
+	auto result_data = FlatVector::GetData<T>(result);
+	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	idx_t prev_idx = 0;
 	for (idx_t i = 0; i < sel_count; i++) {
@@ -479,7 +481,7 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		return;
 	}
 	// scan (the subset of) the matching runs AND set the output selection vector with the rows that match
-	auto result_data = FlatVector::GetDataMutable<T>(result);
+	auto result_data = FlatVector::GetData<T>(result);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	idx_t matching_count = 0;
@@ -557,7 +559,7 @@ void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, 
 
 	auto data = scan_state.handle.Ptr() + segment.GetBlockOffset();
 	auto data_pointer = reinterpret_cast<T *>(data + RLEConstants::RLE_HEADER_SIZE);
-	auto result_data = FlatVector::GetDataMutable<T>(result);
+	auto result_data = FlatVector::GetData<T>(result);
 	result_data[result_idx] = data_pointer[scan_state.entry_pos];
 }
 

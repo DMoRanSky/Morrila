@@ -26,12 +26,8 @@ public:
 	optionally_owned_ptr(unique_ptr<T> &&owned_p) // NOLINT: allow implicit creation from moved unique_ptr
 	    : owned(std::move(owned_p)), ptr(owned) {
 	}
-	optionally_owned_ptr(shared_ptr<T> owned_p) // NOLINT: allow implicit creation from shared_ptr
-	    : owned_shared(std::move(owned_p)), ptr(*owned_shared) {
-	}
 	// Move constructor
-	optionally_owned_ptr(optionally_owned_ptr &&other) noexcept
-	    : owned(std::move(other.owned)), owned_shared(std::move(other.owned_shared)), ptr(other.ptr) {
+	optionally_owned_ptr(optionally_owned_ptr &&other) noexcept : owned(std::move(other.owned)), ptr(other.ptr) {
 		other.ptr = nullptr;
 	}
 	// Copy constructor
@@ -59,13 +55,7 @@ public:
 		return ptr.get();
 	}
 	bool is_owned() const { // NOLINT: mimic std casing
-		return owned != nullptr || owned_shared != nullptr;
-	}
-	const unique_ptr<T> &get_owned_unique() const {
-		return owned;
-	}
-	const shared_ptr<T> &get_owned_shared() const {
-		return owned_shared;
+		return owned != nullptr;
 	}
 	// this looks dirty - but this is the default behavior of raw pointers
 	T *get_mutable() const { // NOLINT: mimic std casing
@@ -74,22 +64,17 @@ public:
 
 	optionally_owned_ptr<T> &operator=(T &ref) {
 		owned = nullptr;
-		owned_shared = nullptr;
 		ptr = optional_ptr<T>(ref);
 		return *this;
 	}
 	optionally_owned_ptr<T> &operator=(T *ref) {
 		owned = nullptr;
-		owned_shared = nullptr;
 		ptr = optional_ptr<T>(ref);
 		return *this;
 	}
 
 	bool operator==(const optionally_owned_ptr<T> &rhs) const {
 		if (owned != rhs.owned) {
-			return false;
-		}
-		if (owned_shared != rhs.owned_shared) {
 			return false;
 		}
 		return ptr == rhs.ptr;
@@ -101,7 +86,6 @@ public:
 
 private:
 	unique_ptr<T> owned;
-	shared_ptr<T> owned_shared;
 	optional_ptr<T> ptr;
 };
 

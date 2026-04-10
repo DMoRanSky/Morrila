@@ -9,7 +9,9 @@
 #pragma once
 
 #include "duckdb.hpp"
+#ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/allocator.hpp"
+#endif
 
 #include <exception>
 

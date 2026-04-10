@@ -9,8 +9,10 @@
 #pragma once
 
 #include "duckdb/common/string.hpp"
-#include "duckdb/planner/binding_alias.hpp"
+#include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/planner/binding_alias.hpp"
 
 namespace duckdb {
 
@@ -36,8 +38,6 @@ struct QualifiedColumnName {
 	string schema;
 	string table;
 	string column;
-
-	static QualifiedColumnName Parse(string &input);
 
 	string ToString() const;
 

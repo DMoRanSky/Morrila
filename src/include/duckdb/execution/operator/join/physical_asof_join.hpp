@@ -19,8 +19,7 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::ASOF_JOIN;
 
 public:
-	PhysicalAsOfJoin(PhysicalPlan &physical_plan, LogicalComparisonJoin &op, PhysicalOperator &left,
-	                 PhysicalOperator &right);
+	PhysicalAsOfJoin(LogicalComparisonJoin &op, PhysicalOperator &left, PhysicalOperator &right);
 
 	vector<LogicalType> join_key_types;
 	vector<column_t> null_sensitive;
@@ -35,7 +34,19 @@ public:
 	vector<BoundOrderByNode> rhs_orders;
 
 	// Projection mappings
-	vector<idx_t> right_projection_map;
+	vector<column_t> right_projection_map;
+
+	// Predicate (join conditions that don't reference both sides)
+	unique_ptr<Expression> predicate;
+
+public:
+	// Operator Interface
+	unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const override;
+	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
+
+	bool ParallelOperator() const override {
+		return true;
+	}
 
 protected:
 	// CachingOperator Interface
@@ -47,8 +58,7 @@ public:
 	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                 GlobalSourceState &gstate) const override;
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;
@@ -72,9 +82,6 @@ public:
 	bool ParallelSink() const override {
 		return true;
 	}
-
-public:
-	void BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) override;
 };
 
 } // namespace duckdb

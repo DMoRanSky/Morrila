@@ -6,7 +6,7 @@ require block_size 262144
 
 require noforcestorage
 
-load {TEST_DIR}/test_roaring.db readwrite v1.2.0
+load __TEST_DIR__/test_roaring.db readwrite v1.2.0
 
 statement ok
 set logging_level='info';
@@ -19,7 +19,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CALL enable_logging(level='trace')
+set enable_logging=true;
 
 statement ok
 CREATE TABLE test_uncompressed AS SELECT
@@ -42,7 +42,7 @@ where
 	message.starts_with('ColumnDataCheckpointer FinalAnalyze') and
 	message.contains('test_uncompressed') and
 	message.contains('VALIDITY') and
-	message.contains('UNCOMPRESSED');
+	message.contains('COMPRESSION_UNCOMPRESSED');
 ----
 15360
 
@@ -78,6 +78,6 @@ where
 	message.starts_with('ColumnDataCheckpointer FinalAnalyze') and
 	message.contains('test_roaring') and
 	message.contains('VALIDITY') and
-	message.contains('ROARING');
+	message.contains('COMPRESSION_ROARING');
 ----
 10944

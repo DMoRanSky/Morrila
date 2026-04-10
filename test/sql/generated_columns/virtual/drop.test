@@ -23,4 +23,3 @@ ALTER TABLE unit DROP COLUMN total_profit;
 statement error
 SELECT total_profit FROM unit;
 ----
-<REGEX>:.*Binder Error.*not found .*

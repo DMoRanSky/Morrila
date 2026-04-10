@@ -29,6 +29,7 @@ DistinctAggregateCollectionInfo::DistinctAggregateCollectionInfo(const vector<un
 
 DistinctAggregateState::DistinctAggregateState(const DistinctAggregateData &data, ClientContext &client)
     : child_executor(client) {
+
 	radix_states.resize(data.info.table_count);
 	distinct_output_chunks.resize(data.info.table_count);
 
@@ -67,14 +68,12 @@ DistinctAggregateState::DistinctAggregateState(const DistinctAggregateData &data
 }
 
 //! Persistent + shared (read-only) data for the distinct aggregates
-DistinctAggregateData::DistinctAggregateData(const DistinctAggregateCollectionInfo &info,
-                                             TupleDataValidityType distinct_validity)
-    : DistinctAggregateData(info, {}, nullptr, distinct_validity) {
+DistinctAggregateData::DistinctAggregateData(const DistinctAggregateCollectionInfo &info)
+    : DistinctAggregateData(info, {}, nullptr) {
 }
 
 DistinctAggregateData::DistinctAggregateData(const DistinctAggregateCollectionInfo &info, const GroupingSet &groups,
-                                             const vector<unique_ptr<Expression>> *group_expressions,
-                                             TupleDataValidityType distinct_validity)
+                                             const vector<unique_ptr<Expression>> *group_expressions)
     : info(info) {
 	grouped_aggregate_data.resize(info.table_count);
 	radix_tables.resize(info.table_count);
@@ -98,13 +97,13 @@ DistinctAggregateData::DistinctAggregateData(const DistinctAggregateCollectionIn
 		}
 		idx_t group_by_size = group_expressions ? group_expressions->size() : 0;
 		for (idx_t set_idx = 0; set_idx < aggregate.children.size(); set_idx++) {
-			grouping_set.insert(ProjectionIndex(set_idx + group_by_size));
+			grouping_set.insert(set_idx + group_by_size);
 		}
 		// Create the hashtable for the aggregate
 		grouped_aggregate_data[table_idx] = make_uniq<GroupedAggregateData>();
 		grouped_aggregate_data[table_idx]->InitializeDistinct(info.aggregates[i], group_expressions);
 		radix_tables[table_idx] =
-		    make_uniq<RadixPartitionedHashTable>(grouping_set, *grouped_aggregate_data[table_idx], distinct_validity);
+		    make_uniq<RadixPartitionedHashTable>(grouping_set, *grouped_aggregate_data[table_idx]);
 
 		// Fill the chunk_types (only contains the payload of the distinct aggregates)
 		vector<LogicalType> chunk_types;

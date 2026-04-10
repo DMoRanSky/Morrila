@@ -624,9 +624,8 @@ private:
     }
 
 public:
-    // Disabled because compile-time timestamp seeding causes ccache misses.
-    // static constexpr IntType value = fnv(IntType(2166136261U ^ sizeof(IntType)),
-    //                     /* removed compile-time date/time/file seed */);
+    static constexpr IntType value = fnv(IntType(2166136261U ^ sizeof(IntType)),
+                        __DATE__ __TIME__ __FILE__);
 };
 
 // Sometimes, when debugging or testing, it's handy to be able print the name

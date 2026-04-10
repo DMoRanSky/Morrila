@@ -1,10 +1,13 @@
 #include "include/icu-datetrunc.hpp"
 #include "include/icu-datefunc.hpp"
 
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 
 namespace duckdb {
 
@@ -136,7 +139,8 @@ struct ICUDateTrunc : public ICUDateFunc {
 		if (part_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			// Common case of constant part.
 			if (ConstantVector::IsNull(part_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
 				auto truncator = TruncationFactory(GetDatePartSpecifier(specifier));
@@ -170,10 +174,10 @@ struct ICUDateTrunc : public ICUDateFunc {
 		return ScalarFunction({LogicalType::VARCHAR, type}, LogicalType::TIMESTAMP_TZ, ICUDateTruncFunction<TA>, Bind);
 	}
 
-	static void AddBinaryTimestampFunction(const string &name, ExtensionLoader &loader) {
+	static void AddBinaryTimestampFunction(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(GetDateTruncFunction<timestamp_t>(LogicalType::TIMESTAMP_TZ));
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
@@ -227,9 +231,9 @@ timestamp_t ICUDateFunc::CurrentMidnight(icu::Calendar *calendar, ExpressionStat
 	return GetTime(calendar);
 }
 
-void RegisterICUDateTruncFunctions(ExtensionLoader &loader) {
-	ICUDateTrunc::AddBinaryTimestampFunction("date_trunc", loader);
-	ICUDateTrunc::AddBinaryTimestampFunction("datetrunc", loader);
+void RegisterICUDateTruncFunctions(DatabaseInstance &db) {
+	ICUDateTrunc::AddBinaryTimestampFunction("date_trunc", db);
+	ICUDateTrunc::AddBinaryTimestampFunction("datetrunc", db);
 }
 
 } // namespace duckdb

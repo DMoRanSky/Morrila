@@ -42,9 +42,9 @@ private:
 	string file;
 };
 
-unique_ptr<Catalog> OpenFileStorageAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
+unique_ptr<Catalog> OpenFileStorageAttach(StorageExtensionInfo *storage_info, ClientContext &context,
                                           AttachedDatabase &db, const string &name, AttachInfo &info,
-                                          AttachOptions &attach_options) {
+                                          AccessMode access_mode) {
 	auto file = info.path;
 	// open an in-memory database
 	info.path = ":memory:";
@@ -66,13 +66,13 @@ unique_ptr<Catalog> OpenFileStorageAttach(optional_ptr<StorageExtensionInfo> sto
 	return std::move(catalog);
 }
 
-unique_ptr<TransactionManager> OpenFileStorageTransactionManager(optional_ptr<StorageExtensionInfo> storage_info,
+unique_ptr<TransactionManager> OpenFileStorageTransactionManager(StorageExtensionInfo *storage_info,
                                                                  AttachedDatabase &db, Catalog &catalog) {
 	return make_uniq<DuckTransactionManager>(db);
 }
 
-shared_ptr<StorageExtension> OpenFileStorageExtension::Create() {
-	auto result = make_shared_ptr<StorageExtension>();
+unique_ptr<StorageExtension> OpenFileStorageExtension::Create() {
+	auto result = make_uniq<StorageExtension>();
 	result->attach = OpenFileStorageAttach;
 	result->create_transaction_manager = OpenFileStorageTransactionManager;
 	return result;

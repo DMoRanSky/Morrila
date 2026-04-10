@@ -29,20 +29,5 @@
         "type": "string"
       }
     ]
-  },
-  {
-    "class": "ExtraDropTriggerInfo",
-    "base": "ExtraDropInfo",
-    "enum": "TRIGGER_INFO",
-    "includes": [
-      "duckdb/parser/tableref.hpp"
-    ],
-    "members": [
-      {
-        "id": 202,
-        "name": "base_table",
-        "type": "TableRef*"
-      }
-    ]
   }
 ]

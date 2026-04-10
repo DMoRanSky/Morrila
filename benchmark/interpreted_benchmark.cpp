@@ -11,7 +11,6 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
 #include "duckdb/common/arrow/physical_arrow_collector.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -50,10 +49,6 @@ struct InterpretedBenchmarkState : public BenchmarkState {
 		auto &instance = BenchmarkRunner::GetInstance();
 		auto res = con.Query("PRAGMA threads=" + to_string(instance.threads));
 		D_ASSERT(!res->HasError());
-		if (!instance.memory_limit.empty()) {
-			res = con.Query("PRAGMA memory_limit='" + instance.memory_limit + "'");
-			D_ASSERT(!res->HasError());
-		}
 	}
 
 	duckdb::unique_ptr<DBConfig> GetBenchmarkConfig(const string &version = "") {
@@ -158,15 +153,6 @@ static void ThrowResultModeError(BenchmarkFileReader &reader) {
 	throw std::runtime_error(reader.FormatException(error));
 }
 
-void InterpretedBenchmark::AddExtension(const string &extension, bool load_only) {
-	auto &map = load_only ? load_extensions_map : extensions_map;
-	auto it = map.find(extension);
-	if (it != map.end()) {
-		return;
-	}
-	map.insert(extension, map.size());
-}
-
 void InterpretedBenchmark::ProcessFile(const string &path) {
 	BenchmarkFileReader reader(path, replacement_mapping);
 	string line;
@@ -221,9 +207,9 @@ void InterpretedBenchmark::ProcessFile(const string &path) {
 					throw std::runtime_error(
 					    reader.FormatException("require only supports load_only as a second parameter"));
 				}
-				AddExtension(splits[1], true);
+				load_extensions.insert(splits[1]);
 			} else {
-				AddExtension(splits[1], false);
+				extensions.insert(splits[1]);
 			}
 		} else if (splits[0] == "resultmode") {
 			if (splits.size() < 2) {
@@ -487,10 +473,8 @@ void InterpretedBenchmark::LoadBenchmark() {
 	is_loaded = true;
 }
 
-void InterpretedBenchmark::LoadExtensions(InterpretedBenchmarkState &state, bool is_load_set) {
-	auto &map = is_load_set ? load_extensions_map : extensions_map;
-	for (auto &it : map) {
-		auto &extension = it.first;
+void LoadExtensions(InterpretedBenchmarkState &state, const std::unordered_set<string> &extensions_to_load) {
+	for (auto &extension : extensions_to_load) {
 		auto result = ExtensionHelper::LoadExtension(state.db, extension);
 		if (result == ExtensionLoadResult::EXTENSION_UNKNOWN) {
 			throw InvalidInputException("Unknown extension " + extension);
@@ -502,7 +486,7 @@ void InterpretedBenchmark::LoadExtensions(InterpretedBenchmarkState &state, bool
 }
 
 unique_ptr<QueryResult> InterpretedBenchmark::RunLoadQuery(InterpretedBenchmarkState &state, const string &load_query) {
-	LoadExtensions(state, true);
+	LoadExtensions(state, load_extensions);
 	auto result = state.con.Query(load_query);
 	for (idx_t i = 0; i < retry_load; i++) {
 		if (!result->HasError()) {
@@ -526,10 +510,10 @@ unique_ptr<BenchmarkState> InterpretedBenchmark::Initialize(BenchmarkConfigurati
 		DeleteDatabase(full_db_path);
 		state = make_uniq<InterpretedBenchmarkState>(full_db_path, storage_version);
 	}
-	AddExtension("core_functions", false);
-	AddExtension("parquet", false);
+	extensions.insert("core_functions");
+	extensions.insert("parquet");
 
-	LoadExtensions(*state, false);
+	LoadExtensions(*state, extensions);
 	if (queries.find("init") != queries.end()) {
 		string init_query = queries["init"];
 		result = state->con.Query(init_query);
@@ -623,12 +607,11 @@ ScopedConfigSetting PrepareResultCollector(ClientConfig &config, InterpretedBenc
 		return ScopedConfigSetting(
 		    config,
 		    [&benchmark](ClientConfig &config) {
-			    config.get_result_collector =
-			        [&benchmark](ClientContext &context, PreparedStatementData &data) -> unique_ptr<PhysicalOperator> {
+			    config.result_collector = [&benchmark](ClientContext &context, PreparedStatementData &data) {
 				    return PhysicalArrowCollector::Create(context, data, benchmark.ArrowBatchSize());
 			    };
 		    },
-		    [](ClientConfig &config) { config.get_result_collector = nullptr; });
+		    [](ClientConfig &config) { config.result_collector = nullptr; });
 	}
 	return ScopedConfigSetting(config);
 }

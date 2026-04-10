@@ -2,13 +2,10 @@
 
 #include "duckdb/parser/expression/list.hpp"
 #include "duckdb/parser/query_node.hpp"
+#include "duckdb/parser/query_node/cte_node.hpp"
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/query_node/set_operation_node.hpp"
-#include "duckdb/parser/query_node/update_query_node.hpp"
-#include "duckdb/parser/query_node/delete_query_node.hpp"
-#include "duckdb/parser/query_node/insert_query_node.hpp"
-#include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/parser/tableref/list.hpp"
 
 namespace duckdb {
@@ -87,13 +84,6 @@ void ParsedExpressionIterator::EnumerateChildren(
 		}
 		break;
 	}
-	case ExpressionClass::TYPE: {
-		auto &type_expr = expr.Cast<TypeExpression>();
-		for (auto &child : type_expr.GetChildren()) {
-			callback(child);
-		}
-		break;
-	}
 	case ExpressionClass::LAMBDA: {
 		auto &lambda_expr = expr.Cast<LambdaExpression>();
 		callback(lambda_expr.lhs);
@@ -144,6 +134,12 @@ void ParsedExpressionIterator::EnumerateChildren(
 		if (window_expr.end_expr) {
 			callback(window_expr.end_expr);
 		}
+		if (window_expr.offset_expr) {
+			callback(window_expr.offset_expr);
+		}
+		if (window_expr.default_expr) {
+			callback(window_expr.default_expr);
+		}
 		for (auto &order : window_expr.arg_orders) {
 			callback(order.expression);
 		}
@@ -166,6 +162,7 @@ void ParsedExpressionIterator::EnumerateChildren(
 
 void ParsedExpressionIterator::EnumerateQueryNodeModifiers(
     QueryNode &node, const std::function<void(unique_ptr<ParsedExpression> &child)> &callback) {
+
 	for (auto &modifier : node.modifiers) {
 		switch (modifier->type) {
 		case ResultModifierType::LIMIT_MODIFIER: {
@@ -258,7 +255,6 @@ void ParsedExpressionIterator::EnumerateTableRefChildren(
 		break;
 	case TableReferenceType::INVALID:
 	case TableReferenceType::CTE:
-	case TableReferenceType::BOUND_TABLE_REF:
 		throw NotImplementedException("TableRef type not implemented for traversal");
 	}
 	ref_callback(ref);
@@ -272,6 +268,12 @@ void ParsedExpressionIterator::EnumerateQueryNodeChildren(
 		auto &rcte_node = node.Cast<RecursiveCTENode>();
 		EnumerateQueryNodeChildren(*rcte_node.left, expr_callback, ref_callback);
 		EnumerateQueryNodeChildren(*rcte_node.right, expr_callback, ref_callback);
+		break;
+	}
+	case QueryNodeType::CTE_NODE: {
+		auto &cte_node = node.Cast<CTENode>();
+		EnumerateQueryNodeChildren(*cte_node.query, expr_callback, ref_callback);
+		EnumerateQueryNodeChildren(*cte_node.child, expr_callback, ref_callback);
 		break;
 	}
 	case QueryNodeType::SELECT_NODE: {
@@ -297,70 +299,8 @@ void ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	}
 	case QueryNodeType::SET_OPERATION_NODE: {
 		auto &setop_node = node.Cast<SetOperationNode>();
-		for (auto &child : setop_node.children) {
-			EnumerateQueryNodeChildren(*child, expr_callback, ref_callback);
-		}
-		break;
-	}
-	case QueryNodeType::UPDATE_QUERY_NODE: {
-		auto &upd_node = node.Cast<UpdateQueryNode>();
-		if (upd_node.table) {
-			EnumerateTableRefChildren(*upd_node.table, expr_callback, ref_callback);
-		}
-		if (upd_node.from_table) {
-			EnumerateTableRefChildren(*upd_node.from_table, expr_callback, ref_callback);
-		}
-		if (upd_node.set_info) {
-			for (auto &expr : upd_node.set_info->expressions) {
-				expr_callback(expr);
-			}
-			if (upd_node.set_info->condition) {
-				expr_callback(upd_node.set_info->condition);
-			}
-		}
-		for (auto &expr : upd_node.returning_list) {
-			expr_callback(expr);
-		}
-		break;
-	}
-	case QueryNodeType::DELETE_QUERY_NODE: {
-		auto &del_node = node.Cast<DeleteQueryNode>();
-		if (del_node.table) {
-			EnumerateTableRefChildren(*del_node.table, expr_callback, ref_callback);
-		}
-		for (auto &using_clause : del_node.using_clauses) {
-			EnumerateTableRefChildren(*using_clause, expr_callback, ref_callback);
-		}
-		if (del_node.condition) {
-			expr_callback(del_node.condition);
-		}
-		for (auto &expr : del_node.returning_list) {
-			expr_callback(expr);
-		}
-		break;
-	}
-	case QueryNodeType::INSERT_QUERY_NODE: {
-		auto &ins_node = node.Cast<InsertQueryNode>();
-		if (ins_node.select_statement) {
-			EnumerateQueryNodeChildren(*ins_node.select_statement->node, expr_callback, ref_callback);
-		}
-		if (ins_node.table_ref) {
-			EnumerateTableRefChildren(*ins_node.table_ref, expr_callback, ref_callback);
-		}
-		for (auto &expr : ins_node.returning_list) {
-			expr_callback(expr);
-		}
-		if (ins_node.on_conflict_info && ins_node.on_conflict_info->set_info) {
-			for (auto &expr : ins_node.on_conflict_info->set_info->expressions) {
-				expr_callback(expr);
-			}
-			if (ins_node.on_conflict_info->set_info->condition) {
-				expr_callback(ins_node.on_conflict_info->set_info->condition);
-			}
-		}
-		if (ins_node.on_conflict_info && ins_node.on_conflict_info->condition) {
-			expr_callback(ins_node.on_conflict_info->condition);
-		}
+		EnumerateQueryNodeChildren(*setop_node.left, expr_callback, ref_callback);
+		EnumerateQueryNodeChildren(*setop_node.right, expr_callback, ref_callback);
 		break;
 	}
 	default:
@@ -372,31 +312,8 @@ void ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	}
 
 	for (auto &kv : node.cte_map.map) {
-		if (kv.second->query_node) {
-			EnumerateQueryNodeChildren(*kv.second->query_node, expr_callback, ref_callback);
-		}
+		EnumerateQueryNodeChildren(*kv.second->query->node, expr_callback, ref_callback);
 	}
-}
-
-void ParsedExpressionIterator::VisitExpressionClass(
-    const ParsedExpression &expr, ExpressionClass expr_class,
-    const std::function<void(const ParsedExpression &child)> &callback) {
-	if (expr.GetExpressionClass() == expr_class) {
-		callback(expr);
-		return;
-	}
-	ParsedExpressionIterator::EnumerateChildren(
-	    expr, [&](const ParsedExpression &child) { VisitExpressionClass(child, expr_class, callback); });
-}
-
-void ParsedExpressionIterator::VisitExpressionClassMutable(
-    ParsedExpression &expr, ExpressionClass expr_class, const std::function<void(ParsedExpression &child)> &callback) {
-	if (expr.GetExpressionClass() == expr_class) {
-		callback(expr);
-		return;
-	}
-	ParsedExpressionIterator::EnumerateChildren(
-	    expr, [&](ParsedExpression &child) { VisitExpressionClassMutable(child, expr_class, callback); });
 }
 
 } // namespace duckdb

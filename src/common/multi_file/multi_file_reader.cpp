@@ -11,7 +11,6 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/multi_file/union_by_name.hpp"
@@ -117,18 +116,22 @@ vector<string> MultiFileReader::ParsePaths(const Value &input) {
 }
 
 shared_ptr<MultiFileList> MultiFileReader::CreateFileList(ClientContext &context, const vector<string> &paths,
-                                                          const FileGlobInput &glob_input) {
-	auto res = make_uniq<GlobMultiFileList>(context, paths, glob_input);
-	if (res->GetExpandResult() == FileExpandResult::NO_FILES && glob_input.behavior != FileGlobOptions::ALLOW_EMPTY) {
+                                                          FileGlobOptions options) {
+	vector<OpenFileInfo> open_files;
+	for (auto &path : paths) {
+		open_files.emplace_back(path);
+	}
+	auto res = make_uniq<GlobMultiFileList>(context, std::move(open_files), options);
+	if (res->GetExpandResult() == FileExpandResult::NO_FILES && options == FileGlobOptions::DISALLOW_EMPTY) {
 		throw IOException("%s needs at least one file to read", function_name);
 	}
 	return std::move(res);
 }
 
 shared_ptr<MultiFileList> MultiFileReader::CreateFileList(ClientContext &context, const Value &input,
-                                                          const FileGlobInput &glob_input) {
+                                                          FileGlobOptions options) {
 	auto paths = ParsePaths(input);
-	return CreateFileList(context, paths, glob_input);
+	return CreateFileList(context, paths, options);
 }
 
 bool MultiFileReader::ParseOption(const string &key, const Value &val, MultiFileOptions &options,
@@ -296,6 +299,7 @@ void MultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const Multi
                                    const vector<MultiFileColumnDefinition> &global_columns,
                                    const vector<ColumnIndex> &global_column_ids, ClientContext &context,
                                    optional_ptr<MultiFileReaderGlobalState> global_state) {
+
 	// create a map of name -> column index
 	auto &local_columns = reader_data.reader->GetColumns();
 	auto &filename = reader_data.reader->GetFileName();
@@ -426,7 +430,7 @@ string GetExtendedMultiFileError(const MultiFileBindData &bind_data, const Expre
 		    "\nThis can happen when reading multiple %s files. The schema information is taken from "
 		    "the first %s file by default. Possible solutions:\n"
 		    "* Enable the union_by_name=True option to combine the schema of all %s files "
-		    "(https://duckdb.org/docs/current/data/multiple_files/combining_schemas)\n"
+		    "(https://duckdb.org/docs/stable/data/multiple_files/combining_schemas)\n"
 		    "* Use a COPY statement to automatically derive types from an existing table.",
 		    reader.GetFileName(), local_col.name, source_type, target_type, reader_type, reader_type, reader_type);
 	}
@@ -641,10 +645,6 @@ void MultiFileReader::PruneReaders(MultiFileBindData &data, MultiFileList &file_
 	}
 }
 
-FileGlobInput MultiFileReader::GetGlobInput(MultiFileReaderInterface &interface) {
-	return interface.GetGlobInput();
-}
-
 HivePartitioningIndex::HivePartitioningIndex(string value_p, idx_t index) : value(std::move(value_p)), index(index) {
 }
 
@@ -716,9 +716,6 @@ void MultiFileOptions::AutoDetectHiveTypesInternal(MultiFileList &files, ClientC
 			if (hive_types_schema.find(name) != hive_types_schema.end()) {
 				// type was explicitly provided by the user
 				continue;
-			}
-			if (HivePartitioning::IsNull(part.second)) {
-				continue; // don't update detected_types for this partition/file
 			}
 			LogicalType detected_type = LogicalType::VARCHAR;
 			Value value(part.second);

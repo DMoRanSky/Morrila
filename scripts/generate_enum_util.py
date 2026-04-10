@@ -7,17 +7,7 @@ import glob
 os.chdir(os.path.dirname(__file__))
 
 # Dont generate serialization for these enums
-blacklist = [
-    "RegexOptions",
-    "Flags",
-    "ContainerType",
-    "Type",
-    "DictionaryAppendState",
-    "DictFSSTMode",
-    "ComplexJSONType",
-    "UnavailableReason",
-    "Slot",
-]
+blacklist = ["RegexOptions", "Flags", "ContainerType", "Type", "DictionaryAppendState", "DictFSSTMode"]
 
 enum_util_header_file = os.path.join("..", "src", "include", "duckdb", "common", "enum_util.hpp")
 enum_util_source_file = os.path.join("..", "src", "common", "enum_util.cpp")
@@ -36,24 +26,16 @@ overrides = {
         "DESCENDING": ["DESCENDING", "DESC"],
         "ASCENDING": ["ASCENDING", "ASC"],
     },
-    "AllowParserOverride": {
-        "DEFAULT_OVERRIDE": "DEFAULT",
-        "FALLBACK_OVERRIDE": "FALLBACK",
-        "STRICT_OVERRIDE": "STRICT",
-    },
     "OrderByNullType": {
         "ORDER_DEFAULT": ["ORDER_DEFAULT", "DEFAULT"],
-        "NULLS_FIRST": ["NULLS FIRST", "NULLS_FIRST"],
-        "NULLS_LAST": ["NULLS LAST", "NULLS_LAST"],
+        "NULLS_FIRST": ["NULLS_FIRST", "NULLS FIRST"],
+        "NULLS_LAST": ["NULLS_LAST", "NULLS LAST"],
     },
     "CheckpointAbort": {
         "NO_ABORT": "NONE",
         "DEBUG_ABORT_BEFORE_TRUNCATE": "BEFORE_TRUNCATE",
         "DEBUG_ABORT_BEFORE_HEADER": "BEFORE_HEADER",
         "DEBUG_ABORT_AFTER_FREE_LIST_WRITE": "AFTER_FREE_LIST_WRITE",
-        "DEBUG_ABORT_BEFORE_WAL_FINISH": "BEFORE_WAL_FINISH",
-        "DEBUG_ABORT_BEFORE_MOVING_RECOVERY": "BEFORE_MOVING_RECOVERY",
-        "DEBUG_ABORT_BEFORE_DELETING_CHECKPOINT_WAL": "BEFORE_DELETING_CHECKPOINT_WAL",
     },
     "SampleMethod": {"SYSTEM_SAMPLE": "System", "BERNOULLI_SAMPLE": "Bernoulli", "RESERVOIR_SAMPLE": "Reservoir"},
     "TableReferenceType": {"EMPTY_FROM": "EMPTY"},
@@ -61,7 +43,7 @@ overrides = {
         "LOG_TRACE": "TRACE",
         "LOG_DEBUG": "DEBUG",
         "LOG_INFO": "INFO",
-        "LOG_WARNING": "WARNING",
+        "LOG_WARN": "WARN",
         "LOG_ERROR": "ERROR",
         "LOG_FATAL": "FATAL",
     },
@@ -72,28 +54,6 @@ overrides = {
         "DELETE_REQUEST": "DELETE",
         "POST_REQUEST": "POST",
     },
-    "CompressionType": {
-        "COMPRESSION_AUTO": "AUTO",
-        "COMPRESSION_UNCOMPRESSED": "UNCOMPRESSED",
-        "COMPRESSION_CONSTANT": "CONSTANT",
-        "COMPRESSION_RLE": "RLE",
-        "COMPRESSION_DICTIONARY": "DICTIONARY",
-        "COMPRESSION_PFOR_DELTA": "PFOR",
-        "COMPRESSION_BITPACKING": "BITPACKING",
-        "COMPRESSION_FSST": "FSST",
-        "COMPRESSION_CHIMP": "CHIMP",
-        "COMPRESSION_PATAS": "PATAS",
-        "COMPRESSION_ALP": "ALP",
-        "COMPRESSION_ALPRD": "ALPRD",
-        "COMPRESSION_ZSTD": "ZSTD",
-        "COMPRESSION_ROARING": "ROARING",
-        "COMPRESSION_EMPTY": "EMPTY",
-        "COMPRESSION_DICT_FSST": "DICT_FSST",
-    },
-    "ArrowFormatVersion": {"V1_0": "1.0", "V1_1": "1.1", "V1_2": "1.2", "V1_3": "1.3", "V1_4": "1.4", "V1_5": "1.5"},
-    "TriggerTiming": {"BEFORE": "BEFORE", "AFTER": "AFTER", "INSTEAD_OF": "INSTEAD OF"},
-    "TriggerEventType": {"INSERT_EVENT": "INSERT", "DELETE_EVENT": "DELETE", "UPDATE_EVENT": "UPDATE"},
-    "TriggerForEach": {"STATEMENT": "STATEMENT", "ROW": "ROW"},
 }
 
 # get all the headers

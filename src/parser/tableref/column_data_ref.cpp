@@ -1,12 +1,10 @@
 #include "duckdb/parser/tableref/column_data_ref.hpp"
 #include "duckdb/common/string_util.hpp"
 
-namespace duckdb {
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
-ColumnDataRef::ColumnDataRef(optionally_owned_ptr<ColumnDataCollection> collection_p, vector<string> expected_names)
-    : TableRef(TableReferenceType::COLUMN_DATA), expected_names(std::move(expected_names)),
-      collection(std::move(collection_p)) {
-}
+namespace duckdb {
 
 string ColumnDataRef::ToString() const {
 	auto result = collection->ToString();
@@ -48,28 +46,8 @@ bool ColumnDataRef::Equals(const TableRef &other_p) const {
 	return true;
 }
 
-optionally_owned_ptr<ColumnDataCollection> CopyCollection(optionally_owned_ptr<ColumnDataCollection> &collection) {
-	auto &unique = collection.get_owned_unique();
-	if (unique) {
-		// uniquely owned - need to copy over all the data and make a new collection
-		auto new_collection = make_uniq<ColumnDataCollection>(collection->GetAllocator(), collection->Types());
-		for (auto &chunk : collection->Chunks()) {
-			new_collection->Append(chunk);
-		}
-		return std::move(new_collection);
-	}
-	auto &shared = collection.get_owned_shared();
-	if (shared) {
-		// shared ptr - we can directly reference it
-		return shared;
-	}
-	// unowned collection - just return the raw reference
-	return collection.get();
-}
-
 unique_ptr<TableRef> ColumnDataRef::Copy() {
-	auto copied_collection = CopyCollection(collection);
-	auto result = make_uniq<ColumnDataRef>(std::move(copied_collection), expected_names);
+	auto result = make_uniq<ColumnDataRef>(collection, expected_names);
 	CopyProperties(*result);
 	return std::move(result);
 }

@@ -8,9 +8,6 @@
 
 #pragma once
 
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/node_statistics.hpp"
@@ -78,7 +75,7 @@ struct AggregateFinalizeData {
 			FlatVector::SetNull(result, result_idx, true);
 			break;
 		case VectorType::CONSTANT_VECTOR:
-			ConstantVector::SetNull(result);
+			ConstantVector::SetNull(result, true);
 			break;
 		default:
 			throw InternalException("Invalid result vector type for aggregate");

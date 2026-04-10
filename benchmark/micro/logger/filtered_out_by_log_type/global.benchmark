@@ -6,8 +6,12 @@ name Global Logger Filtering out log types
 group case
 
 load
-CALL enable_logging('FileSystem');
+set enable_logging=true;
+set logging_storage='memory';
+set logging_level='debug';
+set logging_mode='disable_selected';
+set disabled_log_types='duckdb.SomeName.SomeOtherName.BlaBla';
 
 # Note: this will call the Logger, but the log type is filtered out
 run
-SELECT write_log('hello world', level := 'warning', scope := 'database', log_type := 'duckdb.SomeName.SomeOtherName.BlaBla' ) from range(0,10000000);
+SELECT write_log('hello world', level := 'warn', scope := 'database', log_type := 'duckdb.SomeName.SomeOtherName.BlaBla' ) from range(0,10000000);

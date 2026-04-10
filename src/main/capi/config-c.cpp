@@ -23,8 +23,7 @@ duckdb_state duckdb_create_config(duckdb_config *out_config) {
 }
 
 size_t duckdb_config_count() {
-	return DBConfig::GetOptionCount() + DBConfig::GetAliasCount() +
-	       duckdb::ExtensionHelper::ArraySize(duckdb::EXTENSION_SETTINGS);
+	return DBConfig::GetOptionCount() + duckdb::ExtensionHelper::ArraySize(duckdb::EXTENSION_SETTINGS);
 }
 
 duckdb_state duckdb_get_config_flag(size_t index, const char **out_name, const char **out_description) {
@@ -38,23 +37,9 @@ duckdb_state duckdb_get_config_flag(size_t index, const char **out_name, const c
 		}
 		return DuckDBSuccess;
 	}
-	// alias
-	index -= DBConfig::GetOptionCount();
-	auto alias = DBConfig::GetAliasByIndex(index);
-	if (alias) {
-		if (out_name) {
-			*out_name = alias->alias;
-		}
-		option = DBConfig::GetOptionByIndex(alias->option_index);
-		if (out_description) {
-			*out_description = option->description;
-		}
-		return DuckDBSuccess;
-	}
-	index -= DBConfig::GetAliasCount();
 
-	// extension index
-	auto entry = duckdb::ExtensionHelper::GetArrayEntry(duckdb::EXTENSION_SETTINGS, index);
+	// extension index?
+	auto entry = duckdb::ExtensionHelper::GetArrayEntry(duckdb::EXTENSION_SETTINGS, index - DBConfig::GetOptionCount());
 	if (!entry) {
 		return DuckDBError;
 	}

@@ -14,11 +14,22 @@
 
 namespace duckdb {
 
-unique_ptr<TableFilterSet> MoveTableFilters(TableFilterSet &table_filters) {
+unique_ptr<TableFilterSet> CreateTableFilterSet(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids) {
 	// create the table filter map
 	auto table_filter_set = make_uniq<TableFilterSet>();
-	for (auto &entry : table_filters) {
-		table_filter_set->SetFilterByColumnIndex(entry.GetIndex(), entry.TakeFilter());
+	for (auto &table_filter : table_filters.filters) {
+		// find the relative column index from the absolute column index into the table
+		optional_idx column_index;
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			if (table_filter.first == column_ids[i].GetPrimaryIndex()) {
+				column_index = i;
+				break;
+			}
+		}
+		if (!column_index.IsValid()) {
+			throw InternalException("Could not find column index for table filter");
+		}
+		table_filter_set->filters[column_index.GetIndex()] = std::move(table_filter.second);
 	}
 	return table_filter_set;
 }
@@ -66,8 +77,6 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 		    Make<PhysicalTableInOutFunction>(op.types, op.function, std::move(op.bind_data), column_ids,
 		                                     op.estimated_cardinality, std::move(op.projected_input));
 		table_in_out.children.push_back(child);
-		auto &cast_table_in_out = table_in_out.Cast<PhysicalTableInOutFunction>();
-		cast_table_in_out.ordinality_idx = op.ordinality_idx;
 		return table_in_out;
 	}
 
@@ -76,8 +85,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	}
 
 	unique_ptr<TableFilterSet> table_filters;
-	if (op.table_filters.HasFilters()) {
-		table_filters = MoveTableFilters(op.table_filters);
+	if (!op.table_filters.filters.empty()) {
+		table_filters = CreateTableFilterSet(op.table_filters, column_ids);
 	}
 
 	if (op.function.dependency) {
@@ -90,55 +99,38 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	if (table_filters && op.function.supports_pushdown_type) {
 		vector<unique_ptr<Expression>> select_list;
 		unique_ptr<Expression> unsupported_filter;
-		unordered_set<ProjectionIndex> to_remove;
-
-		virtual_column_map_t virtual_columns;
-		if (op.function.get_virtual_columns) {
-			virtual_columns = op.function.get_virtual_columns(context, op.bind_data.get());
-		}
-		for (auto &entry : *table_filters) {
-			auto filter_idx = entry.GetIndex();
-			auto &filter_expr = entry.Filter();
-			auto &column_idx = op.GetColumnIndex(filter_idx);
-			auto column_id = column_idx.GetPrimaryIndex();
-			if (!op.function.supports_pushdown_type(*op.bind_data, column_id)) {
-				LogicalType column_type;
-				if (IsVirtualColumn(column_id)) {
-					auto &column = virtual_columns.at(column_id);
-					column_type = column.type;
-				} else {
-					column_type = op.returned_types[column_id];
-				}
-				optional_idx column_id_filter;
+		unordered_set<idx_t> to_remove;
+		for (auto &entry : table_filters->filters) {
+			auto column_id = column_ids[entry.first].GetPrimaryIndex();
+			auto &type = op.returned_types[column_id];
+			if (!op.function.supports_pushdown_type(type)) {
+				idx_t column_id_filter = entry.first;
+				bool found_projection = false;
 				for (idx_t i = 0; i < projection_ids.size(); i++) {
-					if (column_ids[projection_ids[i]] == column_idx) {
+					if (column_ids[projection_ids[i]] == column_ids[entry.first]) {
 						column_id_filter = i;
+						found_projection = true;
 						break;
 					}
 				}
-				if (!column_id_filter.IsValid()) {
-					projection_ids.push_back(filter_idx);
+				if (!found_projection) {
+					projection_ids.push_back(entry.first);
 					column_id_filter = projection_ids.size() - 1;
 				}
-				auto column = make_uniq<BoundReferenceExpression>(column_type, column_id_filter.GetIndex());
-				select_list.push_back(filter_expr.ToExpression(*column));
-				to_remove.insert(filter_idx);
+				auto column = make_uniq<BoundReferenceExpression>(type, column_id_filter);
+				select_list.push_back(entry.second->ToExpression(*column));
+				to_remove.insert(entry.first);
 			}
 		}
 		for (auto &col : to_remove) {
-			table_filters->RemoveFilterByColumnIndex(col);
+			table_filters->filters.erase(col);
 		}
 
 		if (!select_list.empty()) {
 			vector<LogicalType> filter_types;
 			for (auto &c : projection_ids) {
 				auto column_id = column_ids[c].GetPrimaryIndex();
-				if (IsVirtualColumn(column_id)) {
-					auto &column = virtual_columns.at(column_id);
-					filter_types.push_back(column.type);
-				} else {
-					filter_types.push_back(op.returned_types[column_id]);
-				}
+				filter_types.push_back(op.returned_types[column_id]);
 			}
 			filter = Make<PhysicalFilter>(filter_types, std::move(select_list), op.estimated_cardinality);
 		}
@@ -192,15 +184,11 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 		proj.children.push_back(table_scan);
 		return proj;
 	}
-	vector<idx_t> projection_indices;
-	for (auto &proj_id : op.projection_ids) {
-		projection_indices.push_back(proj_id);
-	}
 
-	auto &table_scan = Make<PhysicalTableScan>(
-	    op.types, op.function, std::move(op.bind_data), op.returned_types, column_ids, std::move(projection_indices),
-	    op.names, std::move(table_filters), op.estimated_cardinality, std::move(op.extra_info),
-	    std::move(op.parameters), std::move(op.virtual_columns));
+	auto &table_scan =
+	    Make<PhysicalTableScan>(op.types, op.function, std::move(op.bind_data), op.returned_types, column_ids,
+	                            op.projection_ids, op.names, std::move(table_filters), op.estimated_cardinality,
+	                            std::move(op.extra_info), std::move(op.parameters), std::move(op.virtual_columns));
 	auto &cast_table_scan = table_scan.Cast<PhysicalTableScan>();
 	cast_table_scan.dynamic_filters = op.dynamic_filters;
 	if (filter) {

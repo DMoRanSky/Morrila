@@ -1,10 +1,3 @@
-#include "duckdb/common/vector/array_vector.hpp"
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "json_transform.hpp"
 
 #include "duckdb/common/enum_util.hpp"
@@ -190,16 +183,16 @@ static inline bool GetValueString(yyjson_val *val, yyjson_alc *alc, string_t &re
 		return true;
 	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_TRUE:
 	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_FALSE:
-		result = StringCast::Operation<bool>(unsafe_yyjson_get_bool(val), StringVector::GetStringHeap(vector));
+		result = StringCast::Operation<bool>(unsafe_yyjson_get_bool(val), vector);
 		return true;
 	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_UINT:
-		result = StringCast::Operation<uint64_t>(unsafe_yyjson_get_uint(val), StringVector::GetStringHeap(vector));
+		result = StringCast::Operation<uint64_t>(unsafe_yyjson_get_uint(val), vector);
 		return true;
 	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT:
-		result = StringCast::Operation<int64_t>(unsafe_yyjson_get_sint(val), StringVector::GetStringHeap(vector));
+		result = StringCast::Operation<int64_t>(unsafe_yyjson_get_sint(val), vector);
 		return true;
 	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL:
-		result = StringCast::Operation<double>(unsafe_yyjson_get_real(val), StringVector::GetStringHeap(vector));
+		result = StringCast::Operation<double>(unsafe_yyjson_get_real(val), vector);
 		return true;
 	default:
 		throw InternalException("Unknown yyjson tag in GetValueString");
@@ -208,7 +201,7 @@ static inline bool GetValueString(yyjson_val *val, yyjson_alc *alc, string_t &re
 
 template <class T>
 static bool TransformNumerical(yyjson_val *vals[], Vector &result, const idx_t count, JSONTransformOptions &options) {
-	auto data = FlatVector::GetDataMutable<T>(result);
+	auto data = FlatVector::GetData<T>(result);
 	auto &validity = FlatVector::Validity(result);
 
 	bool success = true;
@@ -230,7 +223,7 @@ static bool TransformNumerical(yyjson_val *vals[], Vector &result, const idx_t c
 template <class T>
 static bool TransformDecimal(yyjson_val *vals[], Vector &result, const idx_t count, uint8_t width, uint8_t scale,
                              JSONTransformOptions &options) {
-	auto data = FlatVector::GetDataMutable<T>(result);
+	auto data = FlatVector::GetData<T>(result);
 	auto &validity = FlatVector::Validity(result);
 
 	bool success = true;
@@ -252,9 +245,9 @@ static bool TransformDecimal(yyjson_val *vals[], Vector &result, const idx_t cou
 bool JSONTransform::GetStringVector(yyjson_val *vals[], const idx_t count, const LogicalType &target,
                                     Vector &string_vector, JSONTransformOptions &options) {
 	if (count > STANDARD_VECTOR_SIZE) {
-		string_vector.Initialize(VectorDataInitialization::UNINITIALIZED, count);
+		string_vector.Initialize(false, count);
 	}
-	auto data = FlatVector::GetDataMutable<string_t>(string_vector);
+	auto data = FlatVector::GetData<string_t>(string_vector);
 	auto &validity = FlatVector::Validity(string_vector);
 	validity.SetAllValid(count);
 
@@ -306,7 +299,7 @@ static bool TransformStringWithFormat(Vector &string_vector, const StrpTimeForma
 	const auto source_strings = FlatVector::GetData<string_t>(string_vector);
 	const auto &source_validity = FlatVector::Validity(string_vector);
 
-	auto target_vals = FlatVector::GetDataMutable<T>(result);
+	auto target_vals = FlatVector::GetData<T>(result);
 	auto &target_validity = FlatVector::Validity(result);
 
 	bool success = true;
@@ -353,7 +346,7 @@ static bool TransformFromStringWithFormat(yyjson_val *vals[], Vector &result, co
 }
 
 static bool TransformToString(yyjson_val *vals[], yyjson_alc *alc, Vector &result, const idx_t count) {
-	auto data = FlatVector::GetDataMutable<string_t>(result);
+	auto data = FlatVector::GetData<string_t>(result);
 	auto &validity = FlatVector::Validity(result);
 	for (idx_t i = 0; i < count; i++) {
 		const auto &val = vals[i];
@@ -514,12 +507,13 @@ static bool TransformObjectInternal(yyjson_val *objects[], yyjson_alc *alc, Vect
 		projected_indices.insert(actual_i);
 
 		child_names.push_back(StructType::GetChildName(result.GetType(), actual_i));
-		child_vectors.push_back(&child_vs[actual_i]);
+		child_vectors.push_back(child_vs[actual_i].get());
 	}
 
 	for (idx_t child_i = 0; child_i < child_vs.size(); child_i++) {
 		if (projected_indices.find(child_i) == projected_indices.end()) {
-			ConstantVector::SetNull(child_vs[child_i]);
+			child_vs[child_i]->SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(*child_vs[child_i], true);
 		}
 	}
 
@@ -534,7 +528,7 @@ static bool TransformArrayToList(yyjson_val *arrays[], yyjson_alc *alc, Vector &
 	bool success = true;
 
 	// Initialize list vector
-	auto list_entries = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto list_entries = FlatVector::GetData<list_entry_t>(result);
 	auto &list_validity = FlatVector::Validity(result);
 	idx_t offset = 0;
 	for (idx_t i = 0; i < count; i++) {
@@ -711,7 +705,7 @@ static bool TransformObjectToMap(yyjson_val *objects[], yyjson_alc *alc, Vector 
 	ListVector::Reserve(result, list_size);
 	ListVector::SetListSize(result, list_size);
 
-	auto list_entries = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto list_entries = FlatVector::GetData<list_entry_t>(result);
 	auto &list_validity = FlatVector::Validity(result);
 
 	auto keys = JSONCommon::AllocateArray<yyjson_val *>(alc, list_size);
@@ -771,8 +765,8 @@ static bool TransformObjectToMap(yyjson_val *objects[], yyjson_alc *alc, Vector 
 	return success;
 }
 
-static bool TransformToJSON(yyjson_val *vals[], yyjson_alc *alc, Vector &result, const idx_t count) {
-	auto data = FlatVector::GetDataMutable<string_t>(result);
+bool TransformToJSON(yyjson_val *vals[], yyjson_alc *alc, Vector &result, const idx_t count) {
+	auto data = FlatVector::GetData<string_t>(result);
 	auto &validity = FlatVector::Validity(result);
 	for (idx_t i = 0; i < count; i++) {
 		const auto &val = vals[i];
@@ -786,8 +780,8 @@ static bool TransformToJSON(yyjson_val *vals[], yyjson_alc *alc, Vector &result,
 	return true;
 }
 
-static bool TransformValueIntoUnion(yyjson_val **vals, yyjson_alc *alc, Vector &result, const idx_t count,
-                                    JSONTransformOptions &options) {
+bool TransformValueIntoUnion(yyjson_val **vals, yyjson_alc *alc, Vector &result, const idx_t count,
+                             JSONTransformOptions &options) {
 	auto type = result.GetType();
 
 	auto fields = UnionType::CopyMemberTypes(type);
@@ -921,7 +915,6 @@ bool JSONTransform::Transform(yyjson_val *vals[], yyjson_alc *alc, Vector &resul
 	case LogicalTypeId::DATE:
 	case LogicalTypeId::INTERVAL:
 	case LogicalTypeId::TIME:
-	case LogicalTypeId::TIME_NS:
 	case LogicalTypeId::TIME_TZ:
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_TZ:
@@ -929,7 +922,6 @@ bool JSONTransform::Transform(yyjson_val *vals[], yyjson_alc *alc, Vector &resul
 	case LogicalTypeId::TIMESTAMP_MS:
 	case LogicalTypeId::TIMESTAMP_SEC:
 	case LogicalTypeId::UUID:
-	case LogicalTypeId::GEOMETRY:
 		return TransformFromString(vals, result, count, options);
 	case LogicalTypeId::VARCHAR:
 	case LogicalTypeId::BLOB:
@@ -970,7 +962,13 @@ static bool TransformFunctionInternal(Vector &input, const idx_t count, Vector &
 			vals[i] = docs[i]->root;
 		}
 	}
-	return JSONTransform::Transform(vals, alc, result, count, options, nullptr);
+
+	auto success = JSONTransform::Transform(vals, alc, result, count, options, nullptr);
+	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+
+	return success;
 }
 
 template <bool strict>
@@ -1025,11 +1023,11 @@ static bool JSONToAnyCast(Vector &source, Vector &result, idx_t count, CastParam
 	return success;
 }
 
-static BoundCastInfo JSONToAnyCastBind(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
+BoundCastInfo JSONToAnyCastBind(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
 	return BoundCastInfo(JSONToAnyCast, nullptr, JSONFunctionLocalState::InitCastLocalState);
 }
 
-void JSONFunctions::RegisterJSONTransformCastFunctions(ExtensionLoader &loader) {
+void JSONFunctions::RegisterJSONTransformCastFunctions(CastFunctionSet &casts) {
 	// JSON can be cast to anything
 	for (const auto &type : LogicalType::AllTypes()) {
 		LogicalType target_type;
@@ -1056,9 +1054,8 @@ void JSONFunctions::RegisterJSONTransformCastFunctions(ExtensionLoader &loader) 
 			target_type = type;
 		}
 		// Going from JSON to another type has the same cost as going from VARCHAR to that type
-		const auto json_to_target_cost =
-		    CastFunctionSet::ImplicitCastCost(loader.GetDatabaseInstance(), LogicalType::VARCHAR, target_type);
-		loader.RegisterCastFunction(LogicalType::JSON(), target_type, JSONToAnyCastBind, json_to_target_cost);
+		const auto json_to_target_cost = casts.ImplicitCastCost(LogicalType::VARCHAR, target_type);
+		casts.RegisterCastFunction(LogicalType::JSON(), target_type, JSONToAnyCastBind, json_to_target_cost);
 	}
 }
 

@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "json_common.hpp"
 
 namespace duckdb {
@@ -75,9 +75,9 @@ public:
 	                                                optional_ptr<ReplacementScanData> data);
 	static TableFunction GetReadJSONTableFunction(shared_ptr<JSONScanInfo> function_info);
 	static CopyFunction GetJSONCopyFunction();
-	static void RegisterSimpleCastFunctions(ExtensionLoader &loader);
-	static void RegisterJSONCreateCastFunctions(ExtensionLoader &loader);
-	static void RegisterJSONTransformCastFunctions(ExtensionLoader &loader);
+	static void RegisterSimpleCastFunctions(CastFunctionSet &casts);
+	static void RegisterJSONCreateCastFunctions(CastFunctionSet &casts);
+	static void RegisterJSONTransformCastFunctions(CastFunctionSet &casts);
 
 private:
 	// Scalar functions
@@ -90,8 +90,6 @@ private:
 	static ScalarFunctionSet GetArrayToJSONFunction();
 	static ScalarFunctionSet GetRowToJSONFunction();
 	static ScalarFunctionSet GetMergePatchFunction();
-	static ScalarFunctionSet GetMergePatchDiffFunction();
-	static ScalarFunctionSet GetDeepMergeFunction();
 
 	static ScalarFunctionSet GetStructureFunction();
 	static ScalarFunctionSet GetTransformFunction();
@@ -109,8 +107,6 @@ private:
 	static ScalarFunctionSet GetSerializePlanFunction();
 
 	static ScalarFunctionSet GetPrettyPrintFunction();
-	static ScalarFunctionSet GetNormalizeFunction();
-	static ScalarFunctionSet GetStripNullsFunction();
 
 	static PragmaFunctionSet GetExecuteJsonSerializedSqlPragmaFunction();
 

@@ -1,4 +1,3 @@
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/storage/statistics/list_stats.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -85,33 +84,36 @@ void ListStats::Deserialize(Deserializer &deserializer, BaseStatistics &base) {
 	deserializer.Unset<LogicalType>();
 }
 
-child_list_t<Value> ListStats::ToStruct(const BaseStatistics &stats) {
+string ListStats::ToString(const BaseStatistics &stats) {
 	auto &child_stats = ListStats::GetChildStats(stats);
-	child_list_t<Value> result;
-	result.emplace_back("child_stats", child_stats.ToStruct());
-	return result;
+	return StringUtil::Format("[%s]", child_stats.ToString());
 }
 
 void ListStats::Verify(const BaseStatistics &stats, Vector &vector, const SelectionVector &sel, idx_t count) {
 	auto &child_stats = ListStats::GetChildStats(stats);
 	auto &child_entry = ListVector::GetEntry(vector);
-	auto entries = vector.Values<list_entry_t>(count);
+	UnifiedVectorFormat vdata;
+	vector.ToUnifiedFormat(count, vdata);
 
+	auto list_data = UnifiedVectorFormat::GetData<list_entry_t>(vdata);
 	idx_t total_list_count = 0;
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = sel.get_index(i);
-		auto entry = entries[idx];
-		if (entry.IsValid()) {
-			total_list_count += entry.value.length;
+		auto index = vdata.sel->get_index(idx);
+		auto list = list_data[index];
+		if (vdata.validity.RowIsValid(index)) {
+			for (idx_t list_idx = 0; list_idx < list.length; list_idx++) {
+				total_list_count++;
+			}
 		}
 	}
 	SelectionVector list_sel(total_list_count);
 	idx_t list_count = 0;
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = sel.get_index(i);
-		auto entry = entries[idx];
-		if (entry.IsValid()) {
-			auto list = entry.value;
+		auto index = vdata.sel->get_index(idx);
+		auto list = list_data[index];
+		if (vdata.validity.RowIsValid(index)) {
 			for (idx_t list_idx = 0; list_idx < list.length; list_idx++) {
 				list_sel.set_index(list_count++, list.offset + list_idx);
 			}

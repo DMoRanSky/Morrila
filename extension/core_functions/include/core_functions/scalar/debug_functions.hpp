@@ -25,24 +25,4 @@ struct VectorTypeFun {
 	static ScalarFunction GetFunction();
 };
 
-struct SleepMsFun {
-	static constexpr const char *Name = "sleep_ms";
-	static constexpr const char *Parameters = "milliseconds";
-	static constexpr const char *Description = "Sleeps for the specified number of milliseconds and returns NULL";
-	static constexpr const char *Example = "sleep_ms(100)";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunction GetFunction();
-};
-
-struct IndexKeyFun {
-	static constexpr const char *Name = "index_key";
-	static constexpr const char *Parameters = "path,name,[key_column_1,key_column_2,...]";
-	static constexpr const char *Description = "Generate index keys for a named index on a table (specified by a path struct with required 'table' and optional 'catalog'/'schema' fields) from key column arguments. Currently only supports ART indexes.";
-	static constexpr const char *Example = "index_key({'schema': 'main', 'table': 'tbl3'}, 'tbl3_idx', key1, key2, key3)";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunction GetFunction();
-};
-
 } // namespace duckdb

@@ -101,7 +101,7 @@ statement error
 SELECT regexp_extract(filename, 'rundate_(\d+-\d+-\d+)_pass_(\d+)', []) AS groups
 FROM filenames
 ----
-name list must be non-empty
+non-empty lists of capture names
 
 statement error
 WITH patterns AS (
@@ -134,7 +134,7 @@ statement error
 SELECT regexp_extract(filename, 'rundate_(\d+-\d+-\d+)_pass_(\d+)', ['rundate', 'pass', 'overflow']) AS groups
 FROM filenames
 ----
-Not enough capturing groups
+Not enough group names
 
 statement error
 SELECT regexp_extract(filename, NULL, ['rundate', 'pass']) AS groups

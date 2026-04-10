@@ -9,62 +9,60 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/common/arena_linked_list.hpp"
-#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/common.hpp"
-#include "duckdb/common/enums/explain_format.hpp"
 #include "duckdb/common/enums/operator_result_type.hpp"
-#include "duckdb/common/enums/order_preservation_type.hpp"
 #include "duckdb/common/enums/physical_operator_type.hpp"
-#include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/enums/explain_format.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/execution/execution_context.hpp"
-#include "duckdb/execution/partition_info.hpp"
-#include "duckdb/execution/physical_operator_states.hpp"
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/optimizer/join_order/join_node.hpp"
+#include "duckdb/common/optional_idx.hpp"
+#include "duckdb/execution/physical_operator_states.hpp"
+#include "duckdb/common/enums/order_preservation_type.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/execution/partition_info.hpp"
 
 namespace duckdb {
-
 class Event;
 class Executor;
 class PhysicalOperator;
 class Pipeline;
 class PipelineBuildState;
 class MetaPipeline;
-class PhysicalPlan;
 
-enum class OperatorCachingMode : uint8_t { NONE, PARTITIONED, ORDERED, UNORDERED };
-
-//! PhysicalOperator is the base class of the physical operators present in the execution plan.
+//! PhysicalOperator is the base class of the physical operators present in the
+//! execution plan
 class PhysicalOperator {
 public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::INVALID;
 
 public:
-	PhysicalOperator(PhysicalPlan &physical_plan, PhysicalOperatorType type, vector<LogicalType> types,
-	                 idx_t estimated_cardinality);
+	PhysicalOperator(PhysicalOperatorType type, vector<LogicalType> types, idx_t estimated_cardinality)
+	    : type(type), types(std::move(types)), estimated_cardinality(estimated_cardinality) {
+	}
+
 	virtual ~PhysicalOperator() {
 	}
 
-	//! Deleted copy constructors.
+	// Delete copy constructors.
 	PhysicalOperator(const PhysicalOperator &other) = delete;
 	PhysicalOperator &operator=(const PhysicalOperator &) = delete;
 
-	//! The child operators.
-	ArenaLinkedList<reference<PhysicalOperator>> children;
-	//! The physical operator type.
+	//! The physical operator type
 	PhysicalOperatorType type;
-	//! The return types.
+	//! The set of children of the operator
+	vector<reference<PhysicalOperator>> children;
+	//! The types returned by this physical operator
 	vector<LogicalType> types;
-	//! The estimated cardinality.
+	//! The estimated cardinality of this physical operator
 	idx_t estimated_cardinality;
 
-	//! The global sink state.
+	//! The global sink state of this operator
 	unique_ptr<GlobalSinkState> sink_state;
-	//! The global operator state.
+	//! The global state of this operator
 	unique_ptr<GlobalOperatorState> op_state;
-	//! Lock for (re)setting any of the operator states.
+	//! Lock for (re)setting any of the operator states
 	mutex lock;
 
 public:
@@ -125,13 +123,7 @@ public:
 	virtual unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                         GlobalSourceState &gstate) const;
 	virtual unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const;
-
-protected:
-	virtual SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                         OperatorSourceInput &input) const;
-
-public:
-	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const;
+	virtual SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const;
 
 	virtual OperatorPartitionData GetPartitionData(ExecutionContext &context, DataChunk &chunk,
 	                                               GlobalSourceState &gstate, LocalSourceState &lstate,
@@ -201,7 +193,7 @@ public:
 	static idx_t GetMaxThreadMemory(ClientContext &context);
 
 	//! Whether operator caching is allowed in the current execution context
-	static OperatorCachingMode SelectOperatorCachingMode(ExecutionContext &context);
+	static bool OperatorCachingAllowed(ExecutionContext &context);
 
 	virtual bool IsSink() const {
 		return false;
@@ -258,9 +250,7 @@ public:
 	unique_ptr<DataChunk> cached_chunk;
 	bool initialized = false;
 	//! Whether or not the chunk can be cached
-	OperatorCachingMode can_cache_chunk = OperatorCachingMode::NONE;
-	bool must_return_continuation_chunk = false;
-	OperatorResultType cached_result;
+	bool can_cache_chunk = false;
 };
 
 //! Base class that caches output from child Operator class. Note that Operators inheriting from this class should also
@@ -268,8 +258,7 @@ public:
 class CachingPhysicalOperator : public PhysicalOperator {
 public:
 	static constexpr const idx_t CACHE_THRESHOLD = 64;
-	CachingPhysicalOperator(PhysicalPlan &physical_plan, PhysicalOperatorType type, vector<LogicalType> types,
-	                        idx_t estimated_cardinality);
+	CachingPhysicalOperator(PhysicalOperatorType type, vector<LogicalType> types, idx_t estimated_cardinality);
 
 	bool caching_supported;
 

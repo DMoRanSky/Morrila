@@ -13,13 +13,12 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/execution/index/unbound_index.hpp"
 #include "duckdb/storage/data_table.hpp"
-#include "duckdb/storage/table/data_table_info.hpp"
 
 namespace duckdb {
 
-PhysicalCopyDatabase::PhysicalCopyDatabase(PhysicalPlan &physical_plan, vector<LogicalType> types,
-                                           idx_t estimated_cardinality, unique_ptr<CopyDatabaseInfo> info_p)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::COPY_DATABASE, std::move(types), estimated_cardinality),
+PhysicalCopyDatabase::PhysicalCopyDatabase(vector<LogicalType> types, idx_t estimated_cardinality,
+                                           unique_ptr<CopyDatabaseInfo> info_p)
+    : PhysicalOperator(PhysicalOperatorType::COPY_DATABASE, std::move(types), estimated_cardinality),
       info(std::move(info_p)) {
 }
 
@@ -29,8 +28,8 @@ PhysicalCopyDatabase::~PhysicalCopyDatabase() {
 //===--------------------------------------------------------------------===//
 // Source
 //===--------------------------------------------------------------------===//
-SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                       OperatorSourceInput &input) const {
+SourceResultType PhysicalCopyDatabase::GetData(ExecutionContext &context, DataChunk &chunk,
+                                               OperatorSourceInput &input) const {
 	auto &catalog = Catalog::GetCatalog(context.client, info->target_database);
 	for (auto &create_info : info->entries) {
 		switch (create_info->type) {
@@ -80,14 +79,12 @@ SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context
 
 		IndexStorageInfo storage_info(create_index_info.index_name);
 		storage_info.options.emplace("v1_0_0_storage", false);
-		auto unbound_index = make_uniq<UnboundIndex>(create_index_info.Copy(), std::move(storage_info),
+		auto unbound_index = make_uniq<UnboundIndex>(create_index_info.Copy(), storage_info,
 		                                             data_table.GetTableIOManager(), catalog.GetAttached());
-		data_table.AddIndex(std::move(unbound_index));
 
-		// We add unbound indexes, so we immediately bind them.
-		// Otherwise, WAL serialization fails due to unbound indexes.
+		data_table.AddIndex(std::move(unbound_index));
 		auto &data_table_info = *data_table.GetDataTableInfo();
-		data_table_info.BindIndexes(context.client);
+		data_table_info.GetIndexes().InitializeIndexes(context.client, data_table_info);
 	}
 
 	return SourceResultType::FINISHED;

@@ -37,22 +37,12 @@
  * order to yield to another virtual CPU.
  */
 #if defined(__aarch64__) || defined(__ARM_ARCH)
-    #define CPU_SPINWAIT __asm__ volatile("isb")
-    #define HAVE_CPU_SPINWAIT 1
-#elif defined(__x86_64__) || defined(__i386__)
-    #define CPU_SPINWAIT __asm__ volatile("pause")
-    #define HAVE_CPU_SPINWAIT 1
-#elif defined(__powerpc64__) || defined(__PPC64__) || defined(__POWERPC__)
-    #ifdef __APPLE__
-        #define CPU_SPINWAIT __asm__ volatile("or r27,r27,r27")
-    #else
-        #define CPU_SPINWAIT __asm__ volatile("or 27,27,27")
-    #endif
-    #define HAVE_CPU_SPINWAIT 1
+#define CPU_SPINWAIT __asm__ volatile("isb")
 #else
-    #define CPU_SPINWAIT
-    #define HAVE_CPU_SPINWAIT 0
+#define CPU_SPINWAIT __asm__ volatile("pause")
 #endif
+/* 1 if CPU_SPINWAIT is defined, 0 otherwise. */
+#define HAVE_CPU_SPINWAIT 1
 
 /*
  * Number of significant bits in virtual addresses.  This may be less than the
@@ -205,7 +195,7 @@
 /* #undef JEMALLOC_EXPERIMENTAL_SMALLOCX_API */
 
 /* JEMALLOC_PROF enables allocation profiling. */
-#define JEMALLOC_PROF
+/* #undef JEMALLOC_PROF */
 
 /* Use libunwind for profile backtracing if defined. */
 /* #undef JEMALLOC_PROF_LIBUNWIND */
@@ -214,7 +204,7 @@
 /* #undef JEMALLOC_PROF_LIBGCC */
 
 /* Use gcc intrinsics for profile backtracing if defined. */
-#define JEMALLOC_PROF_GCC
+/* #undef JEMALLOC_PROF_GCC */
 
 /* JEMALLOC_PAGEID enabled page id */
 /* #undef JEMALLOC_PAGEID */

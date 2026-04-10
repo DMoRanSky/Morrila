@@ -2,12 +2,10 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/logging/log_manager.hpp"
+
 #include "utf8proc.hpp"
 
 namespace duckdb {
-
-namespace {
 
 struct WriteLogBindData : FunctionData {
 	//! Config
@@ -45,7 +43,7 @@ public:
 	}
 };
 
-void ThrowIfNotConstant(const Expression &arg) {
+static void ThrowIfNotConstant(const Expression &arg) {
 	if (!arg.IsFoldable()) {
 		throw BinderException("write_log: argument '%s' must be constant", arg.alias);
 	}
@@ -65,7 +63,7 @@ unique_ptr<FunctionData> WriteLogBind(ClientContext &context, ScalarFunction &bo
 	auto result = make_uniq<WriteLogBindData>();
 
 	// Default return type
-	bound_function.SetReturnType(LogicalType::VARCHAR);
+	bound_function.return_type = LogicalType::VARCHAR;
 
 	for (idx_t i = 1; i < arguments.size(); i++) {
 		auto &arg = arguments[i];
@@ -100,7 +98,7 @@ unique_ptr<FunctionData> WriteLogBind(ClientContext &context, ScalarFunction &bo
 		} else if (arg->alias == "return_value") {
 			result->return_type = arg->return_type;
 			result->output_col = i;
-			bound_function.SetReturnType(result->return_type);
+			bound_function.return_type = result->return_type;
 		} else {
 			throw BinderException(StringUtil::Format("write_log: Unknown argument '%s'", arg->alias));
 		}
@@ -112,14 +110,20 @@ unique_ptr<FunctionData> WriteLogBind(ClientContext &context, ScalarFunction &bo
 }
 
 template <class T>
-void WriteLogValues(T &LogSource, LogLevel level, const string_t *data, const SelectionVector *sel, idx_t size,
-                    const string &type) {
-	for (idx_t i = 0; i < size; i++) {
-		DUCKDB_LOG_INTERNAL(LogSource, type.c_str(), level, data[sel->get_index(i)]);
+static void WriteLogValues(T &LogSource, LogLevel level, const string_t *data, const SelectionVector *sel, idx_t size,
+                           const string &type) {
+	if (!type.empty()) {
+		for (idx_t i = 0; i < size; i++) {
+			DUCKDB_LOG_INTERNAL(LogSource, type.c_str(), level, data[sel->get_index(i)]);
+		}
+	} else {
+		for (idx_t i = 0; i < size; i++) {
+			DUCKDB_LOG_INTERNAL(LogSource, type.c_str(), level, data[sel->get_index(i)]);
+		}
 	}
 }
 
-void WriteLogFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void WriteLogFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() >= 1);
 
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
@@ -153,8 +157,6 @@ void WriteLogFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		result.Reference(Value(LogicalType::VARCHAR));
 	}
 }
-
-} // namespace
 
 ScalarFunctionSet WriteLogFun::GetFunctions() {
 	ScalarFunctionSet set("write_log");

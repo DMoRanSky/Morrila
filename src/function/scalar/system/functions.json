@@ -4,14 +4,14 @@
         "parameters": "col0",
         "description": "",
         "example": "",
-        "type": "scalar_function_set"
+        "type": "scalar_function"
     },
     {
         "name": "combine",
         "parameters": "col0,col1",
         "description": "",
         "example": "",
-        "type": "scalar_function_set"
+        "type": "scalar_function"
     },
     {
         "name": "write_log",
@@ -38,7 +38,7 @@
     {
         "name": "current_query_id",
         "description": "Get the current query_id",
-        "example": "current_query_id()",
+        "example": "current_transaction_id('Hello')",
         "type": "scalar_function",
         "struct": "CurrentQueryId"
     },

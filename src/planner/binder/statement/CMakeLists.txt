@@ -17,7 +17,6 @@ add_library_unity(
   bind_insert.cpp
   bind_load.cpp
   bind_logical_plan.cpp
-  bind_merge_into.cpp
   bind_pragma.cpp
   bind_prepare.cpp
   bind_relation.cpp

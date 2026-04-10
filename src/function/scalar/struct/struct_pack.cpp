@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/function/scalar/struct_functions.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
@@ -25,11 +23,9 @@ static void StructPackFunction(DataChunk &args, ExpressionState &state, Vector &
 			all_const = false;
 		}
 		// same holds for this
-		child_entries[i].Reference(args.data[i]);
+		child_entries[i]->Reference(args.data[i]);
 	}
-	// set only the struct buffer's type - do not propagate to children
-	// since children reference external vectors (args) that may have incompatible buffer types
-	result.GetBuffer()->SetVectorTypeOnly(all_const ? VectorType::CONSTANT_VECTOR : VectorType::FLAT_VECTOR);
+	result.SetVectorType(all_const ? VectorType::CONSTANT_VECTOR : VectorType::FLAT_VECTOR);
 	result.Verify(args.size());
 }
 
@@ -60,11 +56,11 @@ static unique_ptr<FunctionData> StructPackBind(ClientContext &context, ScalarFun
 	}
 
 	// this is more for completeness reasons
-	bound_function.SetReturnType(LogicalType::STRUCT(struct_children));
-	return make_uniq<VariableReturnBindData>(bound_function.GetReturnType());
+	bound_function.return_type = LogicalType::STRUCT(struct_children);
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
 }
 
-static unique_ptr<BaseStatistics> StructPackStats(ClientContext &context, FunctionStatisticsInput &input) {
+unique_ptr<BaseStatistics> StructPackStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	auto struct_stats = StructStats::CreateUnknown(expr.return_type);
@@ -75,13 +71,13 @@ static unique_ptr<BaseStatistics> StructPackStats(ClientContext &context, Functi
 }
 
 template <bool IS_STRUCT_PACK>
-static ScalarFunction GetStructPackFunction() {
+ScalarFunction GetStructPackFunction() {
 	ScalarFunction fun(IS_STRUCT_PACK ? "struct_pack" : "row", {}, LogicalTypeId::STRUCT, StructPackFunction,
 	                   StructPackBind<IS_STRUCT_PACK>, nullptr, StructPackStats);
 	fun.varargs = LogicalType::ANY;
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
-	fun.SetSerializeCallback(VariableReturnBindData::Serialize);
-	fun.SetDeserializeCallback(VariableReturnBindData::Deserialize);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	fun.serialize = VariableReturnBindData::Serialize;
+	fun.deserialize = VariableReturnBindData::Deserialize;
 	return fun;
 }
 

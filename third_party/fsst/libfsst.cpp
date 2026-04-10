@@ -18,23 +18,21 @@
 #include "libfsst.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 
-namespace libfsst {
 Symbol concat(Symbol a, Symbol b) {
 	Symbol s;
 	u32 length = a.length()+b.length();
 	if (length > Symbol::maxLength) length = Symbol::maxLength;
 	s.set_code_len(FSST_CODE_MASK, length);
-	s.store_num((b.load_num() << (8*a.length())) | a.load_num());
+	s.val.num = (b.val.num << (8*a.length())) | a.val.num;
 	return s;
 }
-}  // namespace libfsst
 
 namespace std {
 template <>
-class hash<libfsst::QSymbol> {
-	public:
-	size_t operator()(const libfsst::QSymbol& q) const {
-		uint64_t k = q.symbol.load_num();
+class hash<QSymbol> {
+public:
+	size_t operator()(const QSymbol& q) const {
+		uint64_t k = q.symbol.val.num;
 		const uint64_t m = 0xc6a4a7935bd1e995;
 		const int r = 47;
 		uint64_t h = 0x8445d61a4e774912 ^ (8*m);
@@ -51,7 +49,6 @@ class hash<libfsst::QSymbol> {
 };
 }
 
-namespace libfsst {
 bool isEscapeCode(u16 pos) { return pos < FSST_CODE_BASE; }
 
 std::ostream& operator<<(std::ostream& out, const Symbol& s) {
@@ -60,7 +57,7 @@ std::ostream& operator<<(std::ostream& out, const Symbol& s) {
 	return out;
 }
 
-SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, const size_t len[], bool zeroTerminated=false) {
+SymbolTable *buildSymbolTable(Counters& counters, vector<u8*> line, size_t len[], bool zeroTerminated=false) {
 	SymbolTable *st = new SymbolTable(), *bestTable = new SymbolTable();
 	int bestGain = (int) -FSST_SAMPLEMAXSZ; // worst case (everything exception)
 	size_t sampleFrac = 128;
@@ -73,8 +70,8 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 		u16 byteHisto[256];
 		memset(byteHisto, 0, sizeof(byteHisto));
 		for(size_t i=0; i<line.size(); i++) {
-			const u8* cur = line[i];
-			const u8* end = cur + len[i];
+			u8* cur = line[i];
+			u8* end = cur + len[i];
 			while(cur < end) byteHisto[*cur++]++;
 		}
 		u32 minSize = FSST_SAMPLEMAXSZ, i = st->terminator = 256;
@@ -94,14 +91,15 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 		int gain = 0;
 
 		for(size_t i=0; i<line.size(); i++) {
-			const u8* cur = line[i], *start = cur;
-			const u8* end = cur + len[i];
+			u8* cur = line[i];
+			u8* end = cur + len[i];
 
 			if (sampleFrac < 128) {
 				// in earlier rounds (sampleFrac < 128) we skip data in the sample (reduces overall work ~2x)
 				if (rnd128(i) > sampleFrac) continue;
 			}
 			if (cur < end) {
+				u8* start = cur;
 				u16 code2 = 255, code1 = st->findLongestSymbol(cur, end);
 				cur += st->symbols[code1].length();
 				gain += (int) (st->symbols[code1].length()-(1+isEscapeCode(code1)));
@@ -126,7 +124,7 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 						Symbol s = st->hashTab[idx];
 						code2 = st->shortCodes[word & 0xFFFF] & FSST_CODE_MASK;
 						word &= (0xFFFFFFFFFFFFFFFF >> (u8) s.icl);
-						if ((s.icl < FSST_ICL_FREE) & (s.load_num() == word)) {
+						if ((s.icl < FSST_ICL_FREE) & (s.val.num == word)) {
 							code2 = s.code();
 							cur += s.length();
 						} else if (code2 >= FSST_CODE_BASE) {
@@ -161,13 +159,13 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 
 	auto makeTable = [&](SymbolTable *st, Counters &counters) {
 		// hashmap of c (needed because we can generate duplicate candidates)
-		std::unordered_set<QSymbol> cands;
+		unordered_set<QSymbol> cands;
 
 		// artificially make terminater the most frequent symbol so it gets included
 		u16 terminator = st->nSymbols?FSST_CODE_BASE:st->terminator;
 		counters.count1Set(terminator,65535);
 
-		auto addOrInc = [&](std::unordered_set<QSymbol> &cands, Symbol s, u64 count) {
+		auto addOrInc = [&](unordered_set<QSymbol> &cands, Symbol s, u64 count) {
 			if (count < (5*sampleFrac)/128) return; // improves both compression speed (less candidates), but also quality!!
 			QSymbol q;
 			q.symbol = s;
@@ -190,11 +188,10 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 			addOrInc(cands, s1, ((s1.length()==1)?8LL:1LL)*cnt1);
 
 			if (sampleFrac >= 128 || // last round we do not create new (combined) symbols
-				s1.length() == Symbol::maxLength || // symbol cannot be extended
-				s1.val.str[0] == st->terminator) { // multi-byte symbols cannot contain the terminator byte
+			    s1.length() == Symbol::maxLength || // symbol cannot be extended
+			    s1.val.str[0] == st->terminator) { // multi-byte symbols cannot contain the terminator byte
 				continue;
 			}
-
 			for (u32 pos2=0; pos2<FSST_CODE_BASE+(size_t)st->nSymbols; pos2++) {
 				u32 cnt2 = counters.count2GetNext(pos1, pos2); // may advance pos2!!
 				if (!cnt2) continue;
@@ -208,8 +205,8 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 		}
 
 		// insert candidates into priority queue (by gain)
-		auto cmpGn = [](const QSymbol& q1, const QSymbol& q2) { return (q1.gain < q2.gain) || (q1.gain == q2.gain && q1.symbol.load_num() > q2.symbol.load_num()); };
-		std::priority_queue<QSymbol,std::vector<QSymbol>,decltype(cmpGn)> pq(cmpGn);
+		auto cmpGn = [](const QSymbol& q1, const QSymbol& q2) { return (q1.gain < q2.gain) || (q1.gain == q2.gain && q1.symbol.val.num > q2.symbol.val.num); };
+		priority_queue<QSymbol,vector<QSymbol>,decltype(cmpGn)> pq(cmpGn);
 		for (auto& q : cands)
 			pq.push(q);
 
@@ -247,11 +244,11 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 
 // optimized adaptive *scalar* compression method
 static inline size_t compressBulk(SymbolTable &symbolTable, size_t nlines, size_t lenIn[], u8* strIn[], size_t size, u8* out, size_t lenOut[], u8* strOut[], bool noSuffixOpt, bool avoidBranch) {
-	const u8 *cur = NULL, *end =  NULL, *lim = out + size;
+	u8 *cur = NULL, *end =  NULL, *lim = out + size;
 	size_t curLine, suffixLim = symbolTable.suffixLim;
 	u8 byteLim = symbolTable.nSymbols + symbolTable.zeroTerminated - symbolTable.lenHisto[0];
 
-	u8 buf[512+8] = {}; /* +8 sentinel is to avoid 8-byte unaligned-loads going beyond 511 out-of-bounds */
+	u8 buf[512+7] = {}; /* +7 sentinel is to avoid 8-byte unaligned-loads going beyond 511 out-of-bounds */
 
 	// three variants are possible. dead code falls away since the bool arguments are constants
 	auto compressVariant = [&](bool noSuffixOpt, bool avoidBranch) {
@@ -267,7 +264,7 @@ static inline size_t compressBulk(SymbolTable &symbolTable, size_t nlines, size_
 				Symbol s = symbolTable.hashTab[idx];
 				out[1] = (u8) word; // speculatively write out escaped byte
 				word &= (0xFFFFFFFFFFFFFFFF >> (u8) s.icl);
-				if ((s.icl < FSST_ICL_FREE) && s.load_num() == word) {
+				if ((s.icl < FSST_ICL_FREE) && s.val.num == word) {
 					*out++ = (u8) s.code(); cur += s.length();
 				} else if (avoidBranch) {
 					// could be a 2-byte or 1-byte code, or miss
@@ -323,22 +320,21 @@ static inline size_t compressBulk(SymbolTable &symbolTable, size_t nlines, size_
 #define FSST_SAMPLELINE ((size_t) 512)
 
 // quickly select a uniformly random set of lines such that we have between [FSST_SAMPLETARGET,FSST_SAMPLEMAXSZ) string bytes
-std::vector<const u8*> makeSample(u8* sampleBuf, u8* strIn[], size_t *lenIn, size_t nlines,
-                                                    duckdb::unique_ptr<std::vector<size_t>>& sample_len_out) {
+vector<u8*> makeSample(u8* sampleBuf, u8* strIn[], size_t *lenIn, size_t nlines,
+                                                    duckdb::unique_ptr<vector<size_t>>& sample_len_out) {
 	size_t totSize = 0;
-	std::vector<const u8*> sample;
+	vector<u8*> sample;
 
 	for(size_t i=0; i<nlines; i++)
 		totSize += lenIn[i];
-
 	if (totSize < FSST_SAMPLETARGET) {
 		for(size_t i=0; i<nlines; i++)
 			sample.push_back(strIn[i]);
 	} else {
 		size_t sampleRnd = FSST_HASH(4637947);
-		const u8* sampleLim = sampleBuf + FSST_SAMPLETARGET;
+		u8* sampleLim = sampleBuf + FSST_SAMPLETARGET;
 
-		sample_len_out = duckdb::unique_ptr<std::vector<size_t>>(new std::vector<size_t>());
+		sample_len_out = duckdb::unique_ptr<vector<size_t>>(new vector<size_t>());
 		sample_len_out->reserve(nlines + FSST_SAMPLEMAXSZ/FSST_SAMPLELINE);
 
 		// This fails if we have a lot of small strings and a few big ones?
@@ -355,7 +351,7 @@ std::vector<const u8*> makeSample(u8* sampleBuf, u8* strIn[], size_t *lenIn, siz
 			size_t chunk = FSST_SAMPLELINE*(sampleRnd % chunks);
 
 			// add the chunk to the sample
-			size_t len = std::min(lenIn[linenr]-chunk,FSST_SAMPLELINE);
+			size_t len = min(lenIn[linenr]-chunk,FSST_SAMPLELINE);
 			memcpy(sampleBuf, strIn[linenr]+chunk, len);
 			sample.push_back(sampleBuf);
 
@@ -368,11 +364,11 @@ std::vector<const u8*> makeSample(u8* sampleBuf, u8* strIn[], size_t *lenIn, siz
 
 extern "C" duckdb_fsst_encoder_t* duckdb_fsst_create(size_t n, size_t lenIn[], u8 *strIn[], int zeroTerminated) {
 	u8* sampleBuf = new u8[FSST_SAMPLEMAXSZ];
-	duckdb::unique_ptr<std::vector<size_t>> sample_sizes;
-	std::vector<const u8*> sample = makeSample(sampleBuf, strIn, lenIn, n?n:1, sample_sizes); // careful handling of input to get a right-size and representative sample
+	duckdb::unique_ptr<vector<size_t>> sample_sizes;
+	vector<u8*> sample = makeSample(sampleBuf, strIn, lenIn, n?n:1, sample_sizes); // careful handling of input to get a right-size and representative sample
 	Encoder *encoder = new Encoder();
-	const size_t* sampleLen = sample_sizes ? sample_sizes->data() : &lenIn[0];
-	encoder->symbolTable = std::shared_ptr<SymbolTable>(buildSymbolTable(encoder->counters, sample, sampleLen, zeroTerminated));
+	size_t* sampleLen = sample_sizes ? sample_sizes->data() : &lenIn[0];
+	encoder->symbolTable = shared_ptr<SymbolTable>(buildSymbolTable(encoder->counters, sample, sampleLen, zeroTerminated));
 	delete[] sampleBuf;
 	return (duckdb_fsst_encoder_t*) encoder;
 }
@@ -407,8 +403,6 @@ extern "C" u32 duckdb_fsst_export(duckdb_fsst_encoder_t *encoder, u8 *buf) {
 	              (((u64) e->symbolTable->nSymbols) << 8) |
 	              FSST_ENDIAN_MARKER; // least significant byte is nonzero
 
-	version = swap64_if_be(version); // ensure version is little-endian encoded
-
 	/* do not assume unaligned reads here */
 	memcpy(buf, &version, 8);
 	buf[8] = e->symbolTable->zeroTerminated;
@@ -433,8 +427,6 @@ extern "C" u32 duckdb_fsst_import(duckdb_fsst_decoder_t *decoder, u8 *buf) {
 
 	// version field (first 8 bytes) is now there just for future-proofness, unused still (skipped)
 	memcpy(&version, buf, 8);
-	version = swap64_if_be(version); // version is always little-endian encoded
-
 	if ((version>>32) != FSST_VERSION) return 0;
 	decoder->zeroTerminated = buf[8]&1;
 	memcpy(lenHisto, buf+9, 8);
@@ -489,13 +481,11 @@ inline size_t _compressAuto(Encoder *e, size_t nlines, size_t lenIn[], u8 *strIn
 size_t compressAuto(Encoder *e, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[], int simd) {
 	return _compressAuto(e, nlines, lenIn, strIn, size, output, lenOut, strOut, simd);
 }
-}  // namespace libfsst
 
-using namespace libfsst;
 // the main compression function (everything automatic)
 extern "C" size_t duckdb_fsst_compress(duckdb_fsst_encoder_t *encoder, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[]) {
 	// to be faster than scalar, simd needs 64 lines or more of length >=12; or fewer lines, but big ones (totLen > 32KB)
-	size_t totLen = std::accumulate(lenIn, lenIn+nlines, 0);
+	size_t totLen = accumulate(lenIn, lenIn+nlines, 0);
 	int simd = totLen > nlines*12 && (nlines > 64 || totLen > (size_t) 1<<15);
 	return _compressAuto((Encoder*) encoder, nlines, lenIn, strIn, size, output, lenOut, strOut, 3*simd);
 }

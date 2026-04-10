@@ -11,13 +11,14 @@
 
 namespace duckdb {
 
-namespace {
-
 struct ListSliceBindData : public FunctionData {
 	ListSliceBindData(const LogicalType &return_type_p, bool begin_is_empty_p, bool end_is_empty_p)
 	    : return_type(return_type_p), begin_is_empty(begin_is_empty_p), end_is_empty(end_is_empty_p) {
 	}
+	~ListSliceBindData() override;
+
 	LogicalType return_type;
+
 	bool begin_is_empty;
 	bool end_is_empty;
 
@@ -25,6 +26,9 @@ public:
 	bool Equals(const FunctionData &other_p) const override;
 	unique_ptr<FunctionData> Copy() const override;
 };
+
+ListSliceBindData::~ListSliceBindData() {
+}
 
 bool ListSliceBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<ListSliceBindData>();
@@ -37,7 +41,7 @@ unique_ptr<FunctionData> ListSliceBindData::Copy() const {
 }
 
 template <typename INDEX_TYPE>
-idx_t CalculateSliceLength(idx_t begin, idx_t end, INDEX_TYPE step, bool svalid) {
+static idx_t CalculateSliceLength(idx_t begin, idx_t end, INDEX_TYPE step, bool svalid) {
 	if (step < 0) {
 		step = AbsValue(step);
 	}
@@ -119,7 +123,7 @@ struct ListSliceOperations {
 };
 
 template <typename INPUT_TYPE, typename INDEX_TYPE>
-void ClampIndex(INDEX_TYPE &index, const INPUT_TYPE &value, const INDEX_TYPE length, bool is_min) {
+static void ClampIndex(INDEX_TYPE &index, const INPUT_TYPE &value, const INDEX_TYPE length, bool is_min) {
 	if (index < 0) {
 		index = (!is_min) ? index + 1 : index;
 		index = length + index;
@@ -131,7 +135,7 @@ void ClampIndex(INDEX_TYPE &index, const INPUT_TYPE &value, const INDEX_TYPE len
 }
 
 template <typename INPUT_TYPE, typename INDEX_TYPE, typename OP>
-bool ClampSlice(const INPUT_TYPE &value, INDEX_TYPE &begin, INDEX_TYPE &end) {
+static bool ClampSlice(const INPUT_TYPE &value, INDEX_TYPE &begin, INDEX_TYPE &end) {
 	// Clamp offsets
 	begin = (begin != 0 && begin != (INDEX_TYPE)NumericLimits<int64_t>::Minimum()) ? begin - 1 : begin;
 
@@ -158,9 +162,11 @@ bool ClampSlice(const INPUT_TYPE &value, INDEX_TYPE &begin, INDEX_TYPE &end) {
 }
 
 template <typename INPUT_TYPE, typename INDEX_TYPE, typename OP>
-void ExecuteConstantSlice(Vector &result, Vector &str_vector, Vector &begin_vector, Vector &end_vector,
-                          optional_ptr<Vector> step_vector, const idx_t count, SelectionVector &sel, idx_t &sel_idx,
-                          optional_ptr<Vector> result_child_vector, bool begin_is_empty, bool end_is_empty) {
+static void ExecuteConstantSlice(Vector &result, Vector &str_vector, Vector &begin_vector, Vector &end_vector,
+                                 optional_ptr<Vector> step_vector, const idx_t count, SelectionVector &sel,
+                                 idx_t &sel_idx, optional_ptr<Vector> result_child_vector, bool begin_is_empty,
+                                 bool end_is_empty) {
+
 	// check all this nullness early
 	auto str_valid = !ConstantVector::IsNull(str_vector);
 	auto begin_valid = !ConstantVector::IsNull(begin_vector);
@@ -168,26 +174,19 @@ void ExecuteConstantSlice(Vector &result, Vector &str_vector, Vector &begin_vect
 	auto step_valid = step_vector && !ConstantVector::IsNull(*step_vector);
 
 	if (!str_valid || !begin_valid || !end_valid || (step_vector && !step_valid)) {
-		ConstantVector::SetNull(result);
+		ConstantVector::SetNull(result, true);
 		return;
 	}
 
 	auto result_data = ConstantVector::GetData<INPUT_TYPE>(result);
 	auto str_data = ConstantVector::GetData<INPUT_TYPE>(str_vector);
+	auto begin_data = ConstantVector::GetData<INDEX_TYPE>(begin_vector);
+	auto end_data = ConstantVector::GetData<INDEX_TYPE>(end_vector);
 	auto step_data = step_vector ? ConstantVector::GetData<INDEX_TYPE>(*step_vector) : nullptr;
 
 	auto str = str_data[0];
-	INDEX_TYPE begin, end;
-	if (begin_is_empty) {
-		begin = 0;
-	} else {
-		begin = *ConstantVector::GetData<INDEX_TYPE>(begin_vector);
-	}
-	if (end_is_empty) {
-		end = OP::ValueLength(str);
-	} else {
-		end = *ConstantVector::GetData<INDEX_TYPE>(end_vector);
-	}
+	auto begin = begin_is_empty ? 0 : begin_data[0];
+	auto end = end_is_empty ? OP::ValueLength(str) : end_data[0];
 	auto step = step_data ? step_data[0] : 1;
 
 	if (step < 0) {
@@ -213,7 +212,7 @@ void ExecuteConstantSlice(Vector &result, Vector &str_vector, Vector &begin_vect
 
 	// Try to slice
 	if (!clamp_result) {
-		ConstantVector::SetNull(result);
+		ConstantVector::SetNull(result, true);
 	} else if (step == 1) {
 		result_data[0] = OP::SliceValue(result, str, begin, end);
 	} else {
@@ -228,9 +227,9 @@ void ExecuteConstantSlice(Vector &result, Vector &str_vector, Vector &begin_vect
 }
 
 template <typename INPUT_TYPE, typename INDEX_TYPE, typename OP>
-void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector, Vector &end_vector,
-                      optional_ptr<Vector> step_vector, const idx_t count, SelectionVector &sel, idx_t &sel_idx,
-                      optional_ptr<Vector> result_child_vector, bool begin_is_empty, bool end_is_empty) {
+static void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector, Vector &end_vector,
+                             optional_ptr<Vector> step_vector, const idx_t count, SelectionVector &sel, idx_t &sel_idx,
+                             optional_ptr<Vector> result_child_vector, bool begin_is_empty, bool end_is_empty) {
 	UnifiedVectorFormat list_data, begin_data, end_data, step_data;
 	idx_t sel_length = 0;
 
@@ -242,7 +241,9 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 		sel.Initialize(ListVector::GetListSize(list_vector));
 	}
 
-	auto result_data = FlatVector::Writer<INPUT_TYPE>(result, count);
+	auto result_data = FlatVector::GetData<INPUT_TYPE>(result);
+	auto &result_mask = FlatVector::Validity(result);
+
 	for (idx_t i = 0; i < count; ++i) {
 		auto list_idx = list_data.sel->get_index(i);
 		auto begin_idx = begin_data.sel->get_index(i);
@@ -255,14 +256,14 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 		auto step_valid = step_vector && step_data.validity.RowIsValid(step_idx);
 
 		if (!list_valid || !begin_valid || !end_valid || (step_vector && !step_valid)) {
-			result_data.SetInvalid(i);
+			result_mask.SetInvalid(i);
 			continue;
 		}
 
-		auto sliced = UnifiedVectorFormat::GetData<INPUT_TYPE>(list_data)[list_idx];
-		auto begin = begin_is_empty ? 0 : UnifiedVectorFormat::GetData<INDEX_TYPE>(begin_data)[begin_idx];
-		auto end = end_is_empty ? OP::ValueLength(sliced) : UnifiedVectorFormat::GetData<INDEX_TYPE>(end_data)[end_idx];
-		auto step = step_vector ? UnifiedVectorFormat::GetData<INDEX_TYPE>(step_data)[step_idx] : 1;
+		auto sliced = reinterpret_cast<INPUT_TYPE *>(list_data.data)[list_idx];
+		auto begin = begin_is_empty ? 0 : reinterpret_cast<INDEX_TYPE *>(begin_data.data)[begin_idx];
+		auto end = end_is_empty ? OP::ValueLength(sliced) : reinterpret_cast<INDEX_TYPE *>(end_data.data)[end_idx];
+		auto step = step_vector ? reinterpret_cast<INDEX_TYPE *>(step_data.data)[step_idx] : 1;
 
 		if (step < 0) {
 			swap(begin, end);
@@ -283,7 +284,7 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 		sel_length += length;
 
 		if (!clamp_result) {
-			result_data.SetInvalid(i);
+			result_mask.SetInvalid(i);
 		} else if (!step_vector) {
 			result_data[i] = OP::SliceValue(result, sliced, begin, end);
 		} else {
@@ -302,8 +303,8 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 }
 
 template <typename INPUT_TYPE, typename INDEX_TYPE, typename OP>
-void ExecuteSlice(Vector &result, Vector &list_or_str_vector, Vector &begin_vector, Vector &end_vector,
-                  optional_ptr<Vector> step_vector, const idx_t count, bool begin_is_empty, bool end_is_empty) {
+static void ExecuteSlice(Vector &result, Vector &list_or_str_vector, Vector &begin_vector, Vector &end_vector,
+                         optional_ptr<Vector> step_vector, const idx_t count, bool begin_is_empty, bool end_is_empty) {
 	optional_ptr<Vector> result_child_vector;
 	if (step_vector) {
 		result_child_vector = &ListVector::GetEntry(result);
@@ -324,7 +325,7 @@ void ExecuteSlice(Vector &result, Vector &list_or_str_vector, Vector &begin_vect
 	result.Verify(count);
 }
 
-void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 3 || args.ColumnCount() == 4);
 	D_ASSERT(args.data.size() == 3 || args.data.size() == 4);
 	auto count = args.size();
@@ -334,7 +335,8 @@ void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	VectorOperations::Copy(args.data[0], list_or_str_vector, count, 0, 0);
 
 	if (list_or_str_vector.GetType().id() == LogicalTypeId::SQLNULL) {
-		ConstantVector::SetNull(result);
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::SetNull(result, true);
 		return;
 	}
 
@@ -350,6 +352,8 @@ void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	auto &info = func_expr.bind_info->Cast<ListSliceBindData>();
 	auto begin_is_empty = info.begin_is_empty;
 	auto end_is_empty = info.end_is_empty;
+
+	result.SetVectorType(args.AllConstant() ? VectorType::CONSTANT_VECTOR : VectorType::FLAT_VECTOR);
 	switch (result.GetType().id()) {
 	case LogicalTypeId::LIST: {
 		// Share the value dictionary as we are just going to slice it
@@ -374,7 +378,7 @@ void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	}
 }
 
-bool CheckIfParamIsEmpty(duckdb::unique_ptr<duckdb::Expression> &param) {
+static bool CheckIfParamIsEmpty(duckdb::unique_ptr<duckdb::Expression> &param) {
 	bool is_empty = false;
 	if (param->return_type.id() == LogicalTypeId::LIST) {
 		auto empty_list = make_uniq<BoundConstantExpression>(Value::LIST(LogicalType::INTEGER, vector<Value>()));
@@ -387,8 +391,8 @@ bool CheckIfParamIsEmpty(duckdb::unique_ptr<duckdb::Expression> &param) {
 	return is_empty;
 }
 
-unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &bound_function,
-                                        vector<unique_ptr<Expression>> &arguments) {
+static unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &bound_function,
+                                               vector<unique_ptr<Expression>> &arguments) {
 	D_ASSERT(arguments.size() == 3 || arguments.size() == 4);
 	D_ASSERT(bound_function.arguments.size() == 3 || bound_function.arguments.size() == 4);
 
@@ -398,11 +402,11 @@ unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &
 		auto child_type = ArrayType::GetChildType(arguments[0]->return_type);
 		auto target_type = LogicalType::LIST(child_type);
 		arguments[0] = BoundCastExpression::AddCastToType(context, std::move(arguments[0]), target_type);
-		bound_function.SetReturnType(arguments[0]->return_type);
+		bound_function.return_type = arguments[0]->return_type;
 	} break;
 	case LogicalTypeId::LIST:
 		// The result is the same type
-		bound_function.SetReturnType(arguments[0]->return_type);
+		bound_function.return_type = arguments[0]->return_type;
 		break;
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::VARCHAR:
@@ -415,9 +419,9 @@ unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &
 		if (arguments[0]->return_type.IsJSONType()) {
 			// This is needed to avoid producing invalid JSON
 			bound_function.arguments[0] = LogicalType::VARCHAR;
-			bound_function.SetReturnType(LogicalType::VARCHAR);
+			bound_function.return_type = LogicalType::VARCHAR;
 		} else {
-			bound_function.SetReturnType(arguments[0]->return_type);
+			bound_function.return_type = arguments[0]->return_type;
 		}
 		for (idx_t i = 1; i < 3; i++) {
 			if (arguments[i]->return_type.id() != LogicalTypeId::LIST) {
@@ -428,7 +432,7 @@ unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &
 	case LogicalTypeId::SQLNULL:
 	case LogicalTypeId::UNKNOWN:
 		bound_function.arguments[0] = LogicalTypeId::UNKNOWN;
-		bound_function.SetReturnType(LogicalType::SQLNULL);
+		bound_function.return_type = LogicalType::SQLNULL;
 		break;
 	default:
 		throw BinderException("ARRAY_SLICE can only operate on LISTs and VARCHARs");
@@ -443,16 +447,15 @@ unique_ptr<FunctionData> ArraySliceBind(ClientContext &context, ScalarFunction &
 		bound_function.arguments[2] = LogicalType::BIGINT;
 	}
 
-	return make_uniq<ListSliceBindData>(bound_function.GetReturnType(), begin_is_empty, end_is_empty);
+	return make_uniq<ListSliceBindData>(bound_function.return_type, begin_is_empty, end_is_empty);
 }
 
-} // namespace
 ScalarFunctionSet ListSliceFun::GetFunctions() {
 	// the arguments and return types are actually set in the binder function
 	ScalarFunction fun({LogicalType::ANY, LogicalType::ANY, LogicalType::ANY}, LogicalType::ANY, ArraySliceFunction,
 	                   ArraySliceBind);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
-	fun.SetFallible();
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	BaseScalarFunction::SetReturnsError(fun);
 	ScalarFunctionSet set;
 	set.AddFunction(fun);
 	fun.arguments.push_back(LogicalType::BIGINT);

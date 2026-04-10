@@ -6,10 +6,17 @@
 
 namespace duckdb {
 
-PhysicalJoin::PhysicalJoin(PhysicalPlan &physical_plan, LogicalOperator &op, PhysicalOperatorType type,
-                           JoinType join_type, idx_t estimated_cardinality)
-    : CachingPhysicalOperator(physical_plan, type, op.types, estimated_cardinality), join_type(join_type) {
+PhysicalJoin::PhysicalJoin(LogicalOperator &op, PhysicalOperatorType type, JoinType join_type,
+                           idx_t estimated_cardinality)
+    : CachingPhysicalOperator(type, op.types, estimated_cardinality), join_type(join_type) {
 }
+
+bool PhysicalJoin::HasNullValues(DataChunk &input) {
+    // 先写个假的逻辑保证能链接
+    return false;
+}
+
+
 
 bool PhysicalJoin::EmptyResultIfRHSIsEmpty() const {
 	// empty RHS with INNER, RIGHT or SEMI join means empty result set
@@ -90,28 +97,6 @@ vector<const_reference<PhysicalOperator>> PhysicalJoin::GetSources() const {
 	auto result = children[0].get().GetSources();
 	if (IsSource()) {
 		result.push_back(*this);
-	}
-	return result;
-}
-
-vector<idx_t> PhysicalJoin::FillProjectionMap(const PhysicalOperator &child,
-                                              const vector<ProjectionIndex> &projection_map) {
-	const auto child_count = child.GetTypes().size();
-
-	vector<idx_t> result;
-	if (projection_map.empty()) {
-		// no projections - fill with all children
-		result.reserve(child_count);
-		for (idx_t i = 0; i < child_count; ++i) {
-			result.emplace_back(i);
-		}
-	} else {
-		for (auto &entry : projection_map) {
-			if (entry >= child_count) {
-				throw InternalException("Projection map entry %d out of range", entry);
-			}
-			result.emplace_back(entry);
-		}
 	}
 	return result;
 }

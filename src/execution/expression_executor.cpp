@@ -4,14 +4,12 @@
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/planner/expression/list.hpp"
-#include "duckdb/main/settings.hpp"
-#include "duckdb/function/cast/cast_function_set.hpp"
-#include "duckdb/common/type_visitor.hpp"
 
 namespace duckdb {
 
 ExpressionExecutor::ExpressionExecutor(ClientContext &context) : context(&context) {
-	debug_vector_verification = Settings::Get<DebugVerifyVectorSetting>(context);
+	auto &config = DBConfig::GetConfig(context);
+	debug_vector_verification = config.options.debug_verify_vector;
 }
 
 ExpressionExecutor::ExpressionExecutor(ClientContext &context, const Expression *expression)
@@ -85,7 +83,7 @@ void ExpressionExecutor::Execute(DataChunk *input, DataChunk &result) {
 		ExecuteExpression(i, result.data[i]);
 	}
 	result.SetCardinality(input ? input->size() : 1);
-	result.Verify(context ? context->db : nullptr);
+	result.Verify();
 }
 
 void ExpressionExecutor::ExecuteExpression(DataChunk &input, Vector &result) {
@@ -99,17 +97,11 @@ idx_t ExpressionExecutor::SelectExpression(DataChunk &input, SelectionVector &se
 
 idx_t ExpressionExecutor::SelectExpression(DataChunk &input, SelectionVector &result_sel,
                                            optional_ptr<SelectionVector> current_sel, idx_t current_count) {
-	return SelectExpression(input, result_sel, nullptr, current_sel, current_count);
-}
-
-idx_t ExpressionExecutor::SelectExpression(DataChunk &input, optional_ptr<SelectionVector> true_sel,
-                                           optional_ptr<SelectionVector> false_sel,
-                                           optional_ptr<SelectionVector> current_sel, idx_t current_count) {
 	D_ASSERT(expressions.size() == 1);
 	D_ASSERT(current_count <= input.size());
 	SetChunk(&input);
-	idx_t selected_tuples = Select(*expressions[0], states[0]->root_state.get(), current_sel.get(), current_count,
-	                               true_sel.get(), false_sel.get());
+	idx_t selected_tuples =
+	    Select(*expressions[0], states[0]->root_state.get(), current_sel.get(), current_count, &result_sel, nullptr);
 	return selected_tuples;
 }
 
@@ -159,42 +151,6 @@ void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t co
 	if (debug_vector_verification == DebugVectorVerification::DICTIONARY_EXPRESSION) {
 		Vector::DebugTransformToDictionary(vector, count);
 	}
-	if (debug_vector_verification == DebugVectorVerification::VARIANT_VECTOR) {
-		if (TypeVisitor::Contains(vector.GetType(), [](const LogicalType &type) {
-			    if (type.IsJSONType() || type.id() == LogicalTypeId::VARIANT || type.id() == LogicalTypeId::UNION ||
-			        type.id() == LogicalTypeId::ENUM || type.id() == LogicalTypeId::LEGACY_AGGREGATE_STATE ||
-			        type.id() == LogicalTypeId::AGGREGATE_STATE || type.id() == LogicalTypeId::TYPE) {
-				    return true;
-			    }
-			    if (type.id() == LogicalTypeId::STRUCT && StructType::IsUnnamed(type)) {
-				    return true;
-			    }
-			    return false;
-		    })) {
-			return;
-		}
-
-		Vector intermediate(LogicalType::VARIANT(), count);
-
-		//! First cast to VARIANT
-		if (HasContext()) {
-			VectorOperations::Cast(GetContext(), vector, intermediate, count, true);
-		} else {
-			VectorOperations::DefaultCast(vector, intermediate, count, true);
-		}
-		intermediate.Verify(count);
-		//! FIXME: this is probably also where we want to test 'variant_normalize'
-
-		Vector result(vector.GetType(), count);
-		//! Then cast back into the original type
-		if (HasContext()) {
-			VectorOperations::Cast(GetContext(), intermediate, result, count, true);
-		} else {
-			VectorOperations::DefaultCast(intermediate, result, count, true);
-		}
-		vector.Reference(result);
-		vector.Verify(count);
-	}
 }
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression &expr,
@@ -231,6 +187,7 @@ void ExpressionExecutor::Execute(const Expression &expr, ExpressionState *state,
 	// The result vector must be used for the first time, or must be reset.
 	// Otherwise, the validity mask can contain previous (now incorrect) data.
 	if (result.GetVectorType() == VectorType::FLAT_VECTOR) {
+
 		// We do not initialize vector caches for these expressions.
 		if (expr.GetExpressionClass() != ExpressionClass::BOUND_REF &&
 		    expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
@@ -301,8 +258,6 @@ idx_t ExpressionExecutor::Select(const Expression &expr, ExpressionState *state,
 		return Select(expr.Cast<BoundComparisonExpression>(), state, sel, count, true_sel, false_sel);
 	case ExpressionClass::BOUND_CONJUNCTION:
 		return Select(expr.Cast<BoundConjunctionExpression>(), state, sel, count, true_sel, false_sel);
-	case ExpressionClass::BOUND_FUNCTION:
-		return Select(expr.Cast<BoundFunctionExpression>(), state, sel, count, true_sel, false_sel);
 	default:
 		return DefaultSelect(expr, state, sel, count, true_sel, false_sel);
 	}
@@ -364,7 +319,7 @@ idx_t ExpressionExecutor::DefaultSelect(const Expression &expr, ExpressionState 
 	if (!sel) {
 		sel = FlatVector::IncrementalSelectionVector();
 	}
-	if (idata.validity.CanHaveNull()) {
+	if (!idata.validity.AllValid()) {
 		return DefaultSelectSwitch<false>(idata, sel, count, true_sel, false_sel);
 	} else {
 		return DefaultSelectSwitch<true>(idata, sel, count, true_sel, false_sel);

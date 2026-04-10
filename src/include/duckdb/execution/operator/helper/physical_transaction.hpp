@@ -19,18 +19,15 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::TRANSACTION;
 
 public:
-	explicit PhysicalTransaction(PhysicalPlan &physical_plan, unique_ptr<TransactionInfo> info,
-	                             idx_t estimated_cardinality)
-	    : PhysicalOperator(physical_plan, PhysicalOperatorType::TRANSACTION, {LogicalType::BOOLEAN},
-	                       estimated_cardinality),
+	explicit PhysicalTransaction(unique_ptr<TransactionInfo> info, idx_t estimated_cardinality)
+	    : PhysicalOperator(PhysicalOperatorType::TRANSACTION, {LogicalType::BOOLEAN}, estimated_cardinality),
 	      info(std::move(info)) {
 	}
 
 	unique_ptr<TransactionInfo> info;
 
 public:
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-	                                 OperatorSourceInput &input) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;

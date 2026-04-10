@@ -12,7 +12,6 @@
 
 namespace duckdb {
 class FileSystem;
-class QueryContext;
 
 enum class DataFileType : uint8_t {
 	FILE_DOES_NOT_EXIST, // file does not exist
@@ -24,7 +23,7 @@ enum class DataFileType : uint8_t {
 
 class MagicBytes {
 public:
-	static DataFileType CheckMagicBytes(QueryContext context, FileSystem &fs, const string &path);
+	static DataFileType CheckMagicBytes(FileSystem &fs, const string &path);
 };
 
 } // namespace duckdb

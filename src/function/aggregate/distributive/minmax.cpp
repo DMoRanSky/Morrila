@@ -12,11 +12,8 @@
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
-
-namespace {
 
 template <class T>
 struct MinMaxState {
@@ -296,7 +293,7 @@ struct VectorMinMaxBase {
 	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
 	                                     vector<unique_ptr<Expression>> &arguments) {
 		function.arguments[0] = arguments[0]->return_type;
-		function.SetReturnType(arguments[0]->return_type);
+		function.return_type = arguments[0]->return_type;
 		return nullptr;
 	}
 };
@@ -333,42 +330,43 @@ static AggregateFunction GetMinMaxOperator(const LogicalType &type) {
 template <class OP, class OP_STRING, class OP_VECTOR>
 unique_ptr<FunctionData> BindMinMax(ClientContext &context, AggregateFunction &function,
                                     vector<unique_ptr<Expression>> &arguments) {
-	// We should also push collations for non-VARCHAR here, but we aren't ready for it yet (see internal #8704)
-	const auto collation = arguments[0]->return_type.id() == LogicalTypeId::VARCHAR &&
-	                       (!StringType::GetCollation(arguments[0]->return_type).empty() ||
-	                        !Settings::Get<DefaultCollationSetting>(context).empty());
-	auto collated_arg = collation ? arguments[0]->Copy() : nullptr;
-	if (collation && ExpressionBinder::PushCollation(context, collated_arg, collated_arg->return_type)) {
-		// If aggr function is min/max and uses collations, replace bound_function with arg_min/arg_max
-		// to make sure the result's correctness.
-		string function_name = function.name == "min" ? "arg_min" : "arg_max";
-		QueryErrorContext error_context;
-		auto func = Catalog::GetEntry<AggregateFunctionCatalogEntry>(context, "", "", function_name,
-		                                                             OnEntryNotFound::RETURN_NULL, error_context);
-		if (!func) {
-			throw NotImplementedException(
-			    "Failure while binding function \"%s\" using collations - arg_min/arg_max do not exist in the "
-			    "catalog - load the core_functions module to fix this issue",
-			    function.name);
+	if (arguments[0]->return_type.id() == LogicalTypeId::VARCHAR) {
+		auto str_collation = StringType::GetCollation(arguments[0]->return_type);
+		if (!str_collation.empty() || !DBConfig::GetConfig(context).options.collation.empty()) {
+			// If aggr function is min/max and uses collations, replace bound_function with arg_min/arg_max
+			// to make sure the result's correctness.
+			string function_name = function.name == "min" ? "arg_min" : "arg_max";
+			QueryErrorContext error_context;
+			auto func = Catalog::GetEntry<AggregateFunctionCatalogEntry>(context, "", "", function_name,
+			                                                             OnEntryNotFound::RETURN_NULL, error_context);
+			if (!func) {
+				throw NotImplementedException(
+				    "Failure while binding function \"%s\" using collations - arg_min/arg_max do not exist in the "
+				    "catalog - load the core_functions module to fix this issue",
+				    function.name);
+			}
+
+			auto &func_entry = *func;
+
+			FunctionBinder function_binder(context);
+			vector<LogicalType> types {arguments[0]->return_type, arguments[0]->return_type};
+			ErrorData error;
+			auto best_function = function_binder.BindFunction(func_entry.name, func_entry.functions, types, error);
+			if (!best_function.IsValid()) {
+				throw BinderException(string("Fail to find corresponding function for collation min/max: ") +
+				                      error.Message());
+			}
+			function = func_entry.functions.GetFunctionByOffset(best_function.GetIndex());
+
+			// Create a copied child and PushCollation for it.
+			arguments.push_back(arguments[0]->Copy());
+			ExpressionBinder::PushCollation(context, arguments[1], arguments[0]->return_type);
+
+			// Bind function like arg_min/arg_max.
+			function.arguments[0] = arguments[0]->return_type;
+			function.return_type = arguments[0]->return_type;
+			return nullptr;
 		}
-
-		auto &func_entry = *func;
-
-		FunctionBinder function_binder(context);
-		vector<LogicalType> types {arguments[0]->return_type, collated_arg->return_type};
-		ErrorData error;
-		auto best_function = function_binder.BindFunction(func_entry.name, func_entry.functions, types, error);
-		if (!best_function.IsValid()) {
-			throw BinderException(string("Fail to find corresponding function for collation min/max: ") +
-			                      error.Message());
-		}
-		function = func_entry.functions.GetFunctionByOffset(best_function.GetIndex());
-
-		// Bind function like arg_min/arg_max.
-		arguments.push_back(std::move(collated_arg));
-		function.arguments[0] = arguments[0]->return_type;
-		function.SetReturnType(arguments[0]->return_type);
-		return make_uniq<ArgMinMaxFunctionData>();
 	}
 
 	auto input_type = arguments[0]->return_type;
@@ -376,27 +374,22 @@ unique_ptr<FunctionData> BindMinMax(ClientContext &context, AggregateFunction &f
 		throw ParameterNotResolvedException();
 	}
 	auto name = std::move(function.name);
-
-	auto state_export_type = function.get_state_type;
 	function = GetMinMaxOperator<OP, OP_STRING, OP_VECTOR>(input_type);
-	function.SetStructStateExport(state_export_type);
 	function.name = std::move(name);
-	function.SetOrderDependent(AggregateOrderDependent::NOT_ORDER_DEPENDENT);
-	function.SetDistinctDependent(AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT);
-	if (function.HasBindCallback()) {
-		return function.GetBindCallback()(context, function, arguments);
+	function.order_dependent = AggregateOrderDependent::NOT_ORDER_DEPENDENT;
+	function.distinct_dependent = AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT;
+	if (function.bind) {
+		return function.bind(context, function, arguments);
 	} else {
 		return nullptr;
 	}
 }
 
 template <class OP, class OP_STRING, class OP_VECTOR>
-AggregateFunction GetMinMaxOperator(string name) {
+static AggregateFunction GetMinMaxOperator(string name) {
 	return AggregateFunction(std::move(name), {LogicalType::ANY}, LogicalType::ANY, nullptr, nullptr, nullptr, nullptr,
 	                         nullptr, nullptr, BindMinMax<OP, OP_STRING, OP_VECTOR>);
 }
-
-} // namespace
 
 AggregateFunction MinFunction::GetFunction() {
 	return GetMinMaxOperator<MinOperation, MinOperationString, MinOperationVector>("min");
@@ -409,7 +402,6 @@ AggregateFunction MaxFunction::GetFunction() {
 //---------------------------------------------------
 // MinMaxN
 //---------------------------------------------------
-namespace {
 
 template <class A, class COMPARATOR>
 class MinMaxNState {
@@ -431,8 +423,9 @@ public:
 };
 
 template <class STATE>
-void MinMaxNUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_count, Vector &state_vector,
-                   idx_t count) {
+static void MinMaxNUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_count, Vector &state_vector,
+                          idx_t count) {
+
 	auto &val_vector = inputs[0];
 	auto &n_vector = inputs[1];
 
@@ -442,7 +435,7 @@ void MinMaxNUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_
 
 	auto val_extra_state = STATE::VAL_TYPE::CreateExtraState(val_vector, count);
 
-	STATE::VAL_TYPE::PrepareData(val_vector, count, val_extra_state, val_format, true);
+	STATE::VAL_TYPE::PrepareData(val_vector, count, val_extra_state, val_format);
 
 	n_vector.ToUnifiedFormat(count, n_format);
 	state_vector.ToUnifiedFormat(count, state_format);
@@ -481,21 +474,21 @@ void MinMaxNUpdate(Vector inputs[], AggregateInputData &aggr_input, idx_t input_
 }
 
 template <class VAL_TYPE, class COMPARATOR>
-void SpecializeMinMaxNFunction(AggregateFunction &function) {
+static void SpecializeMinMaxNFunction(AggregateFunction &function) {
 	using STATE = MinMaxNState<VAL_TYPE, COMPARATOR>;
 	using OP = MinMaxNOperation;
 
-	function.SetStateSizeCallback(AggregateFunction::StateSize<STATE>);
-	function.SetStateInitCallback(AggregateFunction::StateInitialize<STATE, OP, AggregateDestructorType::LEGACY>);
-	function.SetStateCombineCallback(AggregateFunction::StateCombine<STATE, OP>);
-	function.SetStateDestructorCallback(AggregateFunction::StateDestroy<STATE, OP>);
+	function.state_size = AggregateFunction::StateSize<STATE>;
+	function.initialize = AggregateFunction::StateInitialize<STATE, OP, AggregateDestructorType::LEGACY>;
+	function.combine = AggregateFunction::StateCombine<STATE, OP>;
+	function.destructor = AggregateFunction::StateDestroy<STATE, OP>;
 
-	function.SetStateFinalizeCallback(MinMaxNOperation::Finalize<STATE>);
-	function.SetStateUpdateCallback(MinMaxNUpdate<STATE>);
+	function.finalize = MinMaxNOperation::Finalize<STATE>;
+	function.update = MinMaxNUpdate<STATE>;
 }
 
 template <class COMPARATOR>
-void SpecializeMinMaxNFunction(PhysicalType arg_type, AggregateFunction &function) {
+static void SpecializeMinMaxNFunction(PhysicalType arg_type, AggregateFunction &function) {
 	switch (arg_type) {
 	case PhysicalType::VARCHAR:
 		SpecializeMinMaxNFunction<MinMaxStringValue, COMPARATOR>(function);
@@ -521,6 +514,7 @@ void SpecializeMinMaxNFunction(PhysicalType arg_type, AggregateFunction &functio
 template <class COMPARATOR>
 unique_ptr<FunctionData> MinMaxNBind(ClientContext &context, AggregateFunction &function,
                                      vector<unique_ptr<Expression>> &arguments) {
+
 	for (auto &arg : arguments) {
 		if (arg->return_type.id() == LogicalTypeId::UNKNOWN) {
 			throw ParameterNotResolvedException();
@@ -532,38 +526,30 @@ unique_ptr<FunctionData> MinMaxNBind(ClientContext &context, AggregateFunction &
 	// Specialize the function based on the input types
 	SpecializeMinMaxNFunction<COMPARATOR>(val_type, function);
 
-	function.SetReturnType(LogicalType::LIST(arguments[0]->return_type));
+	function.return_type = LogicalType::LIST(arguments[0]->return_type);
 	return nullptr;
 }
 
 template <class COMPARATOR>
-AggregateFunction GetMinMaxNFunction() {
+static AggregateFunction GetMinMaxNFunction() {
 	return AggregateFunction({LogicalTypeId::ANY, LogicalType::BIGINT}, LogicalType::LIST(LogicalType::ANY), nullptr,
 	                         nullptr, nullptr, nullptr, nullptr, nullptr, MinMaxNBind<COMPARATOR>, nullptr);
 }
 
-LogicalType GetExportStateType(const AggregateFunction &function) {
-	auto struct_children_types = child_list_t<LogicalType> {};
-	struct_children_types.emplace_back("value", function.return_type);
-	struct_children_types.emplace_back("isset", LogicalType::BOOLEAN);
-	return LogicalType::STRUCT(std::move(struct_children_types));
-}
-
-} // namespace
 //---------------------------------------------------
 // Function Registration
 //---------------------------------------------------s
 AggregateFunctionSet MinFun::GetFunctions() {
 	AggregateFunctionSet min("min");
-	min.AddFunction(MinFunction::GetFunction().SetStructStateExport(GetExportStateType));
-	min.AddFunction(GetMinMaxNFunction<LessThan>().SetStructStateExport(GetExportStateType));
+	min.AddFunction(MinFunction::GetFunction());
+	min.AddFunction(GetMinMaxNFunction<LessThan>());
 	return min;
 }
 
 AggregateFunctionSet MaxFun::GetFunctions() {
 	AggregateFunctionSet max("max");
-	max.AddFunction(MaxFunction::GetFunction().SetStructStateExport(GetExportStateType));
-	max.AddFunction(GetMinMaxNFunction<GreaterThan>().SetStructStateExport(GetExportStateType));
+	max.AddFunction(MaxFunction::GetFunction());
+	max.AddFunction(GetMinMaxNFunction<GreaterThan>());
 	return max;
 }
 

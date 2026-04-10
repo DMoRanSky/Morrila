@@ -3,6 +3,8 @@
 
 #include "duckdb.h"
 
+using namespace std;
+
 // we only use functions that are cool to use in the 1.0 API
 TEST_CASE("Test without deprecated or future moved functions", "[capi]") {
 	duckdb_database database;
@@ -17,7 +19,7 @@ TEST_CASE("Test without deprecated or future moved functions", "[capi]") {
 	REQUIRE(duckdb_execute_prepared(statement, &result) == DuckDBSuccess);
 
 	REQUIRE(duckdb_column_count(&result) == 1);
-	REQUIRE(std::string(duckdb_column_name(&result, 0)) == "a");
+	REQUIRE(string(duckdb_column_name(&result, 0)) == "a");
 	REQUIRE(duckdb_column_type(&result, 0) == DUCKDB_TYPE_INTEGER);
 
 	auto chunk = duckdb_fetch_chunk(result);

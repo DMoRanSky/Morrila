@@ -42,18 +42,10 @@ struct CClientContextWrapper {
 	ClientContext &context;
 };
 
-struct CClientArrowOptionsWrapper {
-	explicit CClientArrowOptionsWrapper(ClientProperties &properties) : properties(properties) {};
-	ClientProperties properties;
-};
-
 struct PreparedStatementWrapper {
 	//! Map of name -> values
 	case_insensitive_map_t<BoundParameterData> values;
 	unique_ptr<PreparedStatement> statement;
-	bool success = true;
-	ErrorData error_data;
-	unordered_map<idx_t, string> param_index_to_name;
 };
 
 struct ExtractStatementsWrapper {
@@ -72,21 +64,13 @@ struct ArrowResultWrapper {
 };
 
 struct AppenderWrapper {
-	unique_ptr<BaseAppender> appender;
-	ErrorData error_data;
+	unique_ptr<Appender> appender;
+	string error;
 };
 
 struct TableDescriptionWrapper {
 	unique_ptr<TableDescription> description;
 	string error;
-};
-
-struct ErrorDataWrapper {
-	ErrorData error_data;
-};
-
-struct ExpressionWrapper {
-	unique_ptr<Expression> expr;
 };
 
 enum class CAPIResultSetType : uint8_t {
@@ -104,14 +88,10 @@ struct DuckDBResultData {
 	CAPIResultSetType result_set_type;
 };
 
-duckdb_type LogicalTypeIdToC(const LogicalTypeId type);
-LogicalTypeId LogicalTypeIdFromC(const duckdb_type type);
-idx_t GetCTypeSize(const duckdb_type type);
-duckdb_statement_type StatementTypeToC(const StatementType type);
-duckdb_error_type ErrorTypeToC(const ExceptionType type);
-ExceptionType ErrorTypeFromC(const duckdb_error_type type);
-
+duckdb_type ConvertCPPTypeToC(const LogicalType &type);
+LogicalTypeId ConvertCTypeToCPP(duckdb_type c_type);
+idx_t GetCTypeSize(duckdb_type type);
 duckdb_state DuckDBTranslateResult(unique_ptr<QueryResult> result, duckdb_result *out);
 bool DeprecatedMaterializeResult(duckdb_result *result);
-
+duckdb_statement_type StatementTypeToC(duckdb::StatementType statement_type);
 } // namespace duckdb

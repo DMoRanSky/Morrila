@@ -70,14 +70,12 @@ Motöread
 statement error
 select REPLACE(1)
 ----
-<REGEX>:.*Binder Error: No function matches.*
 
 statement error
 select REPLACE(1, 2)
 ----
-<REGEX>:.*Binder Error: No function matches.*
 
 statement error
 select REPLACE(1, 2, 3, 4)
 ----
-<REGEX>:.*Binder Error: No function matches.*
+

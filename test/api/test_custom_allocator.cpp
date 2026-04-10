@@ -4,6 +4,7 @@
 #include "duckdb/common/atomic.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 struct MyAllocateData : public PrivateAllocatorData {
 	MyAllocateData(atomic<idx_t> *memory_counter_p) : memory_counter(memory_counter_p) {

@@ -11,15 +11,34 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
-#include "duckdb/planner/bound_constraint.hpp"
 
 namespace duckdb {
 class TableCatalogEntry;
 
 class Index;
 
-struct BoundOnConflictInfo {
-	BoundOnConflictInfo();
+//! LogicalInsert represents an insertion of data into a base table
+class LogicalInsert : public LogicalOperator {
+public:
+	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_INSERT;
+
+public:
+	LogicalInsert(TableCatalogEntry &table, idx_t table_index);
+
+	vector<vector<unique_ptr<Expression>>> insert_values;
+	//! The insertion map ([table_index -> index in result, or DConstants::INVALID_INDEX if not specified])
+	physical_index_vector_t<idx_t> column_index_map;
+	//! The expected types for the INSERT statement (obtained from the column types)
+	vector<LogicalType> expected_types;
+	//! The base table to insert into
+	TableCatalogEntry &table;
+	idx_t table_index;
+	//! if returning option is used, return actual chunk to projection
+	bool return_chunk;
+	//! The default statements used by the table
+	vector<unique_ptr<Expression>> bound_defaults;
+	//! The constraints used by the table
+	vector<unique_ptr<BoundConstraint>> bound_constraints;
 
 	//! Which action to take on conflict
 	OnConflictAction action_type;
@@ -36,39 +55,13 @@ struct BoundOnConflictInfo {
 	// The types of the columns targeted by the DO UPDATE SET expressions
 	vector<LogicalType> set_types;
 	// The table_index referring to the column references qualified with 'excluded'
-	TableIndex excluded_table_index;
+	idx_t excluded_table_index = 0;
 	// The columns to fetch from the 'destination' table
 	vector<column_t> columns_to_fetch;
 	// The columns to fetch from the 'source' table
 	vector<column_t> source_columns;
 	//! True, if the INSERT OR REPLACE requires delete + insert.
 	bool update_is_del_and_insert;
-};
-
-//! LogicalInsert represents an insertion of data into a base table
-class LogicalInsert : public LogicalOperator {
-public:
-	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_INSERT;
-
-public:
-	LogicalInsert(TableCatalogEntry &table, TableIndex table_index);
-
-	vector<vector<unique_ptr<Expression>>> insert_values;
-	//! The insertion map ([table_index -> index in result, or DConstants::INVALID_INDEX if not specified])
-	physical_index_vector_t<idx_t> column_index_map;
-	//! The expected types for the INSERT statement (obtained from the column types)
-	vector<LogicalType> expected_types;
-	//! The base table to insert into
-	TableCatalogEntry &table;
-	TableIndex table_index;
-	//! if returning option is used, return actual chunk to projection
-	bool return_chunk;
-	//! The default statements used by the table
-	vector<unique_ptr<Expression>> bound_defaults;
-	//! The constraints used by the table
-	vector<unique_ptr<BoundConstraint>> bound_constraints;
-
-	BoundOnConflictInfo on_conflict_info;
 
 public:
 	void Serialize(Serializer &serializer) const override;
@@ -79,7 +72,7 @@ protected:
 	void ResolveTypes() override;
 
 	idx_t EstimateCardinality(ClientContext &context) override;
-	vector<TableIndex> GetTableIndex() const override;
+	vector<idx_t> GetTableIndex() const override;
 	string GetName() const override;
 
 private:

@@ -21,7 +21,7 @@ PreparedStatementVerifier::Create(const SQLStatement &statement,
 }
 
 void PreparedStatementVerifier::Extract() {
-	auto &select = *select_statement;
+	auto &select = *statement;
 	// replace all the constants from the select statement and replace them with parameter expressions
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	    *select.node, [&](unique_ptr<ParsedExpression> &child) { ConvertConstants(child); });
@@ -104,7 +104,7 @@ bool PreparedStatementVerifier::Run(
 		failed = true;
 	}
 	run(string(), std::move(dealloc_statement), parameters);
-	context.interrupt_state = ClientInterruptState::NOT_INTERRUPTED;
+	context.interrupted = false;
 
 	return failed;
 }

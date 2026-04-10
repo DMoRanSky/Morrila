@@ -32,8 +32,8 @@ TransactionData::TransactionData(transaction_t transaction_id_p, transaction_t s
 DuckTransaction::DuckTransaction(DuckTransactionManager &manager, ClientContext &context_p, transaction_t start_time,
                                  transaction_t transaction_id, idx_t catalog_version_p)
     : Transaction(manager, context_p), start_time(start_time), transaction_id(transaction_id), commit_id(0),
-      catalog_version(catalog_version_p), awaiting_cleanup(false), undo_buffer(*this, context_p),
-      storage(make_uniq<LocalStorage>(context_p, *this)) {
+      highest_active_query(0), catalog_version(catalog_version_p), awaiting_cleanup(false),
+      transaction_manager(manager), undo_buffer(*this, context_p), storage(make_uniq<LocalStorage>(context_p, *this)) {
 }
 
 DuckTransaction::~DuckTransaction() {
@@ -49,10 +49,6 @@ DuckTransaction &DuckTransaction::Get(ClientContext &context, Catalog &catalog) 
 		throw InternalException("DuckTransaction::Get called on non-DuckDB transaction");
 	}
 	return transaction.Cast<DuckTransaction>();
-}
-
-DuckTransactionManager &DuckTransaction::GetTransactionManager() {
-	return manager.Cast<DuckTransactionManager>();
 }
 
 LocalStorage &DuckTransaction::GetLocalStorage() {
@@ -78,13 +74,6 @@ void DuckTransaction::PushCatalogEntry(CatalogEntry &entry, data_ptr_t extra_dat
 		// then copy over the actual data
 		memcpy(ptr, extra_data, extra_data_size);
 	}
-}
-
-void DuckTransaction::PushAttach(AttachedDatabase &db) {
-	auto undo_entry = undo_buffer.CreateEntry(UndoFlags::ATTACHED_DATABASE, sizeof(AttachedDatabase *));
-	auto ptr = undo_entry.Ptr();
-	// store the pointer to the database
-	Store<CatalogEntry *>(&db, ptr);
 }
 
 void DuckTransaction::PushDelete(DataTable &table, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
@@ -130,12 +119,11 @@ void DuckTransaction::PushAppend(DataTable &table, idx_t start_row, idx_t row_co
 	append_info->count = row_count;
 }
 
-UndoBufferReference DuckTransaction::CreateUpdateInfo(idx_t type_size, DataTable &data_table, idx_t entries,
-                                                      idx_t row_group_start) {
+UndoBufferReference DuckTransaction::CreateUpdateInfo(idx_t type_size, idx_t entries) {
 	idx_t alloc_size = UpdateInfo::GetAllocSize(type_size);
 	auto undo_entry = undo_buffer.CreateEntry(UndoFlags::UPDATE_TUPLE, alloc_size);
 	auto &update_info = UpdateInfo::Get(undo_entry);
-	UpdateInfo::Initialize(update_info, data_table, transaction_id, row_group_start);
+	UpdateInfo::Initialize(update_info, transaction_id);
 	return undo_entry;
 }
 
@@ -158,7 +146,6 @@ void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const Se
 }
 
 void DuckTransaction::ModifyTable(DataTable &tbl) {
-	lock_guard<mutex> guard(modified_tables_lock);
 	auto table_ref = reference<DataTable>(tbl);
 	auto entry = modified_tables.find(table_ref);
 	if (entry != modified_tables.end()) {
@@ -173,15 +160,10 @@ bool DuckTransaction::ChangesMade() {
 }
 
 UndoBufferProperties DuckTransaction::GetUndoProperties() {
-	auto properties = undo_buffer.GetProperties();
-	properties.estimated_size += storage->EstimatedSize();
-	return properties;
+	return undo_buffer.GetProperties();
 }
 
 bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties) {
-	if (is_checkpoint_transaction) {
-		return false;
-	}
 	if (!ChangesMade()) {
 		// read-only transactions cannot trigger an automated checkpoint
 		return false;
@@ -193,7 +175,7 @@ bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBuffer
 		return false;
 	}
 	auto &storage_manager = db.GetStorageManager();
-	return storage_manager.AutomaticCheckpoint(properties.estimated_size);
+	return storage_manager.AutomaticCheckpoint(storage->EstimatedSize() + properties.estimated_size);
 }
 
 bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
@@ -203,33 +185,23 @@ bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
 	if (db.IsSystem()) {
 		return false;
 	}
-	if (db.GetRecoveryMode() == RecoveryMode::NO_WAL_WRITES) {
-		// WAL writes are explicitly disabled
-		return false;
-	}
 	auto &storage_manager = db.GetStorageManager();
-	if (!storage_manager.HasWAL()) {
+	auto log = storage_manager.GetWAL();
+	if (!log) {
 		return false;
 	}
 	return true;
 }
 
-ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &db,
-                                      unique_ptr<StorageCommitState> &commit_state) noexcept {
+ErrorData DuckTransaction::WriteToWAL(AttachedDatabase &db, unique_ptr<StorageCommitState> &commit_state) noexcept {
 	ErrorData error_data;
 	try {
 		D_ASSERT(ShouldWriteToWAL(db));
 		auto &storage_manager = db.GetStorageManager();
-		auto wal = storage_manager.GetWAL();
-		commit_state = storage_manager.GenStorageCommitState(*wal);
-
-		auto &profiler = *context.client_data->profiler;
-
-		auto commit_timer = profiler.StartTimer(MetricType::COMMIT_LOCAL_STORAGE_LATENCY);
+		auto log = storage_manager.GetWAL();
+		commit_state = storage_manager.GenStorageCommitState(*log);
 		storage->Commit(commit_state.get());
-
-		auto wal_timer = profiler.StartTimer(MetricType::WRITE_TO_WAL_LATENCY);
-		undo_buffer.WriteToWAL(*wal, commit_state.get());
+		undo_buffer.WriteToWAL(*log, commit_state.get());
 		if (commit_state->HasRowGroupData()) {
 			// if we have optimistically written any data AND we are writing to the WAL, we have written references to
 			// optimistically written blocks
@@ -253,22 +225,31 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 	return error_data;
 }
 
-ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
+ErrorData DuckTransaction::Commit(AttachedDatabase &db, transaction_t new_commit_id,
                                   unique_ptr<StorageCommitState> commit_state) noexcept {
-	this->commit_id = commit_info.commit_id;
+	// "checkpoint" parameter indicates if the caller will checkpoint. If checkpoint ==
+	//    true: Then this function will NOT write to the WAL or flush/persist.
+	//          This method only makes commit in memory, expecting caller to checkpoint/flush.
+	//    false: Then this function WILL write to the WAL and Flush/Persist it.
+	this->commit_id = new_commit_id;
 	if (!ChangesMade()) {
 		// no need to flush anything if we made no changes
 		return ErrorData();
+	}
+	for (auto &entry : modified_tables) {
+		auto &tbl = entry.first.get();
+		if (!tbl.IsMainTable()) {
+			return ErrorData(
+			    TransactionException("Attempting to modify table %s but another transaction has %s this table",
+			                         tbl.GetTableName(), tbl.TableModification()));
+		}
 	}
 	D_ASSERT(db.IsSystem() || db.IsTemporary() || !IsReadOnly());
 
 	UndoBuffer::IteratorState iterator_state;
 	try {
 		storage->Commit(commit_state.get());
-		undo_buffer.Commit(iterator_state, commit_info);
-		// if (DebugForceAbortCommit()) {
-		// 	throw InvalidInputException("Force revert");
-		// }
+		undo_buffer.Commit(iterator_state, commit_id);
 		if (commit_state) {
 			// if we have written to the WAL - flush after the commit has been successful
 			commit_state->FlushCommit();
@@ -298,38 +279,17 @@ void DuckTransaction::Cleanup(transaction_t lowest_active_transaction) {
 	undo_buffer.Cleanup(lowest_active_transaction);
 }
 
-void DuckTransaction::SetModifications(DatabaseModificationType type) {
-	if (!checkpoint_lock) {
-		bool require_write_lock = false;
-		require_write_lock = require_write_lock || type.UpdateData();
-		require_write_lock = require_write_lock || type.AlterTable();
-		require_write_lock = require_write_lock || type.CreateCatalogEntry();
-		require_write_lock = require_write_lock || type.DropCatalogEntry();
-		require_write_lock = require_write_lock || type.Sequence();
-		require_write_lock = require_write_lock || type.CreateIndex();
-
-		if (require_write_lock) {
-			// obtain a shared checkpoint lock to prevent concurrent checkpoints while this transaction is running
-			checkpoint_lock = GetTransactionManager().SharedCheckpointLock();
-		}
-	}
-	if (!vacuum_lock) {
-		bool require_vacuum_lock = false;
-		require_vacuum_lock = require_vacuum_lock || type.InsertData();
-		require_vacuum_lock = require_vacuum_lock || type.DeleteData();
-
-		if (require_vacuum_lock) {
-			vacuum_lock = GetTransactionManager().SharedVacuumLock();
-		}
-	}
+void DuckTransaction::SetReadWrite() {
+	Transaction::SetReadWrite();
+	// obtain a shared checkpoint lock to prevent concurrent checkpoints while this transaction is running
+	write_lock = transaction_manager.SharedCheckpointLock();
 }
 
 unique_ptr<StorageLockKey> DuckTransaction::TryGetCheckpointLock() {
-	if (!checkpoint_lock) {
-		return GetTransactionManager().TryGetCheckpointLock();
-	} else {
-		return GetTransactionManager().TryUpgradeCheckpointLock(*checkpoint_lock);
+	if (!write_lock) {
+		throw InternalException("TryUpgradeCheckpointLock - but thread has no shared lock!?");
 	}
+	return transaction_manager.TryUpgradeCheckpointLock(*write_lock);
 }
 
 shared_ptr<CheckpointLock> DuckTransaction::SharedLockTable(DataTableInfo &info) {

@@ -1,7 +1,7 @@
 #include "include/icu-datesub.hpp"
 #include "include/icu-datefunc.hpp"
 
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -9,6 +9,7 @@
 namespace duckdb {
 
 struct ICUCalendarSub : public ICUDateFunc {
+
 	//	ICU only has 32 bit precision for date parts, so it can overflow a high resolution.
 	//	Since there is no difference between ICU and the obvious calculations,
 	//	we make these using the DuckDB internal type.
@@ -102,7 +103,8 @@ struct ICUCalendarSub : public ICUDateFunc {
 		if (part_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			// Common case of constant part.
 			if (ConstantVector::IsNull(part_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
 				auto part_func = SubtractFactory(GetDatePartSpecifier(specifier));
@@ -137,10 +139,10 @@ struct ICUCalendarSub : public ICUDateFunc {
 		return ScalarFunction({LogicalType::VARCHAR, type, type}, LogicalType::BIGINT, ICUDateSubFunction<TA>, Bind);
 	}
 
-	static void AddFunctions(const string &name, ExtensionLoader &loader) {
+	static void AddFunctions(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(GetFunction<timestamp_t>(LogicalType::TIMESTAMP_TZ));
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
@@ -190,6 +192,7 @@ ICUDateFunc::part_sub_t ICUDateFunc::SubtractFactory(DatePartSpecifier type) {
 // MS-SQL differences can be computed using ICU by truncating both arguments
 // to the desired part precision and then applying ICU subtraction/difference
 struct ICUCalendarDiff : public ICUDateFunc {
+
 	template <typename T>
 	static int64_t DifferenceFunc(icu::Calendar *calendar, timestamp_t start_date, timestamp_t end_date,
 	                              part_trunc_t trunc_func, part_sub_t sub_func) {
@@ -232,7 +235,8 @@ struct ICUCalendarDiff : public ICUDateFunc {
 		if (part_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			// Common case of constant part.
 			if (ConstantVector::IsNull(part_arg)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
 				const auto part = GetDatePartSpecifier(specifier);
@@ -271,19 +275,19 @@ struct ICUCalendarDiff : public ICUDateFunc {
 		return ScalarFunction({LogicalType::VARCHAR, type, type}, LogicalType::BIGINT, ICUDateDiffFunction<TA>, Bind);
 	}
 
-	static void AddFunctions(const string &name, ExtensionLoader &loader) {
+	static void AddFunctions(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(GetFunction<timestamp_t>(LogicalType::TIMESTAMP_TZ));
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
-void RegisterICUDateSubFunctions(ExtensionLoader &loader) {
-	ICUCalendarSub::AddFunctions("date_sub", loader);
-	ICUCalendarSub::AddFunctions("datesub", loader);
+void RegisterICUDateSubFunctions(DatabaseInstance &db) {
+	ICUCalendarSub::AddFunctions("date_sub", db);
+	ICUCalendarSub::AddFunctions("datesub", db);
 
-	ICUCalendarDiff::AddFunctions("date_diff", loader);
-	ICUCalendarDiff::AddFunctions("datediff", loader);
+	ICUCalendarDiff::AddFunctions("date_diff", db);
+	ICUCalendarDiff::AddFunctions("datediff", db);
 }
 
 } // namespace duckdb

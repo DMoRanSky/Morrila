@@ -73,10 +73,8 @@ NULL
 statement error
 select 'a%c' ilike 'a$%C' escape '///';
 ----
-<REGEX>:.*Syntax Error: Invalid escape string.*
 
 # escape must be a constant
 statement error
 SELECT str ILIKE pat ESCAPE str FROM tbl
 ----
-<REGEX>:.*Syntax Error: Invalid escape string.*

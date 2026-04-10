@@ -1,5 +1,4 @@
 #include "duckdb/function/window/window_index_tree.hpp"
-#include "duckdb/function/window/window_collection.hpp"
 
 #include <utility>
 
@@ -15,46 +14,37 @@ WindowIndexTree::WindowIndexTree(ClientContext &context, const BoundOrderModifie
     : WindowIndexTree(context, order_bys.orders, sort_idx, count) {
 }
 
-unique_ptr<LocalSinkState> WindowIndexTree::GetLocalState(ExecutionContext &context) {
-	return make_uniq<WindowIndexTreeLocalState>(context, *this);
+unique_ptr<WindowAggregatorState> WindowIndexTree::GetLocalState() {
+	return make_uniq<WindowIndexTreeLocalState>(*this);
 }
 
-WindowIndexTreeLocalState::WindowIndexTreeLocalState(ExecutionContext &context, WindowIndexTree &index_tree)
-    : WindowMergeSortTreeLocalState(context, index_tree), index_tree(index_tree) {
+WindowIndexTreeLocalState::WindowIndexTreeLocalState(WindowIndexTree &index_tree)
+    : WindowMergeSortTreeLocalState(index_tree), index_tree(index_tree) {
 }
 
 void WindowIndexTreeLocalState::BuildLeaves() {
-	auto &collection = *window_tree.sorted;
-	if (!collection.Count()) {
+	auto &global_sort = *index_tree.global_sort;
+	if (global_sort.sorted_blocks.empty()) {
 		return;
 	}
 
-	// Find our chunk range
-	const auto block_begin = (build_task * collection.ChunkCount()) / window_tree.total_tasks;
-	const auto block_end = ((build_task + 1) * collection.ChunkCount()) / window_tree.total_tasks;
-
-	//	Scan the index column (the last one)
-	vector<column_t> index_ids(1, window_tree.scan_cols.size() - 1);
-	WindowCollectionChunkScanner scanner(collection, index_ids, block_begin);
-	auto &payload_chunk = scanner.chunk;
-
-	idx_t row_idx = scanner.Scanned();
-	for (auto block_curr = block_begin; block_curr < block_end; ++block_curr) {
-		if (!scanner.Scan()) {
-			break;
-		}
+	PayloadScanner scanner(global_sort, build_task);
+	idx_t row_idx = index_tree.block_starts[build_task];
+	for (;;) {
+		payload_chunk.Reset();
+		scanner.Scan(payload_chunk);
 		const auto count = payload_chunk.size();
 		if (count == 0) {
 			break;
 		}
 		auto &indices = payload_chunk.data[0];
-		if (window_tree.mst32) {
-			auto &sorted = window_tree.mst32->LowestLevel();
-			auto data = FlatVector::GetData<int32_t>(indices);
+		if (index_tree.mst32) {
+			auto &sorted = index_tree.mst32->LowestLevel();
+			auto data = FlatVector::GetData<uint32_t>(indices);
 			std::copy(data, data + count, sorted.data() + row_idx);
 		} else {
-			auto &sorted = window_tree.mst64->LowestLevel();
-			auto data = FlatVector::GetData<int64_t>(indices);
+			auto &sorted = index_tree.mst64->LowestLevel();
+			auto data = FlatVector::GetData<uint64_t>(indices);
 			std::copy(data, data + count, sorted.data() + row_idx);
 		}
 		row_idx += count;

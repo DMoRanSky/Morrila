@@ -13,11 +13,13 @@ ArrowQueryResult::ArrowQueryResult(StatementType statement_type, StatementProper
       batch_size(batch_size) {
 }
 
-ArrowQueryResult::ArrowQueryResult(ErrorData error)
-    : QueryResult(QueryResultType::ARROW_RESULT, std::move(error)), batch_size(0) {
+ArrowQueryResult::ArrowQueryResult(ErrorData error) : QueryResult(QueryResultType::ARROW_RESULT, std::move(error)) {
 }
 
-unique_ptr<DataChunk> ArrowQueryResult::FetchInternal() {
+unique_ptr<DataChunk> ArrowQueryResult::Fetch() {
+	throw NotImplementedException("Can't 'Fetch' from ArrowQueryResult");
+}
+unique_ptr<DataChunk> ArrowQueryResult::FetchRaw() {
 	throw NotImplementedException("Can't 'FetchRaw' from ArrowQueryResult");
 }
 
@@ -28,7 +30,7 @@ string ArrowQueryResult::ToString() {
 
 vector<unique_ptr<ArrowArrayWrapper>> ArrowQueryResult::ConsumeArrays() {
 	if (HasError()) {
-		throw InvalidInputException("Attempting to fetch ArrowArrays from an unsuccessful query result: Error %s",
+		throw InvalidInputException("Attempting to fetch ArrowArrays from an unsuccessful query result\n: Error %s",
 		                            GetError());
 	}
 	return std::move(arrays);
@@ -36,7 +38,7 @@ vector<unique_ptr<ArrowArrayWrapper>> ArrowQueryResult::ConsumeArrays() {
 
 vector<unique_ptr<ArrowArrayWrapper>> &ArrowQueryResult::Arrays() {
 	if (HasError()) {
-		throw InvalidInputException("Attempting to fetch ArrowArrays from an unsuccessful query result: Error %s",
+		throw InvalidInputException("Attempting to fetch ArrowArrays from an unsuccessful query result\n: Error %s",
 		                            GetError());
 	}
 	return arrays;

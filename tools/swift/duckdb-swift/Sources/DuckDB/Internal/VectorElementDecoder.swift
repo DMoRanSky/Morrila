@@ -22,11 +22,7 @@
 //  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 //  IN THE SOFTWARE.
 
-#if compiler(>=6.0)
-internal import Cduckdb
-#else
 @_implementationOnly import Cduckdb
-#endif
 import Foundation
 
 // MARK: - Top Level Decoder
@@ -129,10 +125,6 @@ extension VectorElementDataDecoder {
     
     func decodeNil() -> Bool {
       element.unwrapNull()
-    }
-      
-    func decode(_ type: Bool.Type) throws -> Bool {
-      try attemptDecode { try element.unwrap(type) }
     }
     
     func decode(_ type: Int.Type) throws -> Int {

@@ -5,7 +5,7 @@
 statement error
 LOAD 'README.md';
 ----
-Permission Error: DuckDB extensions are files ending with '.duckdb_extension', loading different files is not possible, error while loading from 'README.md', consider 'INSTALL <path>; LOAD <name>;'
+The file is not a DuckDB extension. The metadata at the end of the file is invalid
 
 statement ok
 SET allow_extensions_metadata_mismatch=true;
@@ -14,12 +14,12 @@ SET allow_extensions_metadata_mismatch=true;
 statement error
 LOAD 'README.md';
 ----
-Permission Error: DuckDB extensions are files ending with '.duckdb_extension', loading different files is not possible, error while loading from 'README.md', consider 'INSTALL <path>; LOAD <name>;'
+Error: Extension "README.md" could not be loaded
 
 statement error
-LOAD '{DATA_DIR}/csv/no_opt.csv';
+LOAD 'data/csv/no_opt.csv';
 ----
-Permission Error: DuckDB extensions are files ending with '.duckdb_extension', loading different files is not possible, error while loading from
+is not a DuckDB extension. Valid DuckDB extensions must be at least 512 bytes
 
 statement ok
 SET allow_unsigned_extensions=false;
@@ -27,4 +27,4 @@ SET allow_unsigned_extensions=false;
 statement error
 LOAD 'README.md';
 ----
-Permission Error: DuckDB extensions are files ending with '.duckdb_extension', loading different files is not possible, error while loading from 'README.md', consider 'INSTALL <path>; LOAD <name>;'
+The file is not a DuckDB extension. The metadata at the end of the file is invalid

@@ -6,10 +6,6 @@ namespace duckdb {
 MultiFileReaderInterface::~MultiFileReaderInterface() {
 }
 
-void MultiFileReaderInterface::InitializeInterface(ClientContext &context, MultiFileReader &reader,
-                                                   MultiFileList &file_list) {
-}
-
 void MultiFileReaderInterface::FinalizeCopyBind(ClientContext &context, BaseFileReaderOptions &options,
                                                 const vector<string> &expected_names,
                                                 const vector<LogicalType> &expected_types) {
@@ -43,10 +39,6 @@ void MultiFileReaderInterface::FinishReading(ClientContext &context, GlobalTable
 
 unique_ptr<MultiFileReaderInterface> MultiFileReaderInterface::Copy() {
 	throw InternalException("MultiFileReaderInterface::Copy is not implemented for this file interface");
-}
-
-FileGlobInput MultiFileReaderInterface::GetGlobInput() {
-	return FileGlobOptions::DISALLOW_EMPTY;
 }
 
 } // namespace duckdb

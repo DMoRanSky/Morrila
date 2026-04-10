@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 #include "core_functions/scalar/list_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -7,8 +5,6 @@
 #include "duckdb/common/types/timestamp.hpp"
 
 namespace duckdb {
-
-namespace {
 
 struct NumericRangeInfo {
 	using TYPE = int64_t;
@@ -192,7 +188,7 @@ private:
 };
 
 template <class OP, bool INCLUSIVE_BOUND>
-void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(result.GetType().id() == LogicalTypeId::LIST);
 
 	RangeInfoStruct<OP, INCLUSIVE_BOUND> info(args);
@@ -205,7 +201,7 @@ void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 			break;
 		}
 	}
-	auto list_data = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto list_data = FlatVector::GetData<list_entry_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 	uint64_t total_size = 0;
 	for (idx_t i = 0; i < args_size; i++) {
@@ -222,7 +218,7 @@ void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 
 	// now construct the child vector of the list
 	ListVector::Reserve(result, total_size);
-	auto range_data = FlatVector::GetDataMutable<typename OP::TYPE>(ListVector::GetEntry(result));
+	auto range_data = FlatVector::GetData<typename OP::TYPE>(ListVector::GetEntry(result));
 	idx_t total_idx = 0;
 	for (idx_t i = 0; i < args_size; i++) {
 		typename OP::TYPE start_value = info.StartListValue(i);
@@ -243,8 +239,6 @@ void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 	result.Verify(args.size());
 }
 
-} // namespace
-
 ScalarFunctionSet ListRangeFun::GetFunctions() {
 	// the arguments and return types are actually set in the binder function
 	ScalarFunctionSet range_set;
@@ -260,7 +254,7 @@ ScalarFunctionSet ListRangeFun::GetFunctions() {
 	                                     LogicalType::LIST(LogicalType::TIMESTAMP),
 	                                     ListRangeFunction<TimestampRangeInfo, false>));
 	for (auto &func : range_set.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return range_set;
 }
@@ -279,7 +273,7 @@ ScalarFunctionSet GenerateSeriesFun::GetFunctions() {
 	                                           LogicalType::LIST(LogicalType::TIMESTAMP),
 	                                           ListRangeFunction<TimestampRangeInfo, true>));
 	for (auto &func : generate_series.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return generate_series;
 }

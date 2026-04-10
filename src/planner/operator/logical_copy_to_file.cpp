@@ -69,10 +69,6 @@ void LogicalCopyToFile::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault(217, "write_empty_file", write_empty_file, true);
 	serializer.WritePropertyWithDefault(218, "preserve_order", preserve_order, PreserveOrderType::AUTOMATIC);
 	serializer.WritePropertyWithDefault(219, "hive_file_pattern", hive_file_pattern, true);
-	serializer.WritePropertyWithDefault(220, "file_size_bytes", file_size_bytes, optional_idx());
-	serializer.WritePropertyWithDefault(221, "batch_size", batch_size, optional_idx());
-	serializer.WritePropertyWithDefault(222, "batch_size_bytes", batch_size_bytes, optional_idx());
-	serializer.WritePropertyWithDefault(223, "batches_per_file", batches_per_file, optional_idx());
 }
 
 unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deserializer) {
@@ -121,10 +117,6 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 	auto preserve_order =
 	    deserializer.ReadPropertyWithExplicitDefault(218, "preserve_order", PreserveOrderType::AUTOMATIC);
 	auto hive_file_pattern = deserializer.ReadPropertyWithExplicitDefault(219, "hive_file_pattern", true);
-	auto file_size_bytes = deserializer.ReadPropertyWithExplicitDefault(220, "file_size_bytes", optional_idx());
-	auto batch_size = deserializer.ReadPropertyWithExplicitDefault(221, "batch_size", optional_idx());
-	auto batch_size_bytes = deserializer.ReadPropertyWithExplicitDefault(222, "batch_size_bytes", optional_idx());
-	auto batches_per_file = deserializer.ReadPropertyWithExplicitDefault(223, "batches_per_file", optional_idx());
 
 	if (!has_serialize) {
 		// If not serialized, re-bind with the copy info
@@ -132,7 +124,7 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 			throw InternalException("Copy function \"%s\" has neither bind nor (de)serialize", function.name);
 		}
 
-		CopyFunctionBindInput function_bind_input(*copy_info, function.function_info);
+		CopyFunctionBindInput function_bind_input(*copy_info);
 		auto names_to_write = GetNamesWithoutPartitions(names, partition_columns, write_partition_columns);
 		auto types_to_write = GetTypesWithoutPartitions(expected_types, partition_columns, write_partition_columns);
 		bind_data = function.copy_to_bind(context, function_bind_input, names_to_write, types_to_write);
@@ -155,10 +147,6 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 	result->write_empty_file = write_empty_file;
 	result->preserve_order = preserve_order;
 	result->hive_file_pattern = hive_file_pattern;
-	result->file_size_bytes = file_size_bytes;
-	result->batch_size = batch_size;
-	result->batch_size_bytes = batch_size_bytes;
-	result->batches_per_file = batches_per_file;
 
 	return std::move(result);
 }
@@ -166,8 +154,8 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 vector<ColumnBinding> LogicalCopyToFile::GetColumnBindings() {
 	idx_t return_column_count = GetCopyFunctionReturnLogicalTypes(return_type).size();
 	vector<ColumnBinding> result;
-	for (auto return_col_idx : ProjectionIndex::GetIndexes(return_column_count)) {
-		result.emplace_back(TableIndex(0), return_col_idx);
+	for (idx_t i = 0; i < return_column_count; i++) {
+		result.emplace_back(0, i);
 	}
 	return result;
 }

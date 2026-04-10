@@ -4,7 +4,6 @@
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
-#include "duckdb/planner/operator/logical_empty_result.hpp"
 
 namespace duckdb {
 unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperator> op) {
@@ -45,18 +44,15 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 		}
 	}
 
-	if (get.table_filters.HasFilters() || !get.function.filter_pushdown) {
+	if (!get.table_filters.filters.empty() || !get.function.filter_pushdown) {
 		// the table function does not support filter pushdown: push a LogicalFilter on top
 		return FinishPushdown(std::move(op));
 	}
-	if (PushFilters() == FilterResult::UNSATISFIABLE) {
-		return make_uniq<LogicalEmptyResult>(std::move(op));
-	}
+	PushFilters();
 
-	auto &column_ids = get.GetColumnIds();
 	//! We generate the table filters that will be executed during the table scan
 	vector<FilterPushdownResult> pushdown_results;
-	get.table_filters = combiner.GenerateTableScanFilters(column_ids, pushdown_results);
+	get.table_filters = combiner.GenerateTableScanFilters(get.GetColumnIds(), pushdown_results);
 
 	GenerateFilters();
 
@@ -74,13 +70,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 			continue;
 		}
 		auto &expr = *filters[i]->filter;
-		if (expr.IsVolatile()) {
-			continue;
-		}
-		// Allow pushing down filters that can throw only if there is a single expression
-		// For now, do not push down single expressions with IN either. Later we can change InClauseRewriter to handle
-		// this case
-		if (expr.CanThrow() && (expr.type == ExpressionType::COMPARE_IN || filters.size() > 1)) {
+		if (expr.IsVolatile() || expr.CanThrow()) {
+			// we cannot push down volatile or throwing expressions
 			continue;
 		}
 		pushdown_result = combiner.TryPushdownGenericExpression(get, expr);

@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "core_functions/scalar/struct_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -21,12 +19,17 @@ static void StructInsertFunction(DataChunk &args, ExpressionState &state, Vector
 	// Assign the original child entries to the STRUCT.
 	for (idx_t i = 0; i < starting_child_entries.size(); i++) {
 		auto &starting_child = starting_child_entries[i];
-		result_child_entries[i].Reference(starting_child);
+		result_child_entries[i]->Reference(*starting_child);
 	}
 
 	// Assign the new children to the result vector.
 	for (idx_t i = 1; i < args.ColumnCount(); i++) {
-		result_child_entries[starting_child_entries.size() + i - 1].Reference(args.data[i]);
+		result_child_entries[starting_child_entries.size() + i - 1]->Reference(args.data[i]);
+	}
+
+	result.Verify(args.size());
+	if (args.AllConstant()) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
 }
 
@@ -65,11 +68,11 @@ static unique_ptr<FunctionData> StructInsertBind(ClientContext &context, ScalarF
 		new_children.push_back(make_pair(child->GetAlias(), arguments[i]->return_type));
 	}
 
-	bound_function.SetReturnType(LogicalType::STRUCT(new_children));
-	return make_uniq<VariableReturnBindData>(bound_function.GetReturnType());
+	bound_function.return_type = LogicalType::STRUCT(new_children);
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
 }
 
-static unique_ptr<BaseStatistics> StructInsertStats(ClientContext &context, FunctionStatisticsInput &input) {
+unique_ptr<BaseStatistics> StructInsertStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	auto new_stats = StructStats::CreateUnknown(expr.return_type);
@@ -90,10 +93,10 @@ static unique_ptr<BaseStatistics> StructInsertStats(ClientContext &context, Func
 
 ScalarFunction StructInsertFun::GetFunction() {
 	ScalarFunction fun({}, LogicalTypeId::STRUCT, StructInsertFunction, StructInsertBind, nullptr, StructInsertStats);
-	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
 	fun.varargs = LogicalType::ANY;
-	fun.SetSerializeCallback(VariableReturnBindData::Serialize);
-	fun.SetDeserializeCallback(VariableReturnBindData::Deserialize);
+	fun.serialize = VariableReturnBindData::Serialize;
+	fun.deserialize = VariableReturnBindData::Deserialize;
 	return fun;
 }
 

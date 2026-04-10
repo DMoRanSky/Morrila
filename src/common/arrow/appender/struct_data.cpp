@@ -1,5 +1,3 @@
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/appender/struct_data.hpp"
 
@@ -20,13 +18,13 @@ void ArrowStructData::Append(ArrowAppendData &append_data, Vector &input, idx_t 
 	UnifiedVectorFormat format;
 	input.ToUnifiedFormat(input_size, format);
 	idx_t size = to - from;
-	append_data.AppendValidity(format, from, to);
+	AppendValidity(append_data, format, from, to);
 	// append the children of the struct
 	auto &children = StructVector::GetEntries(input);
 	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
 		auto &child = children[child_idx];
 		auto &child_data = *append_data.child_data[child_idx];
-		child_data.append_vector(child_data, child, from, to, size);
+		child_data.append_vector(child_data, *child, from, to, size);
 	}
 	append_data.row_count += size;
 }

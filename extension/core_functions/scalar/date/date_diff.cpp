@@ -14,8 +14,6 @@ namespace duckdb {
 
 // This function is an implementation of the "period-crossing" date difference function from T-SQL
 // https://docs.microsoft.com/en-us/sql/t-sql/functions/datediff-transact-sql?view=sql-server-ver15
-
-namespace {
 struct DateDiff {
 	template <class TA, class TB, class TR, class OP>
 	static inline void BinaryExecute(Vector &left, Vector &right, Vector &result, idx_t count) {
@@ -102,7 +100,7 @@ struct DateDiff {
 		template <class TA, class TB, class TR>
 		static inline TR Operation(TA startdate, TB enddate) {
 			//	Weeks do not count Monday crossings, just distance
-			return (TR(enddate.days) - TR(startdate.days)) / Interval::DAYS_PER_WEEK;
+			return (enddate.days - startdate.days) / Interval::DAYS_PER_WEEK;
 		}
 	};
 
@@ -116,9 +114,7 @@ struct DateDiff {
 	struct MicrosecondsOperator {
 		template <class TA, class TB, class TR>
 		static inline TR Operation(TA startdate, TB enddate) {
-			const auto start = Date::EpochMicroseconds(startdate);
-			const auto end = Date::EpochMicroseconds(enddate);
-			return SubtractOperatorOverflowCheck::Operation<int64_t, int64_t, int64_t>(end, start);
+			return Date::EpochMicroseconds(enddate) - Date::EpochMicroseconds(startdate);
 		}
 	};
 
@@ -312,7 +308,7 @@ int64_t DateDiff::HoursOperator::Operation(dtime_t startdate, dtime_t enddate) {
 }
 
 template <typename TA, typename TB, typename TR>
-int64_t DifferenceDates(DatePartSpecifier type, TA startdate, TB enddate) {
+static int64_t DifferenceDates(DatePartSpecifier type, TA startdate, TB enddate) {
 	switch (type) {
 	case DatePartSpecifier::YEAR:
 		return DateDiff::YearOperator::template Operation<TA, TB, TR>(startdate, enddate);
@@ -366,7 +362,7 @@ struct DateDiffTernaryOperator {
 };
 
 template <typename TA, typename TB, typename TR>
-void DateDiffBinaryExecutor(DatePartSpecifier type, Vector &left, Vector &right, Vector &result, idx_t count) {
+static void DateDiffBinaryExecutor(DatePartSpecifier type, Vector &left, Vector &right, Vector &result, idx_t count) {
 	switch (type) {
 	case DatePartSpecifier::YEAR:
 		DateDiff::BinaryExecute<TA, TB, TR, DateDiff::YearOperator>(left, right, result, count);
@@ -422,7 +418,7 @@ void DateDiffBinaryExecutor(DatePartSpecifier type, Vector &left, Vector &right,
 }
 
 template <typename T>
-void DateDiffFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void DateDiffFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 3);
 	auto &part_arg = args.data[0];
 	auto &start_arg = args.data[1];
@@ -431,7 +427,8 @@ void DateDiffFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	if (part_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		// Common case of constant part.
 		if (ConstantVector::IsNull(part_arg)) {
-			ConstantVector::SetNull(result);
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			ConstantVector::SetNull(result, true);
 		} else {
 			const auto type = GetDatePartSpecifier(ConstantVector::GetData<string_t>(part_arg)->GetString());
 			DateDiffBinaryExecutor<T, T, int64_t>(type, start_arg, end_arg, result, args.size());
@@ -442,8 +439,6 @@ void DateDiffFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		    DateDiffTernaryOperator::Operation<string_t, T, T, int64_t>);
 	}
 }
-
-} // namespace
 
 ScalarFunctionSet DateDiffFun::GetFunctions() {
 	ScalarFunctionSet date_diff("date_diff");

@@ -9,7 +9,6 @@ PRAGMA enable_verification
 statement error
 CREATE TEMP TABLE t0(c0 AS (1));
 ----
-<REGEX>:.*Binder Error.*not supported.*
 
 # Function doesn't exist
 statement error
@@ -18,7 +17,7 @@ CREATE TABLE unit (
 	total_profit BOOLEAN GENERATED ALWAYS AS(non_existant_function() * price) VIRTUAL,
 );
 ----
-<REGEX>:.*Catalog Error.*does not exist.*
+non_existant_function
 
 # Column doesn't exist
 statement error
@@ -26,7 +25,7 @@ CREATE TABLE unit (
 	total_profit BOOLEAN GENERATED ALWAYS AS(price * 2) VIRTUAL,
 );
 ----
-<REGEX>:.*Binder Error.*price.*
+price
 
 #Expression (word) is cast to BOOLEAN
 statement ok
@@ -45,7 +44,6 @@ SELECT * FROM tbl
 statement error
 INSERT INTO tbl VALUES ('string', 5, 12);
 ----
-<REGEX>:.*Constraint Error.*Incorrect value for generated column.*
 
 # Expression contains a subquery
 statement error
@@ -56,7 +54,7 @@ CREATE TABLE unit (
     amount_sold INTEGER,
 );
 ----
-<REGEX>:.*Parser Error.*isn't allowed.*
+Expression of generated column "total_profit" contains a subquery, which isn't allowed
 
 statement ok
 CREATE MACRO my_macro() AS (
@@ -72,7 +70,7 @@ CREATE TABLE unit (
     amount_sold INTEGER,
 );
 ----
-<REGEX>:.*Binder Error.*Failed to bind generated column.*
+Failed to bind generated column 'total_profit' because the expression contains a subquery
 
 # Duplicate column definition
 statement error
@@ -83,7 +81,6 @@ CREATE TABLE unit (
     amount_sold INTEGER,
 );
 ----
-<REGEX>:.*Catalog Error.*already exists.*
 
 statement ok
 CREATE TABLE unit (
@@ -108,4 +105,3 @@ ALTER TABLE unit DROP COLUMN total_profit;
 statement error
 SELECT total_profit FROM unit;
 ----
-<REGEX>:.*Binder Error.*not found.*

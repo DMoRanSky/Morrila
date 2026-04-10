@@ -4,6 +4,7 @@
 #include "test_helpers.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 static void test_in_memory_initialization(string dbdir) {
 	duckdb::unique_ptr<FileSystem> fs = FileSystem::CreateLocal();

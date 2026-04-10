@@ -22,12 +22,10 @@ CREATE TABLE T (a INTEGER USING COMPRESSION 'bla')
 statement error
 CREATE TABLE T (a INTEGER USING COMPRESSION )
 ----
-Parser Error: syntax error at or near ")"
 
 statement error
 CREATE TABLE T (a INTEGER NOT NULL USING COMPRESSION )
 ----
-Parser Error: syntax error at or near ")"
 
 statement error
 CREATE TABLE T (a INTEGER USING COMPRESSION bla)
@@ -45,7 +43,7 @@ CREATE TABLE T (a INTEGER USING COMPRESSION RLE, b VARCHAR )
 statement ok
 DROP TABLE T
 
-load {TEST_DIR}/test_compression_hint.db
+load __TEST_DIR__/test_compression_hint.db
 
 statement ok
 CREATE TABLE T (a INTEGER USING COMPRESSION RLE, b INTEGER USING COMPRESSION BITPACKING, C INTEGER USING COMPRESSION UNCOMPRESSED)

@@ -5,6 +5,9 @@
 # scalar stats
 
 statement ok
+pragma enable_verification
+
+statement ok
 create table a (i double, j double);
 
 statement ok

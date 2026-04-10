@@ -30,4 +30,4 @@ select * from index_tbl;
 statement error
 insert into index_tbl values (5, 10) on conflict on constraint other_index do update set j = excluded.j;
 ----
-<REGEX>:.*ON CONSTRAINT conflict target is not supported yet.*
+Not implemented Error: ON CONSTRAINT conflict target is not supported yet

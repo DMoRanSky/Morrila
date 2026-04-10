@@ -14,10 +14,10 @@ onlyif compression=dict_fsst
 statement ok
 SET storage_compatibility_version='v1.3.0'
 
-load {TEST_DIR}/test_null_{compression}.db
+load __TEST_DIR__/test_null_${compression}.db
 
 statement ok
-PRAGMA force_compression='{compression}'
+PRAGMA force_compression='${compression}'
 
 # single NULL value
 statement ok
@@ -61,13 +61,13 @@ statement ok
 select compression from pragma_storage_info('nulls') WHERE segment_type ILIKE 'VARCHAR' LIMIT 1;
 
 query I
-select current_setting('force_compression') ILIKE '{compression}'
+select current_setting('force_compression') ILIKE '${compression}'
 ----
 true
 
 # mix with non-null values
 statement ok
-CREATE OR REPLACE TABLE nulls AS FROM nulls UNION ALL VALUES (1), (1), (1), (2), (2), (2)
+INSERT INTO nulls VALUES (1), (1), (1), (2), (2), (2)
 
 query III
 SELECT COUNT(*), COUNT(i::INT), SUM(i::INT) FROM nulls
@@ -85,7 +85,7 @@ statement ok
 CHECKPOINT
 
 query I
-SELECT lower(compression)='{compression}' FROM pragma_storage_info('nulls') WHERE segment_type ILIKE 'VARCHAR' LIMIT 1
+SELECT lower(compression)='${compression}' FROM pragma_storage_info('nulls') WHERE segment_type ILIKE 'VARCHAR' LIMIT 1
 ----
 1
 

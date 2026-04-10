@@ -4,15 +4,13 @@
 // IS NULL/NOT IS NULL operators
 //===--------------------------------------------------------------------===//
 
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
 namespace duckdb {
 
 template <bool INVERSE>
-static void IsNullLoop(Vector &input, Vector &result, idx_t count) {
+void IsNullLoop(Vector &input, Vector &result, idx_t count) {
 	D_ASSERT(result.GetType() == LogicalType::BOOLEAN);
 
 	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
@@ -20,11 +18,14 @@ static void IsNullLoop(Vector &input, Vector &result, idx_t count) {
 		auto result_data = ConstantVector::GetData<bool>(result);
 		*result_data = INVERSE ? !ConstantVector::IsNull(input) : ConstantVector::IsNull(input);
 	} else {
+		UnifiedVectorFormat data;
+		input.ToUnifiedFormat(count, data);
+
 		result.SetVectorType(VectorType::FLAT_VECTOR);
-		auto result_data = FlatVector::Writer<bool>(result, count);
-		auto entries = input.Validity(count);
+		auto result_data = FlatVector::GetData<bool>(result);
 		for (idx_t i = 0; i < count; i++) {
-			result_data[i] = INVERSE ? entries.IsValid(i) : !entries.IsValid(i);
+			auto idx = data.sel->get_index(i);
+			result_data[i] = INVERSE ? data.validity.RowIsValid(idx) : !data.validity.RowIsValid(idx);
 		}
 	}
 }
@@ -44,12 +45,15 @@ bool VectorOperations::HasNotNull(Vector &input, idx_t count) {
 	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		return !ConstantVector::IsNull(input);
 	} else {
-		auto entries = input.Validity(count);
-		if (!entries.CanHaveNull()) {
+		UnifiedVectorFormat data;
+		input.ToUnifiedFormat(count, data);
+
+		if (data.validity.AllValid()) {
 			return true;
 		}
 		for (idx_t i = 0; i < count; i++) {
-			if (entries.IsValid(i)) {
+			auto idx = data.sel->get_index(i);
+			if (data.validity.RowIsValid(idx)) {
 				return true;
 			}
 		}
@@ -64,12 +68,15 @@ bool VectorOperations::HasNull(Vector &input, idx_t count) {
 	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		return ConstantVector::IsNull(input);
 	} else {
-		auto entries = input.Validity(count);
-		if (!entries.CanHaveNull()) {
+		UnifiedVectorFormat data;
+		input.ToUnifiedFormat(count, data);
+
+		if (data.validity.AllValid()) {
 			return false;
 		}
 		for (idx_t i = 0; i < count; i++) {
-			if (!entries.IsValid(i)) {
+			auto idx = data.sel->get_index(i);
+			if (!data.validity.RowIsValid(idx)) {
 				return true;
 			}
 		}
@@ -82,7 +89,7 @@ idx_t VectorOperations::CountNotNull(Vector &input, const idx_t count) {
 
 	UnifiedVectorFormat vdata;
 	input.ToUnifiedFormat(count, vdata);
-	if (vdata.validity.CannotHaveNull()) {
+	if (vdata.validity.AllValid()) {
 		return count;
 	}
 	switch (input.GetVectorType()) {

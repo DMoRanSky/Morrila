@@ -7,10 +7,9 @@
 
 namespace duckdb {
 
-namespace {
+static void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 
-void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
-	auto flat_list_data = FlatVector::GetDataMutable<list_entry_t>(result);
+	const auto flat_list_data = FlatVector::GetData<list_entry_t>(result);
 	auto &flat_list_mask = FlatVector::Validity(result);
 
 	UnifiedVectorFormat outer_format;
@@ -43,6 +42,9 @@ void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 			}
 			flat_list_data[outer_raw_idx].offset = 0;
 			flat_list_data[outer_raw_idx].length = 0;
+		}
+		if (args.AllConstant()) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 		}
 		return;
 	}
@@ -132,9 +134,58 @@ void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 	auto &result_child_vector = ListVector::GetEntry(result);
 	result_child_vector.Slice(items_vec, sel, sel_idx);
 	result_child_vector.Flatten(sel_idx);
+
+	if (args.AllConstant()) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
 }
 
-unique_ptr<BaseStatistics> ListFlattenStats(ClientContext &context, FunctionStatisticsInput &input) {
+static unique_ptr<FunctionData> ListFlattenBind(ClientContext &context, ScalarFunction &bound_function,
+                                                vector<unique_ptr<Expression>> &arguments) {
+	D_ASSERT(bound_function.arguments.size() == 1);
+
+	if (arguments[0]->return_type.id() == LogicalTypeId::ARRAY) {
+		auto child_type = ArrayType::GetChildType(arguments[0]->return_type);
+		if (child_type.id() == LogicalTypeId::ARRAY) {
+			child_type = LogicalType::LIST(ArrayType::GetChildType(child_type));
+		}
+		arguments[0] =
+		    BoundCastExpression::AddCastToType(context, std::move(arguments[0]), LogicalType::LIST(child_type));
+	} else if (arguments[0]->return_type.id() == LogicalTypeId::LIST) {
+		auto child_type = ListType::GetChildType(arguments[0]->return_type);
+		if (child_type.id() == LogicalTypeId::ARRAY) {
+			child_type = LogicalType::LIST(ArrayType::GetChildType(child_type));
+			arguments[0] =
+			    BoundCastExpression::AddCastToType(context, std::move(arguments[0]), LogicalType::LIST(child_type));
+		}
+	}
+
+	auto &input_type = arguments[0]->return_type;
+	bound_function.arguments[0] = input_type;
+	if (input_type.IsUnknown()) {
+		bound_function.arguments[0] = LogicalType::UNKNOWN;
+		bound_function.return_type = LogicalType::UNKNOWN;
+		return nullptr;
+	}
+	D_ASSERT(input_type.id() == LogicalTypeId::LIST);
+
+	auto child_type = ListType::GetChildType(input_type);
+	if (child_type.id() == LogicalType::SQLNULL) {
+		bound_function.return_type = input_type;
+		return make_uniq<VariableReturnBindData>(bound_function.return_type);
+	}
+	if (child_type.IsUnknown()) {
+		bound_function.arguments[0] = LogicalType::UNKNOWN;
+		bound_function.return_type = LogicalType::UNKNOWN;
+		return nullptr;
+	}
+	D_ASSERT(child_type.id() == LogicalTypeId::LIST);
+
+	bound_function.return_type = child_type;
+	return make_uniq<VariableReturnBindData>(bound_function.return_type);
+}
+
+static unique_ptr<BaseStatistics> ListFlattenStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &list_child_stats = ListStats::GetChildStats(child_stats[0]);
 	auto child_copy = list_child_stats.Copy();
@@ -142,12 +193,9 @@ unique_ptr<BaseStatistics> ListFlattenStats(ClientContext &context, FunctionStat
 	return child_copy.ToUnique();
 }
 
-} // namespace
-
 ScalarFunction ListFlattenFun::GetFunction() {
-	return ScalarFunction({LogicalType::LIST(LogicalType::LIST(LogicalType::TEMPLATE("T")))},
-	                      LogicalType::LIST(LogicalType::TEMPLATE("T")), ListFlattenFunction, nullptr, nullptr,
-	                      ListFlattenStats);
+	return ScalarFunction({LogicalType::LIST(LogicalType::LIST(LogicalType::ANY))}, LogicalType::LIST(LogicalType::ANY),
+	                      ListFlattenFunction, ListFlattenBind, nullptr, ListFlattenStats);
 }
 
 } // namespace duckdb

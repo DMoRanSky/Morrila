@@ -8,7 +8,8 @@ CompressionFunction EmptyValidityCompressionFun::GetFunction(PhysicalType type) 
 }
 
 bool EmptyValidityCompressionFun::TypeIsSupported(const PhysicalType physical_type) {
-	return physical_type == PhysicalType::BIT;
+	D_ASSERT(physical_type == PhysicalType::BIT);
+	return true;
 }
 
 } // namespace duckdb

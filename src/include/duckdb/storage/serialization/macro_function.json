@@ -14,26 +14,14 @@
       {
         "id": 101,
         "name": "parameters",
-        "type": "vector<ParsedExpression*>",
-        "serialize_property": "GetPositionalParametersForSerialization(serializer)"
+        "type": "vector<ParsedExpression*>"
       },
       {
         "id": 102,
         "name": "default_parameters",
-        "type": "InsertionOrderPreservingMap<ParsedExpression*>"
-      },
-      {
-        "id": 103,
-        "name": "types",
-        "type": "vector<LogicalType>",
-        "default": "vector<LogicalType>()",
-        "version": "v1.4.0"
+        "type": "case_insensitive_map_t<ParsedExpression*>"
       }
-    ],
-    "finalize_deserialization": [
-      "result->FinalizeDeserialization();"
-    ],
-    "constructor": ["parameters", "default_parameters"]
+    ]
   },
   {
     "class": "ScalarMacroFunction",

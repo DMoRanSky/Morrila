@@ -7,6 +7,7 @@
 #include "duckdb/common/vector.hpp"
 
 using namespace duckdb; // NOLINT
+using namespace std;    // NOLINT
 
 template <class SRC, class DST>
 struct ExpectedNumericCast {

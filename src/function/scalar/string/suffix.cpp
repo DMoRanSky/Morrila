@@ -5,7 +5,14 @@
 
 namespace duckdb {
 
-namespace {
+static bool SuffixFunction(const string_t &str, const string_t &suffix);
+
+struct SuffixOperator {
+	template <class TA, class TB, class TR>
+	static inline TR Operation(TA left, TB right) {
+		return SuffixFunction(left, right);
+	}
+};
 
 static bool SuffixFunction(const string_t &str, const string_t &suffix) {
 	auto suffix_size = suffix.GetSize();
@@ -25,15 +32,6 @@ static bool SuffixFunction(const string_t &str, const string_t &suffix) {
 	}
 	return true;
 }
-
-struct SuffixOperator {
-	template <class TA, class TB, class TR>
-	static inline TR Operation(TA left, TB right) {
-		return SuffixFunction(left, right);
-	}
-};
-
-} // namespace
 
 ScalarFunction SuffixFun::GetFunction() {
 	return ScalarFunction("suffix",                                     // name of the function

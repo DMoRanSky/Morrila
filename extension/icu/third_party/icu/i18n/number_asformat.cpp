@@ -7,7 +7,10 @@
 
 // Allow implicit conversion from char16_t* to UnicodeString for this file:
 // Helpful in toString methods and elsewhere.
+#ifndef UNISTR_FROM_STRING_EXPLICIT
 #define UNISTR_FROM_STRING_EXPLICIT
+#endif
+
 
 #include <stdlib.h>
 #include <cmath>
@@ -33,7 +36,7 @@ LocalizedNumberFormatterAsFormat::LocalizedNumberFormatterAsFormat(
 LocalizedNumberFormatterAsFormat::~LocalizedNumberFormatterAsFormat() = default;
 
 bool LocalizedNumberFormatterAsFormat::operator==(const Format& other) const {
-    const auto* _other = dynamic_cast<const LocalizedNumberFormatterAsFormat*>(&other);
+    auto* _other = dynamic_cast<const LocalizedNumberFormatterAsFormat*>(&other);
     if (_other == nullptr) {
         return false;
     }
@@ -100,18 +103,6 @@ void LocalizedNumberFormatterAsFormat::parseObject(const UnicodeString&, Formatt
 
 const LocalizedNumberFormatter& LocalizedNumberFormatterAsFormat::getNumberFormatter() const {
     return fFormatter;
-}
-
-
-// Definitions of public API methods (put here for dependency disentanglement)
-
-Format* LocalizedNumberFormatter::toFormat(UErrorCode& status) const {
-    if (U_FAILURE(status)) {
-        return nullptr;
-    }
-    LocalPointer<LocalizedNumberFormatterAsFormat> retval(
-            new LocalizedNumberFormatterAsFormat(*this, fMacros.locale), status);
-    return retval.orphan();
 }
 
 #endif /* #if !UCONFIG_NO_FORMATTING */

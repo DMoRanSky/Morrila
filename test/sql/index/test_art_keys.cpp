@@ -7,6 +7,7 @@
 #include <iostream>
 
 using namespace duckdb;
+using namespace std;
 
 static void TestKeyEqual(ARTKey &left, ARTKey &right) {
 	REQUIRE(left == right);
@@ -45,6 +46,7 @@ static void TestKeys(duckdb::vector<ARTKey> &keys) {
 }
 
 static ARTKey CreateCompoundKey(ArenaAllocator &arena_allocator, const string &str_val, int32_t int_val) {
+
 	auto key_left = ARTKey::CreateARTKey<string_t>(arena_allocator, string_t(str_val.c_str(), str_val.size()));
 	auto key_right = ARTKey::CreateARTKey<int32_t>(arena_allocator, int_val);
 
@@ -55,6 +57,7 @@ static ARTKey CreateCompoundKey(ArenaAllocator &arena_allocator, const string &s
 }
 
 TEST_CASE("Test correct functioning of art keys", "[art]") {
+
 	ArenaAllocator arena_allocator(Allocator::DefaultAllocator());
 
 	// Test tiny int
@@ -213,13 +216,13 @@ TEST_CASE("Test correct functioning of art EncodeFloat/EncodeDouble", "[art-enc]
 		// positive values
 		duckdb::vector<float> values;
 		float current_value = 0.00001f;
-		while (std::isfinite(current_value)) {
+		while (isfinite(current_value)) {
 			values.push_back(current_value);
 			current_value *= 2;
 		}
 		// negative values
 		current_value = -0.00001f;
-		while (std::isfinite(current_value)) {
+		while (isfinite(current_value)) {
 			values.push_back(current_value);
 			current_value *= 2;
 		}
@@ -242,13 +245,13 @@ TEST_CASE("Test correct functioning of art EncodeFloat/EncodeDouble", "[art-enc]
 		// positive values
 		duckdb::vector<double> values;
 		double current_value = 0.0000001;
-		while (std::isfinite(current_value)) {
+		while (isfinite(current_value)) {
 			values.push_back(current_value);
 			current_value *= 2;
 		}
 		// negative values
 		current_value = -0.0000001;
-		while (std::isfinite(current_value)) {
+		while (isfinite(current_value)) {
 			values.push_back(current_value);
 			current_value *= 2;
 		}
@@ -257,10 +260,10 @@ TEST_CASE("Test correct functioning of art EncodeFloat/EncodeDouble", "[art-enc]
 		for (idx_t i = 1; i < values.size(); i++) {
 			uint64_t next_encoded = Radix::EncodeDouble(values[i]);
 			if (next_encoded <= current_encoded) {
-				std::cout << "Failure in Key::EncodeDouble!" << std::endl;
-				std::cout << "Generated value for key " << values[i - 1] << " (=> %" << current_encoded
-				          << ") is bigger or equal to the generated value for key " << values[i] << "(=> %"
-				          << next_encoded << ")" << std::endl;
+				cout << "Failure in Key::EncodeDouble!" << std::endl;
+				cout << "Generated value for key " << values[i - 1] << " (=> %" << current_encoded
+				     << ") is bigger or equal to the generated value for key " << values[i] << "(=> %" << next_encoded
+				     << ")" << std::endl;
 			}
 			REQUIRE(next_encoded > current_encoded);
 			current_encoded = next_encoded;

@@ -40,6 +40,7 @@ struct Foo {
 };
 
 TEST_CASE("Test default values", "[serialization]") {
+
 	Foo foo_in;
 	foo_in.a = 42;
 	foo_in.bar = make_uniq<Bar>();

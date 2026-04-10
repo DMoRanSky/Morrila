@@ -1,12 +1,11 @@
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/aggregate/distributive_functions.hpp"
 #include "duckdb/function/aggregate/distributive_function_utils.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/planner/expression.hpp"
 
 namespace duckdb {
-
-namespace {
 
 template <class T>
 struct FirstState {
@@ -212,64 +211,32 @@ struct FirstVectorFunction : FirstFunctionStringBase<LAST, SKIP_NULLS> {
 	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
 	                                     vector<unique_ptr<Expression>> &arguments) {
 		function.arguments[0] = arguments[0]->return_type;
-		function.SetReturnType(arguments[0]->return_type);
+		function.return_type = arguments[0]->return_type;
 		return nullptr;
 	}
 };
 
-LogicalType GetFirstStateType(const AggregateFunction &function) {
-	child_list_t<LogicalType> child_types;
-	LogicalType value_type = function.arguments[0];
-	child_types.emplace_back("value", value_type);
-	child_types.emplace_back("is_set", LogicalType::BOOLEAN);
-	child_types.emplace_back("is_null", LogicalType::BOOLEAN);
-	return LogicalType::STRUCT(std::move(child_types));
-}
-
 template <class T, bool LAST, bool SKIP_NULLS>
-void FirstFunctionSimpleUpdate(Vector inputs[], AggregateInputData &aggregate_input_data, idx_t input_count,
-                               data_ptr_t state, idx_t count) {
+static void FirstFunctionSimpleUpdate(Vector inputs[], AggregateInputData &aggregate_input_data, idx_t input_count,
+                                      data_ptr_t state, idx_t count) {
 	auto agg_state = reinterpret_cast<FirstState<T> *>(state);
-	if (LAST) {
-		// For LAST, iterate backward within each batch to find the last value
-		// This saves iterating through all elements when we only need the last one
-		D_ASSERT(input_count == 1);
-		UnifiedVectorFormat idata;
-		inputs[0].ToUnifiedFormat(count, idata);
-		auto input_data = UnifiedVectorFormat::GetData<T>(idata);
-
-		for (idx_t i = count; i-- > 0;) {
-			const auto idx = idata.sel->get_index(i);
-			const auto row_valid = idata.validity.RowIsValid(idx);
-			if (SKIP_NULLS && !row_valid) {
-				continue;
-			}
-			// Found the last value in this batch - update state and exit
-			agg_state->is_set = true;
-			agg_state->is_null = !row_valid;
-			if (row_valid) {
-				agg_state->value = input_data[idx];
-			}
-			break;
-		}
-		// If we get here with SKIP_NULLS, all values were NULL - keep previous state
-	} else if (!agg_state->is_set) {
+	if (LAST || !agg_state->is_set) {
 		// For FIRST, this skips looping over the input once the aggregate state has been set
+		// FIXME: for LAST we could loop from the back of the Vector instead
 		AggregateFunction::UnaryUpdate<FirstState<T>, T, FirstFunction<LAST, SKIP_NULLS>>(inputs, aggregate_input_data,
 		                                                                                  input_count, state, count);
 	}
 }
 
 template <class T, bool LAST, bool SKIP_NULLS>
-AggregateFunction GetFirstAggregateTemplated(const LogicalType &type) {
+static AggregateFunction GetFirstAggregateTemplated(LogicalType type) {
 	auto result = AggregateFunction::UnaryAggregate<FirstState<T>, T, T, FirstFunction<LAST, SKIP_NULLS>>(type, type);
-	result.SetStateSimpleUpdateCallback(FirstFunctionSimpleUpdate<T, LAST, SKIP_NULLS>);
-	result.SetStructStateExport(GetFirstStateType);
+	result.simple_update = FirstFunctionSimpleUpdate<T, LAST, SKIP_NULLS>;
 	return result;
 }
 
 template <bool LAST, bool SKIP_NULLS>
-AggregateFunction GetFirstFunction(const LogicalType &type);
+static AggregateFunction GetFirstFunction(const LogicalType &type);
 
 template <bool LAST, bool SKIP_NULLS>
 AggregateFunction GetDecimalFirstFunction(const LogicalType &type) {
@@ -286,12 +253,12 @@ AggregateFunction GetDecimalFirstFunction(const LogicalType &type) {
 	}
 }
 template <bool LAST, bool SKIP_NULLS>
-AggregateFunction GetFirstFunction(const LogicalType &type) {
+static AggregateFunction GetFirstFunction(const LogicalType &type) {
 	if (type.id() == LogicalTypeId::DECIMAL) {
 		type.Verify();
 		AggregateFunction function = GetDecimalFirstFunction<LAST, SKIP_NULLS>(type);
 		function.arguments[0] = type;
-		function.SetReturnType(type);
+		function.return_type = type;
 		return function;
 	}
 	switch (type.InternalType()) {
@@ -324,27 +291,33 @@ AggregateFunction GetFirstFunction(const LogicalType &type) {
 		return GetFirstAggregateTemplated<interval_t, LAST, SKIP_NULLS>(type);
 	case PhysicalType::VARCHAR:
 		if (LAST) {
-			auto fun = AggregateFunction::UnaryAggregateDestructor<FirstState<string_t>, string_t, string_t,
-			                                                       FirstFunctionString<LAST, SKIP_NULLS>>(type, type);
-			fun.SetStructStateExport(GetFirstStateType);
-			return fun;
+			return AggregateFunction::UnaryAggregateDestructor<FirstState<string_t>, string_t, string_t,
+			                                                   FirstFunctionString<LAST, SKIP_NULLS>>(type, type);
 		} else {
-			auto fun = AggregateFunction::UnaryAggregate<FirstState<string_t>, string_t, string_t,
-			                                             FirstFunctionString<LAST, SKIP_NULLS>>(type, type);
-			fun.SetStructStateExport(GetFirstStateType);
-			return fun;
+			return AggregateFunction::UnaryAggregate<FirstState<string_t>, string_t, string_t,
+			                                         FirstFunctionString<LAST, SKIP_NULLS>>(type, type);
 		}
 	default: {
 		using OP = FirstVectorFunction<LAST, SKIP_NULLS>;
 		using STATE = FirstState<string_t>;
-		auto fun = AggregateFunction(
+		return AggregateFunction(
 		    {type}, type, AggregateFunction::StateSize<STATE>, AggregateFunction::StateInitialize<STATE, OP>,
 		    OP::Update, AggregateFunction::StateCombine<STATE, OP>, AggregateFunction::StateVoidFinalize<STATE, OP>,
 		    nullptr, OP::Bind, LAST ? AggregateFunction::StateDestroy<STATE, OP> : nullptr, nullptr, nullptr);
-		fun.SetStructStateExport(GetFirstStateType);
-		return fun;
 	}
 	}
+}
+
+AggregateFunction FirstFunctionGetter::GetFunction(const LogicalType &type) {
+	auto fun = GetFirstFunction<false, false>(type);
+	fun.name = "first";
+	return fun;
+}
+
+AggregateFunction LastFunctionGetter::GetFunction(const LogicalType &type) {
+	auto fun = GetFirstFunction<true, false>(type);
+	fun.name = "last";
+	return fun;
 }
 
 template <bool LAST, bool SKIP_NULLS>
@@ -354,13 +327,13 @@ unique_ptr<FunctionData> BindDecimalFirst(ClientContext &context, AggregateFunct
 	auto name = std::move(function.name);
 	function = GetFirstFunction<LAST, SKIP_NULLS>(decimal_type);
 	function.name = std::move(name);
-	function.SetDistinctDependent(AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT);
-	function.SetReturnType(decimal_type);
+	function.distinct_dependent = AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT;
+	function.return_type = decimal_type;
 	return nullptr;
 }
 
 template <bool LAST, bool SKIP_NULLS>
-AggregateFunction GetFirstOperator(const LogicalType &type) {
+static AggregateFunction GetFirstOperator(const LogicalType &type) {
 	if (type.id() == LogicalTypeId::DECIMAL) {
 		throw InternalException("FIXME: this shouldn't happen...");
 	}
@@ -374,34 +347,20 @@ unique_ptr<FunctionData> BindFirst(ClientContext &context, AggregateFunction &fu
 	auto name = std::move(function.name);
 	function = GetFirstOperator<LAST, SKIP_NULLS>(input_type);
 	function.name = std::move(name);
-	function.SetDistinctDependent(AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT);
-	if (function.HasBindCallback()) {
-		return function.GetBindCallback()(context, function, arguments);
+	function.distinct_dependent = AggregateDistinctDependent::NOT_DISTINCT_DEPENDENT;
+	if (function.bind) {
+		return function.bind(context, function, arguments);
 	} else {
 		return nullptr;
 	}
 }
 
 template <bool LAST, bool SKIP_NULLS>
-void AddFirstOperator(AggregateFunctionSet &set) {
+static void AddFirstOperator(AggregateFunctionSet &set) {
 	set.AddFunction(AggregateFunction({LogicalTypeId::DECIMAL}, LogicalTypeId::DECIMAL, nullptr, nullptr, nullptr,
 	                                  nullptr, nullptr, nullptr, BindDecimalFirst<LAST, SKIP_NULLS>));
 	set.AddFunction(AggregateFunction({LogicalType::ANY}, LogicalType::ANY, nullptr, nullptr, nullptr, nullptr, nullptr,
 	                                  nullptr, BindFirst<LAST, SKIP_NULLS>));
-}
-
-} // namespace
-
-AggregateFunction FirstFunctionGetter::GetFunction(const LogicalType &type) {
-	auto fun = GetFirstFunction<false, false>(type);
-	fun.name = "first";
-	return fun;
-}
-
-AggregateFunction LastFunctionGetter::GetFunction(const LogicalType &type) {
-	auto fun = GetFirstFunction<true, false>(type);
-	fun.name = "last";
-	return fun;
 }
 
 AggregateFunctionSet FirstFun::GetFunctions() {

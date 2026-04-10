@@ -2,28 +2,30 @@
 # description: Use test_logging function with 1 million log entries
 # group: [logging]
 
-require noforcestorage  
+require noforcestorage
 
-query IIIIIIIIII
+mode skip
+
+query IIIIIIIII
 from duckdb_logs
 ----
 
 statement ok
-CALL enable_logging();
+pragma enable_logging;
 
 statement ok
-set logging_level='info';
+set logging_level='debug';
 
-loop i 0 100
-
-statement ok
-SELECT write_log('hi_global', level := 'info', scope := 'database') from range(0,2500);
+loop i 0 10000
 
 statement ok
-SELECT write_log('hi_client', level := 'info', scope := 'connection') from range(0,2500);
+SELECT write_log('hi_global', level := 'info', scope := 'database') from range(0,25);
 
 statement ok
-SELECT write_log('hi_file', level := 'info', scope := 'file_opener') from range(0,2500);
+SELECT write_log('hi_client', level := 'info', scope := 'connection') from range(0,25);
+
+statement ok
+SELECT write_log('hi_file', level := 'info', scope := 'file_opener') from range(0,25);
 
 endloop
 
@@ -35,7 +37,7 @@ SELECT count(*), message FROM duckdb_logs where starts_with(message, 'hi_') grou
 250000	hi_global
 
 statement ok
-CALL truncate_duckdb_logs();
+pragma truncate_duckdb_logs;
 
 query I
 SELECT count(*) FROM duckdb_logs;

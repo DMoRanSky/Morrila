@@ -3,6 +3,7 @@
 #include "test_helpers.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test that database size does not grow after many checkpoints", "[storage][.]") {
 	constexpr idx_t VALUE_COUNT = 10000;

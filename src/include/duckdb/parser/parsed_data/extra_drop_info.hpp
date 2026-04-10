@@ -11,15 +11,14 @@
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/parser/parsed_data/parse_info.hpp"
-#include "duckdb/parser/tableref.hpp"
+#include "duckdb/common/enums/on_entry_not_found.hpp"
 
 namespace duckdb {
 
 enum class ExtraDropInfoType : uint8_t {
 	INVALID = 0,
 
-	SECRET_INFO = 1,
-	TRIGGER_INFO = 2
+	SECRET_INFO = 1
 };
 
 struct ExtraDropInfo {
@@ -45,20 +44,6 @@ public:
 	virtual unique_ptr<ExtraDropInfo> Copy() const = 0;
 
 	virtual void Serialize(Serializer &serializer) const;
-	static unique_ptr<ExtraDropInfo> Deserialize(Deserializer &deserializer);
-};
-
-struct ExtraDropTriggerInfo : public ExtraDropInfo {
-	ExtraDropTriggerInfo();
-	ExtraDropTriggerInfo(const ExtraDropTriggerInfo &info);
-
-	//! Table the trigger is on
-	unique_ptr<TableRef> base_table;
-
-public:
-	unique_ptr<ExtraDropInfo> Copy() const override;
-
-	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ExtraDropInfo> Deserialize(Deserializer &deserializer);
 };
 

@@ -1,11 +1,11 @@
 #include "json_multi_file_info.hpp"
 #include "json_scan.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/parallel/async_result.hpp"
 
 namespace duckdb {
 
-unique_ptr<MultiFileReaderInterface> JSONMultiFileInfo::CreateInterface(ClientContext &context) {
+unique_ptr<MultiFileReaderInterface>
+JSONMultiFileInfo::InitializeInterface(ClientContext &context, MultiFileReader &reader, MultiFileList &file_list) {
 	return make_uniq<JSONMultiFileInfo>();
 }
 
@@ -517,7 +517,7 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 
 	if (!gstate.names.empty()) {
 		// Create the strings without copying them
-		auto strings = FlatVector::GetDataMutable<string_t>(output.data[0]);
+		auto strings = FlatVector::GetData<string_t>(output.data[0]);
 		auto &validity = FlatVector::Validity(output.data[0]);
 		for (idx_t i = 0; i < count; i++) {
 			if (objects[i]) {
@@ -531,17 +531,8 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 	output.SetCardinality(count);
 }
 
-AsyncResult JSONReader::Scan(ClientContext &context, GlobalTableFunctionState &global_state,
-                             LocalTableFunctionState &local_state, DataChunk &output) {
-#ifdef DUCKDB_DEBUG_ASYNC_SINK_SOURCE
-	{
-		vector<unique_ptr<AsyncTask>> tasks = AsyncResult::GenerateTestTasks();
-		if (!tasks.empty()) {
-			return AsyncResult(std::move(tasks));
-		}
-	}
-#endif
-
+void JSONReader::Scan(ClientContext &context, GlobalTableFunctionState &global_state,
+                      LocalTableFunctionState &local_state, DataChunk &output) {
 	auto &gstate = global_state.Cast<JSONGlobalTableFunctionState>().state;
 	auto &lstate = local_state.Cast<JSONLocalTableFunctionState>().state;
 	auto &json_data = gstate.bind_data.bind_data->Cast<JSONScanData>();
@@ -555,7 +546,6 @@ AsyncResult JSONReader::Scan(ClientContext &context, GlobalTableFunctionState &g
 	default:
 		throw InternalException("Unsupported scan type for JSONMultiFileInfo::Scan");
 	}
-	return AsyncResult(output.size() ? SourceResultType::HAVE_MORE_OUTPUT : SourceResultType::FINISHED);
 }
 
 void JSONReader::FinishFile(ClientContext &context, GlobalTableFunctionState &global_state) {
@@ -587,10 +577,6 @@ optional_idx JSONMultiFileInfo::MaxThreads(const MultiFileBindData &bind_data, c
 	// get the max threads from the bind data (if it is set)
 	auto &json_data = bind_data.bind_data->Cast<JSONScanData>();
 	return json_data.max_threads;
-}
-
-FileGlobInput JSONMultiFileInfo::GetGlobInput() {
-	return FileGlobInput(FileGlobOptions::FALLBACK_GLOB, "json");
 }
 
 } // namespace duckdb

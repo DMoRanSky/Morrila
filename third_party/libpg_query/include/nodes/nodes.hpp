@@ -333,7 +333,6 @@ typedef enum PGNodeTag {
 	T_PGTruncateStmt,
 	T_PGCommentStmt,
 	T_PGCommentOnStmt,
-	T_PGMergeIntoStmt,
 	T_PGFetchStmt,
 	T_PGIndexStmt,
 	T_PGFunctionDefinition,
@@ -496,8 +495,6 @@ typedef enum PGNodeTag {
 	T_PGSampleOptions,
 	T_PGLimitPercent,
 	T_PGPositionalReference,
-	T_PGMatchEntry,
-	T_PGMatchAction,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)

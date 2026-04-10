@@ -2,150 +2,32 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/serializer/buffered_file_reader.hpp"
+#include "duckdb/function/function.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/client_data.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/storage/checkpoint_manager.hpp"
 #include "duckdb/storage/in_memory_block_manager.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/single_file_block_manager.hpp"
+#include "duckdb/transaction/transaction_manager.hpp"
+#include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/table/column_data.hpp"
-#include "duckdb/storage/table/in_memory_checkpoint.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
-#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/transaction/duck_transaction.hpp"
-#include "duckdb/transaction/duck_transaction_manager.hpp"
-#include "duckdb/storage/data_table.hpp"
-#include "mbedtls_wrapper.hpp"
-#include "duckdb/common/path.hpp"
 
 namespace duckdb {
-using SHA256State = duckdb_mbedtls::MbedTlsWrapper::SHA256State;
 
-void StorageOptions::SetEncryptionVersion(string &storage_version_user_provided) {
-	// storage version < v1.4.0
-	if (!storage_version.IsValid() ||
-	    storage_version.GetIndex() < SerializationCompatibility::FromString("v1.4.0").serialization_version) {
-		if (!storage_version_user_provided.empty()) {
-			throw InvalidInputException("Explicit provided STORAGE_VERSION (\"%s\") and ENCRYPTION_KEY (storage >= "
-			                            "v1.4.0) are not compatible",
-			                            storage_version_user_provided);
-		}
-	}
+StorageManager::StorageManager(AttachedDatabase &db, string path_p, bool read_only)
+    : db(db), path(std::move(path_p)), read_only(read_only) {
 
-	auto target_encryption_version = encryption_version;
-
-	if (target_encryption_version == EncryptionTypes::NONE) {
-		target_encryption_version = EncryptionTypes::V0_1;
-	}
-
-	switch (target_encryption_version) {
-	case EncryptionTypes::V0_1:
-		// storage version not explicitly set
-		if (!storage_version.IsValid() && storage_version_user_provided.empty()) {
-			storage_version = SerializationCompatibility::FromString("v1.5.0").serialization_version;
-			break;
-		}
-		// storage version set, but v1.4.0 =< storage < v1.5.0
-		if (storage_version.GetIndex() < SerializationCompatibility::FromString("v1.5.0").serialization_version) {
-			if (!storage_version_user_provided.empty()) {
-				if (encryption_version == target_encryption_version) {
-					// encryption version is explicitly given, but not compatible with < v1.5.0
-					throw InvalidInputException("Explicit provided STORAGE_VERSION (\"%s\") is not compatible with "
-					                            "'debug_encryption_version = v1' (storage >= "
-					                            "v1.5.0)",
-					                            storage_version_user_provided);
-				}
-			} else {
-				// encryption version needs to be lowered, because storage version < v1.5.0
-				target_encryption_version = EncryptionTypes::V0_0;
-				break;
-			}
-		}
-
-		break;
-
-	case EncryptionTypes::V0_0:
-		// we set this to V0 to V1.5.0 if no explicit storage version provided
-		if (!storage_version.IsValid() && storage_version_user_provided.empty()) {
-			storage_version = SerializationCompatibility::FromString("v1.5.0").serialization_version;
-			break;
-		}
-		// if storage version is provided, we do nothing
-		break;
-	default:
-		throw InvalidConfigurationException("Encryption version is not set");
-	}
-
-	encryption_version = target_encryption_version;
-}
-
-void StorageOptions::Initialize(unordered_map<string, Value> &options) {
-	string storage_version_user_provided = "";
-	for (auto &entry : options) {
-		if (entry.first == "block_size") {
-			// Extract the block allocation size. This is NOT the actual memory available on a block (block_size),
-			// even though the corresponding option we expose to the user is called "block_size".
-			block_alloc_size = entry.second.GetValue<uint64_t>();
-		} else if (entry.first == "encryption_key") {
-			// check the type of the key
-			auto type = entry.second.type();
-			if (type.id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("\"%s\" is not a valid key. A key must be of type VARCHAR",
-				                      entry.second.ToString());
-			} else if (entry.second.GetValue<string>().empty()) {
-				throw BinderException("Not a valid key. A key cannot be empty");
-			}
-			user_key = make_shared_ptr<string>(StringValue::Get(entry.second.DefaultCastAs(LogicalType::BLOB)));
-			block_header_size = DEFAULT_ENCRYPTION_BLOCK_HEADER_SIZE;
-			encryption = true;
-		} else if (entry.first == "encryption_cipher") {
-			auto parsed_cipher = EncryptionTypes::StringToCipher(entry.second.ToString());
-			if (parsed_cipher != EncryptionTypes::CipherType::GCM &&
-			    parsed_cipher != EncryptionTypes::CipherType::CTR) {
-				throw BinderException("\"%s\" is not a valid cipher. Try 'GCM' or 'CTR'.", entry.second.ToString());
-			}
-			encryption_cipher = parsed_cipher;
-		} else if (entry.first == "row_group_size") {
-			row_group_size = entry.second.GetValue<uint64_t>();
-		} else if (entry.first == "storage_version") {
-			storage_version_user_provided = entry.second.ToString();
-			storage_version =
-			    SerializationCompatibility::FromString(storage_version_user_provided).serialization_version;
-		} else if (entry.first == "compress") {
-			if (entry.second.DefaultCastAs(LogicalType::BOOLEAN).GetValue<bool>()) {
-				compress_in_memory = CompressInMemory::COMPRESS;
-			} else {
-				compress_in_memory = CompressInMemory::DO_NOT_COMPRESS;
-			}
-		} else if (entry.first == "debug_encryption_version") {
-			encryption_version = EncryptionTypes::StringToVersion(entry.second.ToString());
-		} else {
-			throw BinderException("Unrecognized option for attach \"%s\"", entry.first);
-		}
-	}
-	// erase encryption settings
-	options.erase("encryption_key");
-	options.erase("encryption_cipher");
-	if (encryption) {
-		SetEncryptionVersion(storage_version_user_provided);
-	}
-}
-
-StorageManager::StorageManager(AttachedDatabase &db, string path_p, AttachOptions &options)
-    : db(db), path(std::move(path_p)), read_only(options.access_mode == AccessMode::READ_ONLY), wal_size(0) {
 	if (path.empty()) {
 		path = IN_MEMORY_PATH;
 		return;
 	}
 	auto &fs = FileSystem::Get(db);
 	path = fs.ExpandPath(path);
-
-	storage_options.Initialize(options.options);
 }
 
 StorageManager::~StorageManager() {
@@ -162,32 +44,20 @@ DatabaseInstance &StorageManager::GetDatabase() {
 	return db.GetDatabase();
 }
 
+BufferManager &BufferManager::GetBufferManager(ClientContext &context) {
+	return BufferManager::GetBufferManager(*context.db);
+}
+
+const BufferManager &BufferManager::GetBufferManager(const ClientContext &context) {
+	return BufferManager::GetBufferManager(*context.db);
+}
+
 ObjectCache &ObjectCache::GetObjectCache(ClientContext &context) {
 	return context.db->GetObjectCache();
 }
 
 idx_t StorageManager::GetWALSize() {
-	return wal_size;
-}
-
-void StorageManager::AddWALSize(idx_t size) {
-	wal_size += size;
-}
-
-void StorageManager::SetWALSize(idx_t size) {
-	wal_size = size;
-}
-
-idx_t StorageManager::GetWALEntriesCount() const {
-	return wal_entries_count;
-}
-
-void StorageManager::ResetWALEntriesCount() {
-	wal_entries_count = 0;
-}
-
-void StorageManager::IncrementWALEntriesCount() {
-	wal_entries_count++;
+	return wal->GetWALSize();
 }
 
 optional_ptr<WriteAheadLog> StorageManager::GetWAL() {
@@ -197,144 +67,42 @@ optional_ptr<WriteAheadLog> StorageManager::GetWAL() {
 	return wal.get();
 }
 
-bool StorageManager::HasWAL() const {
-	if (InMemory() || read_only || !load_complete) {
-		return false;
-	}
-	return true;
+void StorageManager::ResetWAL() {
+	wal->Delete();
 }
 
-bool StorageManager::WALStartCheckpoint(MetaBlockPointer meta_block, CheckpointOptions &options,
-                                        ActiveCheckpointWrapper &active_checkpoint) {
-	unique_ptr<lock_guard<mutex>> guard;
-	// Lock ordering: WAL lock -> transaction lock (in GetCheckpointTransaction)
-	if (!options.wal_lock) {
-		// not holding the WAL lock yet - grab it
-		guard = GetWALLock();
+string StorageManager::GetWALPath() {
+	// we append the ".wal" **before** a question mark in case of GET parameters
+	// but only if we are not in a windows long path (which starts with \\?\)
+	std::size_t question_mark_pos = std::string::npos;
+	if (!StringUtil::StartsWith(path, "\\\\?\\")) {
+		question_mark_pos = path.find('?');
 	}
-	if (active_checkpoint.HasCheckpointContext()) {
-		// While holding the WAL lock, if we have a context then start a checkpoint transaction.
-		// The start time of this transaction defines the visibility for checkpointing, any new commits are written
-		// to the next WAL.
-		active_checkpoint.GetCheckpointTransaction(options);
+	auto wal_path = path;
+	if (question_mark_pos != std::string::npos) {
+		wal_path.insert(question_mark_pos, ".wal");
 	} else {
-		auto &transaction_manager = db.GetTransactionManager().Cast<DuckTransactionManager>();
-		options.transaction_id = transaction_manager.GetLastCommit();
+		wal_path += ".wal";
 	}
-
-	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Start Checkpoint", options.transaction_id);
-	if (!wal) {
-		return false;
-	}
-	// start the checkpoint process around the WAL
-	if (GetWALSize() == 0) {
-		// no WAL - we don't need to do anything here
-		return false;
-	}
-	// verify the main WAL is the active WAL currently
-	if (wal->GetPath() != wal_path) {
-		throw InternalException("Current WAL path \"%s\" does not match base WAL path \"%s\" in WALStartCheckpoint",
-		                        wal->GetPath(), wal_path);
-	}
-	// write to the main WAL that we have initiated a checkpoint
-	wal->WriteCheckpoint(meta_block);
-	wal->Flush();
-
-	// close the main WAL
-	wal.reset();
-
-	// replace the WAL with a new WAL (.checkpoint.wal) that transactions can write to while the checkpoint is happening
-	// we don't eagerly write to this WAL - we just instantiate it here so it can be written to
-	// if a checkpoint WAL already exists - delete it before proceeding
-	auto checkpoint_wal_path = GetCheckpointWALPath();
-	auto &fs = FileSystem::Get(db);
-	fs.TryRemoveFile(checkpoint_wal_path);
-
-	// the checkpoint WAL belongs to the NEXT checkpoint - when we are done we will overwrite the current WAL with it
-	// as such override the checkpoint iteration number to the next one
-	auto &single_file_block_manager = GetBlockManager().Cast<SingleFileBlockManager>();
-	auto next_checkpoint_iteration = single_file_block_manager.GetCheckpointIteration() + 1;
-	wal = make_uniq<WriteAheadLog>(*this, checkpoint_wal_path, 0ULL, WALInitState::NO_WAL, next_checkpoint_iteration);
-	return true;
+	return wal_path;
 }
 
-void StorageManager::WALFinishCheckpoint(lock_guard<mutex> &) {
-	D_ASSERT(wal.get());
-
-	// "wal" points to the checkpoint WAL
-	// first check if the checkpoint WAL has been written to
-	auto &fs = FileSystem::Get(db);
-	if (!wal->Initialized()) {
-		// the checkpoint WAL has not been written to
-		// this is the common scenario if there are no concurrent writes happening while checkpointing
-		// in this case we can just remove the main WAL and re-instantiate it to empty
-		fs.TryRemoveFile(wal_path);
-		ResetWALEntriesCount();
-		wal = make_uniq<WriteAheadLog>(*this, wal_path);
-		return;
-	}
-
-	// we have had writes to the checkpoint WAL - we need to override our WAL with the checkpoint WAL
-	// first close the WAL writer
-	auto checkpoint_wal_path = wal->GetPath();
-	wal.reset();
-
-	// move the secondary WAL over the main WAL
-	fs.MoveFile(checkpoint_wal_path, wal_path);
-
-	// open what is now the main WAL again
-	wal = make_uniq<WriteAheadLog>(*this, wal_path);
-	wal->Initialize();
-
-	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Finish Checkpoint");
-}
-
-unique_ptr<lock_guard<mutex>> StorageManager::GetWALLock() {
-	return make_uniq<lock_guard<mutex>>(wal_lock);
-}
-
-string StorageManager::GetWALPath(const string &suffix) {
-	return Path::AddSuffixToPath(path, suffix);
-}
-
-string StorageManager::GetCheckpointWALPath() {
-	return GetWALPath(".wal.checkpoint");
-}
-
-string StorageManager::GetRecoveryWALPath() {
-	return GetWALPath(".wal.recovery");
-}
-
-bool StorageManager::InMemory() const {
+bool StorageManager::InMemory() {
 	D_ASSERT(!path.empty());
 	return path == IN_MEMORY_PATH;
 }
 
-void StorageManager::Destroy() {
-}
-
-inline void ClearUserKey(shared_ptr<string> const &encryption_key) {
-	if (encryption_key && !encryption_key->empty()) {
-		duckdb_mbedtls::MbedTlsWrapper::AESStateMBEDTLS::SecureClearData(data_ptr_cast(&(*encryption_key)[0]),
-		                                                                 encryption_key->size());
-		encryption_key->clear();
-	}
-}
-
-void StorageManager::Initialize(QueryContext context) {
+void StorageManager::Initialize(StorageOptions options) {
 	bool in_memory = InMemory();
 	if (in_memory && read_only) {
 		throw CatalogException("Cannot launch in-memory database in read-only mode!");
 	}
 
 	// Create or load the database from disk, if not in-memory mode.
-	LoadDatabase(context);
-
-	if (storage_options.encryption) {
-		ClearUserKey(storage_options.user_key);
-	}
+	LoadDatabase(options);
 }
 
+///////////////////////////////////////////////////////////////////////////
 class SingleFileTableIOManager : public TableIOManager {
 public:
 	explicit SingleFileTableIOManager(BlockManager &block_manager, idx_t row_group_size)
@@ -359,22 +127,17 @@ public:
 	}
 };
 
-SingleFileStorageManager::SingleFileStorageManager(AttachedDatabase &db, string path, AttachOptions &options)
-    : StorageManager(db, std::move(path), options) {
+SingleFileStorageManager::SingleFileStorageManager(AttachedDatabase &db, string path, bool read_only)
+    : StorageManager(db, std::move(path), read_only) {
 }
 
-void SingleFileStorageManager::LoadDatabase(QueryContext context) {
+void SingleFileStorageManager::LoadDatabase(StorageOptions storage_options) {
+
 	if (InMemory()) {
 		block_manager = make_uniq<InMemoryBlockManager>(BufferManager::GetBufferManager(db), DEFAULT_BLOCK_ALLOC_SIZE,
 		                                                DEFAULT_BLOCK_HEADER_STORAGE_SIZE);
 		table_io_manager = make_uniq<SingleFileTableIOManager>(*block_manager, DEFAULT_ROW_GROUP_SIZE);
-		// in-memory databases can always use the latest storage version
-		storage_version = GetSerializationVersion("latest");
-		load_complete = true;
 		return;
-	}
-	if (storage_options.compress_in_memory != CompressInMemory::AUTOMATIC) {
-		throw InvalidInputException("COMPRESS can only be set for in-memory databases");
 	}
 
 	auto &fs = FileSystem::Get(db);
@@ -385,14 +148,6 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 	options.use_direct_io = config.options.use_direct_io;
 	options.debug_initialize = config.options.debug_initialize;
 	options.storage_version = storage_options.storage_version;
-
-	if (storage_options.encryption) {
-		// key is given upon ATTACH
-		D_ASSERT(storage_options.block_header_size == DEFAULT_ENCRYPTION_BLOCK_HEADER_SIZE);
-		options.encryption_options.encryption_enabled = true;
-		options.encryption_options.user_key = std::move(storage_options.user_key);
-		options.encryption_options.encryption_version = storage_options.encryption_version;
-	}
 
 	idx_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 	if (storage_options.row_group_size.IsValid()) {
@@ -413,7 +168,7 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 		// file does not exist and we are in read-write mode
 		// create a new file
 
-		wal_path = GetWALPath();
+		auto wal_path = GetWALPath();
 		// try to remove the WAL file if it exists
 		fs.TryRemoveFile(wal_path);
 
@@ -424,15 +179,16 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 			options.block_alloc_size = storage_options.block_alloc_size;
 		} else {
 			// No explicit option provided: use the default option.
-			options.block_alloc_size = Settings::Get<DefaultBlockSizeSetting>(config);
+			options.block_alloc_size = config.options.default_block_alloc_size;
 		}
 		//! set the block header size for the encrypted database files
 		//! set the database to encrypted
-		//! update the storage version to 1.4.0
+		//! update the storage version to 1.3.0
 		if (storage_options.block_header_size.IsValid()) {
 			// Use the header size for the corresponding encryption algorithm.
 			Storage::VerifyBlockHeaderSize(storage_options.block_header_size.GetIndex());
 			options.block_header_size = storage_options.block_header_size;
+			options.encryption = storage_options.encryption;
 			options.storage_version = storage_options.storage_version;
 		} else {
 			// No encryption; use the default option.
@@ -445,24 +201,20 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 
 		// Initialize the block manager before creating a new database.
 		auto sf_block_manager = make_uniq<SingleFileBlockManager>(db, path, options);
-		sf_block_manager->CreateNewDatabase(context);
+		sf_block_manager->CreateNewDatabase();
 		block_manager = std::move(sf_block_manager);
 		table_io_manager = make_uniq<SingleFileTableIOManager>(*block_manager, row_group_size);
-		wal = make_uniq<WriteAheadLog>(*this, wal_path);
-
+		wal = make_uniq<WriteAheadLog>(db, wal_path);
 	} else {
 		// Either the file exists, or we are in read-only mode, so we
 		// try to read the existing file on disk.
 
 		// set the block header size for the encrypted database files
 		// (also if they already exist)
-		if (storage_options.encryption) {
-			options.encryption_options.encryption_enabled = true;
-			D_ASSERT(storage_options.block_header_size == DEFAULT_ENCRYPTION_BLOCK_HEADER_SIZE);
-		}
 		if (storage_options.block_header_size.IsValid()) {
 			Storage::VerifyBlockHeaderSize(storage_options.block_header_size.GetIndex());
 			options.block_header_size = storage_options.block_header_size;
+			options.encryption = storage_options.encryption;
 			options.storage_version = storage_options.storage_version;
 		} else {
 			// No explicit option provided: use the default option.
@@ -473,7 +225,7 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 		// We'll construct the SingleFileBlockManager with the default block allocation size,
 		// and later adjust it when reading the file header.
 		auto sf_block_manager = make_uniq<SingleFileBlockManager>(db, path, options);
-		sf_block_manager->LoadExistingDatabase(context);
+		sf_block_manager->LoadExistingDatabase();
 		block_manager = std::move(sf_block_manager);
 		table_io_manager = make_uniq<SingleFileTableIOManager>(*block_manager, row_group_size);
 
@@ -497,41 +249,13 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 			}
 		}
 
-		unique_ptr<ActiveTimer> timer = nullptr;
-
-		// Start timing the storage load step.
-		auto client_context = context.GetClientContext();
-		if (client_context) {
-			auto profiler = client_context->client_data->profiler;
-			timer = make_uniq<ActiveTimer>(profiler->StartTimer(MetricType::ATTACH_LOAD_STORAGE_LATENCY));
-		}
-
-		// Load the checkpoint from storage.
+		// load the db from storage
 		auto checkpoint_reader = SingleFileCheckpointReader(*this);
 		checkpoint_reader.LoadFromStorage();
 
-		// End timing the storage load step.
-		if (timer) {
-			timer->EndTimer();
-			timer = nullptr;
-		}
-
-		// Start timing the WAL replay step.
-		if (client_context) {
-			auto profiler = client_context->client_data->profiler;
-			timer = make_uniq<ActiveTimer>(profiler->StartTimer(MetricType::ATTACH_REPLAY_WAL_LATENCY));
-		}
-
-		// Replay the WAL.
-		wal_path = GetWALPath();
-		wal = WriteAheadLog::Replay(context, *this, wal_path);
-
-		// End timing the WAL replay step.
-		if (timer) {
-			timer->EndTimer();
-		}
+		auto wal_path = GetWALPath();
+		wal = WriteAheadLog::Replay(fs, db, wal_path);
 	}
-
 	if (row_group_size > 122880ULL && GetStorageVersion() < 4) {
 		throw InvalidInputException("Unsupported row group size %llu - row group sizes >= 122_880 are only supported "
 		                            "with STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage "
@@ -591,15 +315,8 @@ SingleFileStorageCommitState::~SingleFileStorageCommitState() {
 		return;
 	}
 	try {
-		// Truncate the WAL in case of a destructor.
+		// truncate the WAL in case of a destructor
 		RevertCommit();
-	} catch (std::exception &ex) {
-		ErrorData data(ex);
-		try {
-			DUCKDB_LOG_ERROR(wal.GetDatabase().GetDatabase(),
-			                 "SingleFileStorageCommitState::~SingleFileStorageCommitState()\t\t" + data.Message());
-		} catch (...) { // NOLINT
-		}
 	} catch (...) { // NOLINT
 	}
 }
@@ -619,7 +336,6 @@ void SingleFileStorageCommitState::FlushCommit() {
 	if (state != WALCommitState::IN_PROGRESS) {
 		return;
 	}
-	// Move the blocks in this COMMIT into the WAL and mark them as "in use".
 	wal.Flush();
 	state = WALCommitState::FLUSHED;
 }
@@ -628,6 +344,10 @@ void SingleFileStorageCommitState::AddRowGroupData(DataTable &table, idx_t start
                                                    unique_ptr<PersistentCollectionData> row_group_data) {
 	if (row_group_data->HasUpdates()) {
 		// cannot serialize optimistic block pointers if in-memory updates exist
+		return;
+	}
+	if (table.HasIndexes()) {
+		// cannot serialize optimistic block pointers if the table has indexes
 		return;
 	}
 	auto &entries = optimistically_written_data[table];
@@ -668,87 +388,30 @@ bool SingleFileStorageManager::IsCheckpointClean(MetaBlockPointer checkpoint_id)
 	return block_manager->IsRootBlock(checkpoint_id);
 }
 
-unique_ptr<CheckpointWriter> SingleFileStorageManager::CreateCheckpointWriter(QueryContext context,
-                                                                              CheckpointOptions options) {
-	if (InMemory()) {
-		return make_uniq<InMemoryCheckpointer>(context, db, *block_manager, *this, options);
-	}
-	return make_uniq<SingleFileCheckpointWriter>(context, db, *block_manager, options);
-}
-
-void SingleFileStorageManager::CreateCheckpoint(QueryContext context, CheckpointOptions options) {
-	if (read_only || !load_complete) {
+void SingleFileStorageManager::CreateCheckpoint(optional_ptr<ClientContext> client_context, CheckpointOptions options) {
+	if (InMemory() || read_only || !load_complete) {
 		return;
 	}
-	unique_ptr<StorageLockKey> vacuum_lock;
-	if (options.type != CheckpointType::CONCURRENT_CHECKPOINT) {
-		auto &transaction_manager = GetAttached().GetTransactionManager().Cast<DuckTransactionManager>();
-		vacuum_lock = transaction_manager.TryGetVacuumLock();
-		if (!vacuum_lock) {
-			if (options.type == CheckpointType::FULL_CHECKPOINT) {
-				options.type = CheckpointType::CONCURRENT_CHECKPOINT;
-			} else {
-				// nothing to do
-				return;
-			}
-		}
-	}
-
 	if (db.GetStorageExtension()) {
 		db.GetStorageExtension()->OnCheckpointStart(db, options);
 	}
-
 	auto &config = DBConfig::Get(db);
-	// We only need to checkpoint if there is anything in the WAL.
-	auto wal_size = GetWALSize();
-	if (wal_size > 0 || config.options.force_checkpoint || options.action == CheckpointAction::ALWAYS_CHECKPOINT) {
+	if (GetWALSize() > 0 || config.options.force_checkpoint || options.action == CheckpointAction::ALWAYS_CHECKPOINT) {
+		// we only need to checkpoint if there is anything in the WAL
 		try {
-			// Start timing the checkpoint.
-			auto client_context = context.GetClientContext();
-			ActiveTimer profiler;
-			if (client_context) {
-				profiler = client_context->client_data->profiler->StartTimer(MetricType::CHECKPOINT_LATENCY);
-			}
-
-			// Write the checkpoint.
-			auto checkpointer = CreateCheckpointWriter(context, options);
-			checkpointer->CreateCheckpoint();
-
+			SingleFileCheckpointWriter checkpointer(client_context, db, *block_manager, options.type);
+			checkpointer.CreateCheckpoint();
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
-			throw FatalException("Failed to create checkpoint because of error: %s", error.Message());
+			throw FatalException("Failed to create checkpoint because of error: %s", error.RawMessage());
 		}
+	}
+	if (options.wal_action == CheckpointWALAction::DELETE_WAL) {
+		ResetWAL();
 	}
 
 	if (db.GetStorageExtension()) {
 		db.GetStorageExtension()->OnCheckpointEnd(db, options);
-	}
-}
-
-void SingleFileStorageManager::Destroy() {
-	if (!load_complete) {
-		return;
-	}
-	vector<reference<SchemaCatalogEntry>> schemas;
-	// we scan the set of committed schemas
-	auto &catalog = Catalog::GetCatalog(db).Cast<DuckCatalog>();
-	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) { schemas.push_back(entry); });
-
-	vector<reference<DuckTableEntry>> tables;
-	for (auto &schema : schemas) {
-		schema.get().Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.internal) {
-				return;
-			}
-			if (entry.type == CatalogType::TABLE_ENTRY) {
-				tables.push_back(entry.Cast<DuckTableEntry>());
-			}
-		});
-	}
-
-	for (auto &table : tables) {
-		auto &data_table = table.get().GetStorage();
-		data_table.Destroy();
 	}
 }
 
@@ -772,22 +435,9 @@ vector<MetadataBlockInfo> SingleFileStorageManager::GetMetadataInfo() {
 }
 
 bool SingleFileStorageManager::AutomaticCheckpoint(idx_t estimated_wal_bytes) {
-	auto &config = DBConfig::Get(db).options;
-
-	// Check size-based threshold
 	auto initial_size = NumericCast<idx_t>(GetWALSize());
 	idx_t expected_wal_size = initial_size + estimated_wal_bytes;
-	if (expected_wal_size > config.checkpoint_wal_size) {
-		return true;
-	}
-
-	// Check entry-based threshold (if enabled)
-	auto entry_limit = Settings::Get<WalAutocheckpointEntriesSetting>(DBConfig::Get(db));
-	if (entry_limit > 0 && GetWALEntriesCount() >= entry_limit) {
-		return true;
-	}
-
-	return false;
+	return expected_wal_size > DBConfig::Get(db).options.checkpoint_wal_size;
 }
 
 shared_ptr<TableIOManager> SingleFileStorageManager::GetTableIOManager(BoundCreateTableInfo *info /*info*/) {

@@ -6,18 +6,19 @@
 #include <set>
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test autoload of extension settings", "[api]") {
 	DBConfig config;
 	config.SetOptionByName("timezone", "America/Los_Angeles");
 
-	config.SetOptionByName("allow_unsigned_extensions", true);
-	config.SetOptionByName("autoload_known_extensions", true);
+	config.options.allow_unsigned_extensions = true;
+	config.options.autoload_known_extensions = true;
 	auto env_var = std::getenv("LOCAL_EXTENSION_REPO");
 	if (!env_var) {
 		return;
 	}
-	config.SetOptionByName("autoinstall_extension_repo", string(env_var));
+	config.options.autoinstall_extension_repo = std::string(env_var);
 	REQUIRE(config.options.unrecognized_options.count("timezone"));
 
 	// Create a connection

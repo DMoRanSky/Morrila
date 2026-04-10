@@ -1,6 +1,7 @@
 #include "capi_tester.hpp"
 
 using namespace duckdb;
+using namespace std;
 
 TEST_CASE("Test extract statements in C API", "[capi]") {
 	CAPITester tester;
@@ -63,6 +64,7 @@ TEST_CASE("Test extract statements in C API", "[capi]") {
 }
 
 TEST_CASE("Test invalid PRAGMA in C API", "[capi]") {
+
 	duckdb_database db;
 	duckdb_connection con;
 	const char *err_msg;

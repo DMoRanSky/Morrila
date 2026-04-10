@@ -7,9 +7,7 @@
 
 namespace duckdb {
 
-namespace {
-
-string IntegralCompressFunctionName(const LogicalType &result_type) {
+static string IntegralCompressFunctionName(const LogicalType &result_type) {
 	return StringUtil::Format("__internal_compress_integral_%s",
 	                          StringUtil::Lower(LogicalTypeIdToString(result_type.id())));
 }
@@ -39,7 +37,7 @@ struct TemplatedIntegralCompress<uhugeint_t, RESULT_TYPE> {
 };
 
 template <class INPUT_TYPE, class RESULT_TYPE>
-void IntegralCompressFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void IntegralCompressFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 2);
 	D_ASSERT(args.data[1].GetVectorType() == VectorType::CONSTANT_VECTOR);
 	const auto min_val = ConstantVector::GetData<INPUT_TYPE>(args.data[1])[0];
@@ -56,13 +54,13 @@ void IntegralCompressFunction(DataChunk &args, ExpressionState &state, Vector &r
 }
 
 template <class INPUT_TYPE, class RESULT_TYPE>
-scalar_function_t GetIntegralCompressFunction(const LogicalType &input_type, const LogicalType &result_type) {
+static scalar_function_t GetIntegralCompressFunction(const LogicalType &input_type, const LogicalType &result_type) {
 	return IntegralCompressFunction<INPUT_TYPE, RESULT_TYPE>;
 }
 
 template <class INPUT_TYPE>
-scalar_function_t GetIntegralCompressFunctionResultSwitch(const LogicalType &input_type,
-                                                          const LogicalType &result_type) {
+static scalar_function_t GetIntegralCompressFunctionResultSwitch(const LogicalType &input_type,
+                                                                 const LogicalType &result_type) {
 	switch (result_type.id()) {
 	case LogicalTypeId::UTINYINT:
 		return GetIntegralCompressFunction<INPUT_TYPE, uint8_t>(input_type, result_type);
@@ -77,8 +75,8 @@ scalar_function_t GetIntegralCompressFunctionResultSwitch(const LogicalType &inp
 	}
 }
 
-scalar_function_t GetIntegralCompressFunctionInputSwitch(const LogicalType &input_type,
-                                                         const LogicalType &result_type) {
+static scalar_function_t GetIntegralCompressFunctionInputSwitch(const LogicalType &input_type,
+                                                                const LogicalType &result_type) {
 	switch (input_type.id()) {
 	case LogicalTypeId::SMALLINT:
 		return GetIntegralCompressFunctionResultSwitch<int16_t>(input_type, result_type);
@@ -101,7 +99,7 @@ scalar_function_t GetIntegralCompressFunctionInputSwitch(const LogicalType &inpu
 	}
 }
 
-string IntegralDecompressFunctionName(const LogicalType &result_type) {
+static string IntegralDecompressFunctionName(const LogicalType &result_type) {
 	return StringUtil::Format("__internal_decompress_integral_%s",
 	                          StringUtil::Lower(LogicalTypeIdToString(result_type.id())));
 }
@@ -128,7 +126,7 @@ struct TemplatedIntegralDecompress<INPUT_TYPE, uhugeint_t> {
 };
 
 template <class INPUT_TYPE, class RESULT_TYPE>
-void IntegralDecompressFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+static void IntegralDecompressFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 2);
 	D_ASSERT(args.data[1].GetVectorType() == VectorType::CONSTANT_VECTOR);
 	D_ASSERT(args.data[1].GetType() == result.GetType());
@@ -142,13 +140,13 @@ void IntegralDecompressFunction(DataChunk &args, ExpressionState &state, Vector 
 }
 
 template <class INPUT_TYPE, class RESULT_TYPE>
-scalar_function_t GetIntegralDecompressFunction(const LogicalType &input_type, const LogicalType &result_type) {
+static scalar_function_t GetIntegralDecompressFunction(const LogicalType &input_type, const LogicalType &result_type) {
 	return IntegralDecompressFunction<INPUT_TYPE, RESULT_TYPE>;
 }
 
 template <class INPUT_TYPE>
-scalar_function_t GetIntegralDecompressFunctionResultSwitch(const LogicalType &input_type,
-                                                            const LogicalType &result_type) {
+static scalar_function_t GetIntegralDecompressFunctionResultSwitch(const LogicalType &input_type,
+                                                                   const LogicalType &result_type) {
 	switch (result_type.id()) {
 	case LogicalTypeId::SMALLINT:
 		return GetIntegralDecompressFunction<INPUT_TYPE, int16_t>(input_type, result_type);
@@ -171,8 +169,8 @@ scalar_function_t GetIntegralDecompressFunctionResultSwitch(const LogicalType &i
 	}
 }
 
-scalar_function_t GetIntegralDecompressFunctionInputSwitch(const LogicalType &input_type,
-                                                           const LogicalType &result_type) {
+static scalar_function_t GetIntegralDecompressFunctionInputSwitch(const LogicalType &input_type,
+                                                                  const LogicalType &result_type) {
 	switch (input_type.id()) {
 	case LogicalTypeId::UTINYINT:
 		return GetIntegralDecompressFunctionResultSwitch<uint8_t>(input_type, result_type);
@@ -187,21 +185,29 @@ scalar_function_t GetIntegralDecompressFunctionInputSwitch(const LogicalType &in
 	}
 }
 
-void CMIntegralSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
-                         const ScalarFunction &function) {
+static void CMIntegralSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
+                                const ScalarFunction &function) {
 	serializer.WriteProperty(100, "arguments", function.arguments);
-	serializer.WriteProperty(101, "return_type", function.GetReturnType());
+	serializer.WriteProperty(101, "return_type", function.return_type);
 }
 
 template <scalar_function_t (*GET_FUNCTION)(const LogicalType &, const LogicalType &)>
 unique_ptr<FunctionData> CMIntegralDeserialize(Deserializer &deserializer, ScalarFunction &function) {
 	function.arguments = deserializer.ReadProperty<vector<LogicalType>>(100, "arguments");
 	auto return_type = deserializer.ReadProperty<LogicalType>(101, "return_type");
-	function.SetFunctionCallback(GET_FUNCTION(function.arguments[0], return_type));
+	function.function = GET_FUNCTION(function.arguments[0], return_type);
 	return nullptr;
 }
 
-ScalarFunctionSet GetIntegralCompressFunctionSet(const LogicalType &result_type) {
+ScalarFunction CMIntegralCompressFun::GetFunction(const LogicalType &input_type, const LogicalType &result_type) {
+	ScalarFunction result(IntegralCompressFunctionName(result_type), {input_type, input_type}, result_type,
+	                      GetIntegralCompressFunctionInputSwitch(input_type, result_type), CMUtils::Bind);
+	result.serialize = CMIntegralSerialize;
+	result.deserialize = CMIntegralDeserialize<GetIntegralCompressFunctionInputSwitch>;
+	return result;
+}
+
+static ScalarFunctionSet GetIntegralCompressFunctionSet(const LogicalType &result_type) {
 	ScalarFunctionSet set(IntegralCompressFunctionName(result_type));
 	for (const auto &input_type : LogicalType::Integral()) {
 		if (GetTypeIdSize(result_type.InternalType()) < GetTypeIdSize(input_type.InternalType())) {
@@ -211,7 +217,15 @@ ScalarFunctionSet GetIntegralCompressFunctionSet(const LogicalType &result_type)
 	return set;
 }
 
-ScalarFunctionSet GetIntegralDecompressFunctionSet(const LogicalType &result_type) {
+ScalarFunction CMIntegralDecompressFun::GetFunction(const LogicalType &input_type, const LogicalType &result_type) {
+	ScalarFunction result(IntegralDecompressFunctionName(result_type), {input_type, result_type}, result_type,
+	                      GetIntegralDecompressFunctionInputSwitch(input_type, result_type), CMUtils::Bind);
+	result.serialize = CMIntegralSerialize;
+	result.deserialize = CMIntegralDeserialize<GetIntegralDecompressFunctionInputSwitch>;
+	return result;
+}
+
+static ScalarFunctionSet GetIntegralDecompressFunctionSet(const LogicalType &result_type) {
 	ScalarFunctionSet set(IntegralDecompressFunctionName(result_type));
 	for (const auto &input_type : CMUtils::IntegralTypes()) {
 		if (GetTypeIdSize(result_type.InternalType()) > GetTypeIdSize(input_type.InternalType())) {
@@ -219,29 +233,6 @@ ScalarFunctionSet GetIntegralDecompressFunctionSet(const LogicalType &result_typ
 		}
 	}
 	return set;
-}
-
-} // namespace
-
-ScalarFunction CMIntegralCompressFun::GetFunction(const LogicalType &input_type, const LogicalType &result_type) {
-	ScalarFunction result(IntegralCompressFunctionName(result_type), {input_type, input_type}, result_type,
-	                      GetIntegralCompressFunctionInputSwitch(input_type, result_type), CMUtils::Bind);
-	result.SetSerializeCallback(CMIntegralSerialize);
-	result.SetDeserializeCallback(CMIntegralDeserialize<GetIntegralCompressFunctionInputSwitch>);
-#if defined(D_ASSERT_IS_ENABLED)
-	result.SetFallible(); // Can only throw runtime error when assertions are enabled
-#else
-	result.SetErrorMode(FunctionErrors::CANNOT_ERROR);
-#endif
-	return result;
-}
-
-ScalarFunction CMIntegralDecompressFun::GetFunction(const LogicalType &input_type, const LogicalType &result_type) {
-	ScalarFunction result(IntegralDecompressFunctionName(result_type), {input_type, result_type}, result_type,
-	                      GetIntegralDecompressFunctionInputSwitch(input_type, result_type), CMUtils::Bind);
-	result.SetSerializeCallback(CMIntegralSerialize);
-	result.SetDeserializeCallback(CMIntegralDeserialize<GetIntegralDecompressFunctionInputSwitch>);
-	return result;
 }
 
 ScalarFunctionSet InternalCompressIntegralUtinyintFun::GetFunctions() {

@@ -3,7 +3,6 @@ import csv
 import re
 import argparse
 import glob
-import sys
 from typing import Set, Tuple, cast
 import pathlib
 from typing import NamedTuple
@@ -66,10 +65,6 @@ class CatalogType(str, Enum):
 
 
 parameter_type_map = {"TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ", "TIME WITH TIME ZONE": "TIMETZ"}
-
-
-def log(message: str):
-    print(message, file=sys.stderr, flush=True)
 
 
 def catalog_type_from_type(catalog_type: str) -> CatalogType:
@@ -309,21 +304,21 @@ class ParsedEntries:
 
 def check_prerequisites():
     if not os.path.isfile(DUCKDB_PATH):
-        log(f"{DUCKDB_PATH} not found")
-        log(
+        print(f"{DUCKDB_PATH} not found")
+        print(
             "please run 'GENERATE_EXTENSION_ENTRIES=1 BUILD_ALL_EXT=1 make release', you might have to manually add DONT_LINK to all extension_configs"
         )
         exit(1)
     if len(args.extensions) == 0 and not os.path.isfile(EXTENSIONS_PATH):
-        log(f"{EXTENSIONS_PATH} not found and --extensions it not set")
-        log("Either:")
-        log(
+        print(f"{EXTENSIONS_PATH} not found and --extensions it not set")
+        print("Either:")
+        print(
             "* run 'GENERATE_EXTENSION_ENTRIES=1 BUILD_ALL_EXT=1 make release', you might have to manually add DONT_LINK to all extension_configs"
         )
-        log("* Specify a comma separated list of extensions using --extensions")
+        print("* Specify a comma separated list of extensions using --extensions")
         exit(1)
     if not os.path.isdir(args.extension_repository):
-        log(f"provided --extension_repository '{args.extension_repository}' is not a valid directory")
+        print(f"provided --extension_repository '{args.extension_repository}' is not a valid directory")
         exit(1)
 
 
@@ -347,26 +342,13 @@ def get_extension_names() -> List[str]:
 def get_query(sql_query, load_query) -> list:
     # Optionally perform a LOAD of an extension
     # Then perform a SQL query, fetch the output
-    import csv
-    import io
-
-    query = f'{DUCKDB_PATH} -unsigned -csv -c "{load_query}{sql_query}" '
+    query = f'{DUCKDB_PATH} -json -unsigned -c "{load_query}{sql_query}" '
     query_result = os.popen(query).read()
-    f = io.StringIO(query_result)
-    reader = csv.reader(f)
-    header = next(reader)
-    result = []
-    for line in reader:
-        result_obj = {}
-        for i in range(len(header)):
-            result_obj[header[i]] = line[i]
-        result.append(result_obj)
+    result = [x for x in query_result[1:-2].split("\n") if x != '']
     return result
 
 
 def transform_parameter(parameter) -> LogicalType:
-    if parameter is None:
-        return LogicalType("INVALID")
     parameter = parameter.upper()
     if parameter.endswith('[]'):
         return LogicalType(transform_parameter(parameter[0 : len(parameter) - 2]).type + '[]')
@@ -376,7 +358,7 @@ def transform_parameter(parameter) -> LogicalType:
 
 
 def transform_parameters(parameters) -> FunctionOverload:
-    parameters = [x for x in parameters.lstrip('[').rstrip(']').split(', ') if len(x) > 0]
+    parameters = parameters[1:-1].split(', ')
     return tuple(transform_parameter(param) for param in parameters)
 
 
@@ -388,19 +370,20 @@ def get_functions(load="") -> (Set[Function], Dict[Function, List[FunctionOverlo
             parameter_types,
             return_type
         from duckdb_functions()
-        where function_type <> 'window'
         ORDER BY function_name, function_type;
     """
     # ['name_1,type_1', ..., 'name_n,type_n']
-    results = get_query(GET_FUNCTIONS_QUERY, load)
+    results = set(get_query(GET_FUNCTIONS_QUERY, load))
 
     functions = set()
     function_overloads = {}
-    for func in results:
-        function_name = func["function_name"].lower()
-        function_type = func["function_type"]
-        parameter_types = func["parameter_types"]
-        return_type = func["return_type"]
+    for x in results:
+        if x[-1] == ',':
+            # Remove the trailing comma
+            x = x[:-1]
+        function_name, function_type, parameter_types, return_type = [
+            x.lower() if x else "null" for x in json.loads(x).values()
+        ]
         function_parameters = transform_parameters(parameter_types)
         function_return = transform_parameter(return_type)
         function = Function(function_name, catalog_type_from_string(function_type))
@@ -422,10 +405,13 @@ def get_settings(load="") -> Set[str]:
             name
         from duckdb_settings();
     """
-    settings = get_query(GET_SETTINGS_QUERY, load)
+    settings = set(get_query(GET_SETTINGS_QUERY, load))
     res = set()
-    for setting in settings:
-        name = setting['name']
+    for x in settings:
+        if x[-1] == ',':
+            # Remove the trailing comma
+            x = x[:-1]
+        name = json.loads(x)['name']
         res.add(name)
     return res
 
@@ -436,10 +422,13 @@ def get_secret_types(load="") -> Set[str]:
             type
         from duckdb_secret_types();
     """
-    secret_types = get_query(GET_SECRET_TYPES_QUERY, load)
+    secret_types = set(get_query(GET_SECRET_TYPES_QUERY, load))
     res = set()
-    for secret_type in secret_types:
-        type = secret_type['type']
+    for x in secret_types:
+        if x[-1] == ',':
+            # Remove the trailing comma
+            x = x[:-1]
+        type = json.loads(x)['type']
         res.add(type)
     return res
 
@@ -496,10 +485,10 @@ class ExtensionData:
         dependencies = EXTENSION_DEPENDENCIES[extension_name]
         for item in dependencies:
             if item not in self.extensions:
-                log(f"Could not load extension '{extension_name}', dependency '{item}' is missing")
+                print(f"Could not load extension '{extension_name}', dependency '{item}' is missing")
                 exit(1)
             extension_path = self.extensions[item]
-            log(f"Load {item} at {extension_path}")
+            print(f"Load {item} at {extension_path}")
             res += f"LOAD '{extension_path}';"
         return res
 
@@ -513,7 +502,7 @@ class ExtensionData:
             # Perform a LOAD and add the added settings/functions/secret_types
             extension_path = self.extensions[extension_name]
 
-            log(f"Load {extension_name} at {extension_path}")
+            print(f"Load {extension_name} at {extension_path}")
             load = self.load_dependencies(extension_name)
             load += f"LOAD '{extension_path}';"
 
@@ -531,14 +520,14 @@ class ExtensionData:
             extension_settings = self.stored_settings[extension_name]
             extension_secret_types = self.stored_secret_types[extension_name]
 
-            log(f"Loading {extension_name} from stored functions: {extension_functions}")
+            print(f"Loading {extension_name} from stored functions: {extension_functions}")
             self.add_settings(extension_name, extension_settings)
             self.add_secret_types(extension_name, extension_secret_types)
             self.add_functions(extension_name, extension_functions)
         else:
             error = f"""Missing extension {extension_name} and not found in stored_functions/stored_settings/stored_secret_types
 Please double check if '{args.extension_repository}' is the right location to look for ./**/*.duckdb_extension files"""
-            log(error)
+            print(error)
             exit(1)
         self.added_extensions.add(extension_name)
 
@@ -639,26 +628,26 @@ Please double check if '{args.extension_repository}' is the right location to lo
     def validate(self):
         parsed_entries = ParsedEntries(HEADER_PATH)
         if self.function_map != parsed_entries.functions:
-            log("Function map mismatches:")
+            print("Function map mismatches:")
             print_map_diff(self.function_map, parsed_entries.functions)
             exit(1)
         if self.settings_map != parsed_entries.settings:
-            log("Settings map mismatches:")
+            print("Settings map mismatches:")
             print_map_diff(self.settings_map, parsed_entries.settings)
             exit(1)
         if self.secret_types_map != parsed_entries.secret_types:
-            log("SecretTypes map mismatches:")
+            print("SecretTypes map mismatches:")
             print_map_diff(self.secret_types_map, parsed_entries.secret_types)
             exit(1)
 
-        log("All entries found: ")
-        log(" > functions: " + str(len(parsed_entries.functions)))
-        log(" > settings:  " + str(len(parsed_entries.settings)))
-        log(" > secret_types:  " + str(len(parsed_entries.secret_types)))
+        print("All entries found: ")
+        print(" > functions: " + str(len(parsed_entries.functions)))
+        print(" > settings:  " + str(len(parsed_entries.settings)))
+        print(" > secret_types:  " + str(len(parsed_entries.secret_types)))
 
     def verify_export(self):
         if len(self.function_map) == 0 or len(self.settings_map) == 0 or len(self.secret_types_map) == 0:
-            log(
+            print(
                 """
 The provided configuration produced an empty function map or empty settings map or empty secret types map
 This is likely caused by building DuckDB with extensions linked in
@@ -737,8 +726,8 @@ def print_map_diff(d1, d2):
 
     diff1 = str(set(s1) - set(s2))
     diff2 = str(set(s2) - set(s1))
-    log("Diff between maps: " + diff1 + "\n")
-    log("Diff between maps: " + diff2 + "\n")
+    print("Diff between maps: " + diff1 + "\n")
+    print("Diff between maps: " + diff2 + "\n")
 
 
 def get_extension_path_map() -> Dict[str, str]:
@@ -747,7 +736,7 @@ def get_extension_path_map() -> Dict[str, str]:
     extension_repository = args.extension_repository
     for location in glob.iglob(extension_repository + '/**/*.duckdb_extension', recursive=True):
         name, _ = os.path.splitext(os.path.basename(location))
-        log(f"Located extension: {name} in path: '{location}'")
+        print(f"Located extension: {name} in path: '{location}'")
         extension_paths[name] = location
     return extension_paths
 
@@ -808,6 +797,7 @@ static constexpr ExtensionEntry EXTENSION_COPY_FUNCTIONS[] = {
 static constexpr ExtensionEntry EXTENSION_TYPES[] = {
     {"json", "json"},
     {"inet", "inet"},
+    {"geometry", "spatial"}
 }; // END_OF_EXTENSION_TYPES
 
 // Note: these are currently hardcoded in scripts/generate_extensions_function.py
@@ -911,7 +901,7 @@ static constexpr const char *AUTOLOADABLE_EXTENSIONS[] = {
     "postgres_scanner",
     "tpcds",
     "tpch",
-    "unity_catalog",
+    "uc_catalog",
     "ui"
 }; // END_OF_AUTOLOADABLE_EXTENSIONS
 
@@ -963,6 +953,7 @@ def main():
     extension_data.add_entries(parsed_entries)
 
     for extension_name in extension_names:
+        print(extension_name)
         # For every extension, add the functions/settings added by the extension
         extension_data.add_extension(extension_name)
 

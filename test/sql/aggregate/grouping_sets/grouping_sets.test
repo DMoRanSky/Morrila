@@ -275,4 +275,3 @@ select count(*), course, type
 statement error
 select course from students group by ();
 ----
-Binder Error: column "course" must appear in the GROUP BY

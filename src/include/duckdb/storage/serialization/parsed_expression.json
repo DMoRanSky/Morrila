@@ -409,8 +409,7 @@
       {
         "id": 203,
         "name": "children",
-        "type": "vector<ParsedExpression*>",
-        "serialize_property": "SerializedChildren(serializer)"
+        "type": "vector<ParsedExpression*>"
       },
       {
         "id": 204,
@@ -445,14 +444,12 @@
       {
         "id": 210,
         "name": "offset_expr",
-        "type": "ParsedExpression*",
-        "serialize_property": "SerializedOffset(serializer)"
+        "type": "ParsedExpression*"
       },
       {
         "id": 211,
         "name": "default_expr",
-        "type": "ParsedExpression*",
-        "serialize_property": "SerializedDefault(serializer)"
+        "type": "ParsedExpression*"
       },
       {
         "id": 212,
@@ -479,41 +476,8 @@
         "id": 216,
         "name": "arg_orders",
         "type": "vector<OrderByNode>"
-      },
-      {
-        "id": 217,
-        "name": "has_ignore_nulls",
-        "type": "bool",
-        "version": "8"
       }
     ],
-    "constructor": ["type", "children", "offset_expr", "default_expr"]
-  },
-  {
-    "class": "TypeExpression",
-    "base": "ParsedExpression",
-    "enum": "TYPE",
-    "members": [
-      {
-        "id": 200,
-        "name": "catalog",
-        "type": "string"
-      },
-      {
-          "id": 201,
-          "name": "schema",
-          "type": "string"
-      },
-      {
-          "id": 202,
-          "name": "type_name",
-          "type": "string"
-      },
-      {
-          "id": 203,
-          "name": "children",
-          "type": "vector<unique_ptr<ParsedExpression>>"
-      }
-    ]
+    "constructor": ["type"]
   }
 ]

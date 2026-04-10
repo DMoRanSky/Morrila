@@ -1,11 +1,8 @@
 add_library_unity(
   duckdb_table_func_system
   OBJECT
-  duckdb_connection_count.cpp
-  duckdb_approx_database_count.cpp
   duckdb_columns.cpp
   duckdb_constraints.cpp
-  duckdb_coordinate_systems.cpp
   duckdb_databases.cpp
   duckdb_dependencies.cpp
   duckdb_extensions.cpp
@@ -16,7 +13,6 @@ add_library_unity(
   duckdb_log_contexts.cpp
   duckdb_indexes.cpp
   duckdb_memory.cpp
-  duckdb_eviction_queues.cpp
   duckdb_optimizers.cpp
   duckdb_schemas.cpp
   duckdb_secrets.cpp
@@ -24,15 +20,12 @@ add_library_unity(
   duckdb_which_secret.cpp
   duckdb_secret_types.cpp
   duckdb_sequences.cpp
-  duckdb_triggers.cpp
   duckdb_settings.cpp
   duckdb_tables.cpp
   duckdb_temporary_files.cpp
   duckdb_types.cpp
   duckdb_variables.cpp
   duckdb_views.cpp
-  enable_profiling.cpp
-  logging_utils.cpp
   pragma_collations.cpp
   pragma_database_size.cpp
   pragma_metadata_info.cpp

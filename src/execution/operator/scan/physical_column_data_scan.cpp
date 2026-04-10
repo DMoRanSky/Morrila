@@ -8,18 +8,16 @@
 
 namespace duckdb {
 
-PhysicalColumnDataScan::PhysicalColumnDataScan(PhysicalPlan &physical_plan, vector<LogicalType> types,
-                                               PhysicalOperatorType op_type, idx_t estimated_cardinality,
+PhysicalColumnDataScan::PhysicalColumnDataScan(vector<LogicalType> types, PhysicalOperatorType op_type,
+                                               idx_t estimated_cardinality,
                                                optionally_owned_ptr<ColumnDataCollection> collection_p)
-    : PhysicalOperator(physical_plan, op_type, std::move(types), estimated_cardinality),
-      collection(std::move(collection_p)) {
+    : PhysicalOperator(op_type, std::move(types), estimated_cardinality), collection(std::move(collection_p)),
+      cte_index(DConstants::INVALID_INDEX) {
 }
 
-PhysicalColumnDataScan::PhysicalColumnDataScan(PhysicalPlan &physical_plan, vector<LogicalType> types,
-                                               PhysicalOperatorType op_type, idx_t estimated_cardinality,
-                                               TableIndex cte_index)
-    : PhysicalOperator(physical_plan, op_type, std::move(types), estimated_cardinality), collection(nullptr),
-      cte_index(cte_index) {
+PhysicalColumnDataScan::PhysicalColumnDataScan(vector<LogicalType> types, PhysicalOperatorType op_type,
+                                               idx_t estimated_cardinality, idx_t cte_index)
+    : PhysicalOperator(op_type, std::move(types), estimated_cardinality), collection(nullptr), cte_index(cte_index) {
 }
 
 class PhysicalColumnDataGlobalScanState : public GlobalSourceState {
@@ -53,8 +51,8 @@ unique_ptr<LocalSourceState> PhysicalColumnDataScan::GetLocalSourceState(Executi
 	return make_uniq<PhysicalColumnDataLocalScanState>();
 }
 
-SourceResultType PhysicalColumnDataScan::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                         OperatorSourceInput &input) const {
+SourceResultType PhysicalColumnDataScan::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                 OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<PhysicalColumnDataGlobalScanState>();
 	auto &lstate = input.local_state.Cast<PhysicalColumnDataLocalScanState>();
 	collection->Scan(gstate.global_scan_state, lstate.local_scan_state, chunk);
@@ -121,7 +119,7 @@ InsertionOrderPreservingMap<string> PhysicalColumnDataScan::ParamsToString() con
 	case PhysicalOperatorType::RECURSIVE_RECURRING_CTE_SCAN:
 	case PhysicalOperatorType::CTE_SCAN:
 	case PhysicalOperatorType::RECURSIVE_CTE_SCAN: {
-		result["CTE Index"] = StringUtil::Format("%llu", cte_index.index);
+		result["CTE Index"] = StringUtil::Format("%llu", cte_index);
 		break;
 	}
 	default:

@@ -48,8 +48,7 @@ string MaterializedQueryResult::ToBox(ClientContext &context, const BoxRendererC
 		return "Internal error - result was successful but there was no collection";
 	}
 	BoxRenderer renderer(config);
-	ColumnDataCollectionWrapper wrapper(Collection());
-	return renderer.ToString(context, names, wrapper);
+	return renderer.ToString(context, names, Collection());
 }
 
 Value MaterializedQueryResult::GetValue(idx_t column, idx_t index) {
@@ -85,7 +84,11 @@ unique_ptr<ColumnDataCollection> MaterializedQueryResult::TakeCollection() {
 	return std::move(collection);
 }
 
-unique_ptr<DataChunk> MaterializedQueryResult::FetchInternal() {
+unique_ptr<DataChunk> MaterializedQueryResult::Fetch() {
+	return FetchRaw();
+}
+
+unique_ptr<DataChunk> MaterializedQueryResult::FetchRaw() {
 	if (HasError()) {
 		throw InvalidInputException("Attempting to fetch from an unsuccessful query result\nError: %s", GetError());
 	}

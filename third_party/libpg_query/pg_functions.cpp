@@ -30,8 +30,13 @@ struct pg_parser_state_str {
 };
 
 #ifdef __MVS__
-static __tlssim<parser_state> pg_parser_state_impl;
-#define pg_parser_state (*pg_parser_state_impl.access())
+// --------------------------------------------------------
+// Permanent - WIP
+// static __tlssim<parser_state> pg_parser_state_impl();
+// #define pg_parser_state (*pg_parser_state_impl.access())
+// --------------------------------------------------------
+// Temporary
+static parser_state pg_parser_state;
 #else
 static __thread parser_state pg_parser_state;
 #endif

@@ -1,12 +1,10 @@
 #pragma once
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
 
 namespace duckdb {
 
-template <class T, class RETURN_TYPE, bool FIND_NULLS>
+template <class T, class RETURN_TYPE, bool FIND_NULLS = false>
 idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target, Vector &result, const idx_t count) {
 	// If the return type is not a bool, return the position
 	const auto return_pos = std::is_same<RETURN_TYPE, int32_t>::value;
@@ -26,7 +24,8 @@ idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target,
 	const auto target_data = UnifiedVectorFormat::GetData<T>(target_format);
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::Writer<RETURN_TYPE>(result, count);
+	auto result_data = FlatVector::GetData<RETURN_TYPE>(result);
+	auto &result_validity = FlatVector::Validity(result);
 
 	idx_t total_matches = 0;
 
@@ -35,7 +34,7 @@ idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target,
 
 		// The entire list is NULL, the result is also NULL.
 		if (!list_format.validity.RowIsValid(list_entry_idx)) {
-			result_data.SetInvalid(row_idx);
+			result_validity.SetInvalid(row_idx);
 			continue;
 		}
 
@@ -48,7 +47,7 @@ idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target,
 		if (finished || list_entries[list_entry_idx].length == 0) {
 			if (finished || return_pos) {
 				// Return NULL as the position.
-				result_data.SetInvalid(row_idx);
+				result_validity.SetInvalid(row_idx);
 			} else {
 				// Set 'contains' to false.
 				result_data[row_idx] = false;
@@ -80,7 +79,7 @@ idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target,
 
 		if (!found) {
 			if (return_pos) {
-				result_data.SetInvalid(row_idx);
+				result_validity.SetInvalid(row_idx);
 			} else {
 				result_data[row_idx] = false;
 			}
@@ -90,7 +89,7 @@ idx_t ListSearchSimpleOp(Vector &input_list, Vector &list_child, Vector &target,
 	return total_matches;
 }
 
-template <class RETURN_TYPE, bool FIND_NULLS>
+template <class RETURN_TYPE>
 idx_t ListSearchNestedOp(Vector &list_vec, Vector &source_vec, Vector &target_vec, Vector &result_vec,
                          const idx_t target_count) {
 	// Set up sort keys for nested types.
@@ -102,8 +101,8 @@ idx_t ListSearchNestedOp(Vector &list_vec, Vector &source_vec, Vector &target_ve
 	CreateSortKeyHelpers::CreateSortKeyWithValidity(source_vec, source_sort_key_vec, order_modifiers, source_count);
 	CreateSortKeyHelpers::CreateSortKeyWithValidity(target_vec, target_sort_key_vec, order_modifiers, target_count);
 
-	return ListSearchSimpleOp<string_t, RETURN_TYPE, FIND_NULLS>(list_vec, source_sort_key_vec, target_sort_key_vec,
-	                                                             result_vec, target_count);
+	return ListSearchSimpleOp<string_t, RETURN_TYPE>(list_vec, source_sort_key_vec, target_sort_key_vec, result_vec,
+	                                                 target_count);
 }
 
 //! "Search" each list in the list vector for the corresponding value in the target vector, returning either
@@ -153,7 +152,7 @@ idx_t ListSearchOp(Vector &list_v, Vector &source_v, Vector &target_v, Vector &r
 	case PhysicalType::STRUCT:
 	case PhysicalType::LIST:
 	case PhysicalType::ARRAY:
-		return ListSearchNestedOp<RETURN_TYPE, FIND_NULLS>(list_v, source_v, target_v, result_v, target_count);
+		return ListSearchNestedOp<RETURN_TYPE>(list_v, source_v, target_v, result_v, target_count);
 	default:
 		throw NotImplementedException("This function has not been implemented for logical type %s",
 		                              TypeIdToString(type));

@@ -1,8 +1,6 @@
 #include "duckdb/execution/operator/order/physical_top_n.hpp"
 
 #include "duckdb/common/assert.hpp"
-#include "duckdb/common/mutex.hpp"
-#include "duckdb/common/arena_containers/arena_vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -10,11 +8,10 @@
 
 namespace duckdb {
 
-PhysicalTopN::PhysicalTopN(PhysicalPlan &physical_plan, vector<LogicalType> types, vector<BoundOrderByNode> orders,
-                           idx_t limit, idx_t offset, shared_ptr<DynamicFilterData> dynamic_filter_p,
-                           idx_t estimated_cardinality)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::TOP_N, std::move(types), estimated_cardinality),
-      orders(std::move(orders)), limit(limit), offset(offset), dynamic_filter(std::move(dynamic_filter_p)) {
+PhysicalTopN::PhysicalTopN(vector<LogicalType> types, vector<BoundOrderByNode> orders, idx_t limit, idx_t offset,
+                           shared_ptr<DynamicFilterData> dynamic_filter_p, idx_t estimated_cardinality)
+    : PhysicalOperator(PhysicalOperatorType::TOP_N, std::move(types), estimated_cardinality), orders(std::move(orders)),
+      limit(limit), offset(offset), dynamic_filter(std::move(dynamic_filter_p)) {
 }
 
 PhysicalTopN::~PhysicalTopN() {
@@ -87,8 +84,7 @@ public:
 
 	Allocator &allocator;
 	BufferManager &buffer_manager;
-	ArenaAllocator arena_allocator;
-	unsafe_arena_vector<TopNEntry> heap;
+	unsafe_vector<TopNEntry> heap;
 	const vector<LogicalType> &payload_types;
 	const vector<BoundOrderByNode> &orders;
 	vector<OrderModifiers> modifiers;
@@ -165,11 +161,10 @@ private:
 //===--------------------------------------------------------------------===//
 TopNHeap::TopNHeap(ClientContext &context, Allocator &allocator, const vector<LogicalType> &payload_types_p,
                    const vector<BoundOrderByNode> &orders_p, idx_t limit, idx_t offset)
-    : allocator(allocator), buffer_manager(BufferManager::GetBufferManager(context)), arena_allocator(allocator),
-      heap(arena_allocator), payload_types(payload_types_p), orders(orders_p), limit(limit), offset(offset),
-      heap_size(limit + offset), executor(context), sort_key_heap(allocator), matching_sel(STANDARD_VECTOR_SIZE),
-      final_sel(STANDARD_VECTOR_SIZE), true_sel(STANDARD_VECTOR_SIZE), false_sel(STANDARD_VECTOR_SIZE),
-      new_remaining_sel(STANDARD_VECTOR_SIZE) {
+    : allocator(allocator), buffer_manager(BufferManager::GetBufferManager(context)), payload_types(payload_types_p),
+      orders(orders_p), limit(limit), offset(offset), heap_size(limit + offset), executor(context),
+      sort_key_heap(allocator), matching_sel(STANDARD_VECTOR_SIZE), final_sel(STANDARD_VECTOR_SIZE),
+      true_sel(STANDARD_VECTOR_SIZE), false_sel(STANDARD_VECTOR_SIZE), new_remaining_sel(STANDARD_VECTOR_SIZE) {
 	// initialize the executor and the sort_chunk
 	vector<LogicalType> sort_types;
 	for (auto &order : orders) {
@@ -228,8 +223,10 @@ void TopNHeap::AddSmallHeap(DataChunk &input, Vector &sort_keys_vec) {
 			continue;
 		}
 		// this entry was added in this chunk
-		// copy over the string to the string heap
-		entry.sort_key = sort_key_heap.AddBlob(entry.sort_key);
+		// if not inlined - copy over the string to the string heap
+		if (!entry.sort_key.IsInlined()) {
+			entry.sort_key = sort_key_heap.AddBlob(entry.sort_key);
+		}
 		// to finalize the addition of this entry we need to move over the payload data
 		matching_sel.set_index(match_count, entry.index - BASE_INDEX);
 		entry.index = heap_data.size() + match_count;
@@ -251,7 +248,7 @@ void TopNHeap::AddLargeHeap(DataChunk &input, Vector &sort_keys_vec) {
 		}
 		// replace the previous top entry with the new entry
 		TopNEntry entry;
-		entry.sort_key = sort_key_heap.AddBlob(sort_key);
+		entry.sort_key = sort_key.IsInlined() ? sort_key : sort_key_heap.AddBlob(sort_key);
 		entry.index = base_index + match_count;
 		AddEntryToHeap(entry);
 		matching_sel.set_index(match_count++, r);
@@ -289,7 +286,6 @@ bool TopNHeap::CheckBoundaryValues(DataChunk &sort_chunk, DataChunk &payload, To
 
 	SelectionVector remaining_sel(nullptr);
 	idx_t remaining_count = sort_chunk.size();
-	sort_chunk.Flatten();
 	for (idx_t i = 0; i < orders.size(); i++) {
 		if (remaining_sel.data()) {
 			compare_chunk.data[i].Slice(sort_chunk.data[i], remaining_sel, remaining_count);
@@ -391,7 +387,7 @@ void TopNHeap::Combine(TopNHeap &other) {
 		}
 		// add this entry
 		TopNEntry new_entry;
-		new_entry.sort_key = sort_key_heap.AddBlob(sort_key);
+		new_entry.sort_key = sort_key.IsInlined() ? sort_key : sort_key_heap.AddBlob(sort_key);
 		new_entry.index = heap_data.size() + match_count;
 		AddEntryToHeap(new_entry);
 
@@ -427,8 +423,10 @@ void TopNHeap::Reduce() {
 	SelectionVector new_payload_sel(heap.size());
 	for (idx_t i = 0; i < heap.size(); i++) {
 		auto &entry = heap[i];
-		// move the sort key to the new sort heap
-		entry.sort_key = new_sort_heap.AddBlob(entry.sort_key);
+		// the entry is not inlined - move the sort key to the new sort heap
+		if (!entry.sort_key.IsInlined()) {
+			entry.sort_key = new_sort_heap.AddBlob(entry.sort_key);
+		}
 		// move this heap entry to position X in the payload chunk
 		new_payload_sel.set_index(i, entry.index);
 		entry.index = i;
@@ -576,8 +574,7 @@ unique_ptr<LocalSourceState> PhysicalTopN::GetLocalSourceState(ExecutionContext 
 	return make_uniq<TopNLocalSourceState>();
 }
 
-SourceResultType PhysicalTopN::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                               OperatorSourceInput &input) const {
+SourceResultType PhysicalTopN::GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const {
 	if (limit == 0) {
 		return SourceResultType::FINISHED;
 	}
@@ -587,7 +584,7 @@ SourceResultType PhysicalTopN::GetDataInternal(ExecutionContext &context, DataCh
 
 	if (lstate.pos == lstate.end) {
 		// Obtain new scan indices from the global state
-		annotated_lock_guard<annotated_mutex> guard(gstate.lock);
+		auto guard = gstate.Lock();
 		lstate.pos = gstate.state.pos;
 		gstate.state.pos += TopNGlobalSourceState::TUPLES_PER_BATCH;
 		lstate.end = gstate.state.pos;
@@ -625,7 +622,6 @@ InsertionOrderPreservingMap<string> PhysicalTopN::ParamsToString() const {
 		orders_info += orders[i].type == OrderType::DESCENDING ? "DESC" : "ASC";
 	}
 	result["Order By"] = orders_info;
-	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
 

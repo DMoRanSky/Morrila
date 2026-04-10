@@ -5,48 +5,38 @@
 
 namespace duckdb {
 
-NodeHandle<Node256Leaf> Node256Leaf::New(ART &art, Node &node) {
+Node256Leaf &Node256Leaf::New(ART &art, Node &node) {
 	node = Node::GetAllocator(art, NODE_256_LEAF).New();
 	node.SetMetadata(static_cast<uint8_t>(NODE_256_LEAF));
+	auto &n256 = Node::Ref<Node256Leaf>(art, node, NODE_256_LEAF);
 
-	NodeHandle<Node256Leaf> handle(art, node);
-	auto &n = handle.Get();
-
-	n.count = 0;
-	ValidityMask mask(&n.mask[0], Node256::CAPACITY);
+	n256.count = 0;
+	ValidityMask mask(&n256.mask[0], Node256::CAPACITY);
 	mask.SetAllInvalid(CAPACITY);
-
-	return handle;
+	return n256;
 }
 
 void Node256Leaf::InsertByte(ART &art, Node &node, const uint8_t byte) {
-	NodeHandle<Node256Leaf> handle(art, node);
-	auto &n = handle.Get();
-
-	n.count++;
-	ValidityMask mask(&n.mask[0], Node256::CAPACITY);
+	auto &n256 = Node::Ref<Node256Leaf>(art, node, NODE_256_LEAF);
+	n256.count++;
+	ValidityMask mask(&n256.mask[0], Node256::CAPACITY);
 	mask.SetValid(byte);
 }
 
 void Node256Leaf::DeleteByte(ART &art, Node &node, const uint8_t byte) {
-	{
-		NodeHandle<Node256Leaf> handle(art, node);
-		auto &n = handle.Get();
+	auto &n256 = Node::Ref<Node256Leaf>(art, node, NODE_256_LEAF);
+	n256.count--;
+	ValidityMask mask(&n256.mask[0], Node256::CAPACITY);
+	mask.SetInvalid(byte);
 
-		n.count--;
-		ValidityMask mask(&n.mask[0], Node256::CAPACITY);
-		mask.SetInvalid(byte);
-
-		if (n.count > Node48::SHRINK_THRESHOLD) {
-			return;
-		}
+	// Shrink node to Node15
+	if (n256.count <= Node48::SHRINK_THRESHOLD) {
+		auto node256 = node;
+		Node15Leaf::ShrinkNode256Leaf(art, node, node256);
 	}
-	// Shrink node to Node15.
-	auto node256 = node;
-	Node15Leaf::ShrinkNode256Leaf(art, node, node256);
 }
 
-bool Node256Leaf::HasByte(const uint8_t byte) {
+bool Node256Leaf::HasByte(uint8_t &byte) {
 	ValidityMask v_mask(&mask[0], Node256::CAPACITY);
 	return v_mask.RowIsValid(byte);
 }
@@ -74,26 +64,23 @@ bool Node256Leaf::GetNextByte(uint8_t &byte) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
-void Node256Leaf::GrowNode15Leaf(ART &art, Node &node256_leaf, Node &node15_leaf) {
-	{
-		NodeHandle<Node15Leaf> n15_handle(art, node15_leaf);
-		auto &n15 = n15_handle.Get();
+Node256Leaf &Node256Leaf::GrowNode15Leaf(ART &art, Node &node256_leaf, Node &node15_leaf) {
+	auto &n15 = Node::Ref<Node15Leaf>(art, node15_leaf, NType::NODE_15_LEAF);
+	auto &n256 = New(art, node256_leaf);
+	node256_leaf.SetGateStatus(node15_leaf.GetGateStatus());
 
-		auto n256_handle = New(art, node256_leaf);
-		auto &n256 = n256_handle.Get();
-		node256_leaf.SetGateStatus(node15_leaf.GetGateStatus());
-
-		n256.count = n15.count;
-		ValidityMask mask(&n256.mask[0], Node256::CAPACITY);
-		for (uint8_t i = 0; i < n15.count; i++) {
-			mask.SetValid(n15.key[i]);
-		}
+	n256.count = n15.count;
+	ValidityMask mask(&n256.mask[0], Node256::CAPACITY);
+	for (uint8_t i = 0; i < n15.count; i++) {
+		mask.SetValid(n15.key[i]);
 	}
-	Node::FreeNode(art, node15_leaf);
+
+	n15.count = 0;
+	Node::Free(art, node15_leaf);
+	return n256;
 }
 
 } // namespace duckdb

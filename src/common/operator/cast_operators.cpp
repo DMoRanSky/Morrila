@@ -13,21 +13,20 @@
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/cast_helpers.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/vector.hpp"
-#include "duckdb/common/types/geometry.hpp"
 #include "duckdb/common/types.hpp"
 #include "fast_float/fast_float.h"
+#include "fmt/format.h"
 #include "duckdb/common/types/bit.hpp"
 #include "duckdb/common/operator/integer_cast_operator.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
 #include "duckdb/planner/expression.hpp"
-#include "duckdb/common/serializer/binary_deserializer.hpp"
-#include "duckdb/common/serializer/memory_stream.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -1043,27 +1042,6 @@ bool TryCast::Operation(dtime_t input, dtime_t &result, bool strict) {
 }
 
 template <>
-bool TryCast::Operation(dtime_ns_t input, dtime_ns_t &result, bool strict) {
-	result.micros = input.micros;
-	return true;
-}
-
-template <>
-bool TryCast::Operation(dtime_ns_t input, dtime_t &result, bool strict) {
-	//	Round
-	result.micros = (input.micros + (Interval::NANOS_PER_MICRO / 2)) / Interval::NANOS_PER_MICRO;
-	return true;
-}
-
-template <>
-bool TryCast::Operation(dtime_t input, dtime_ns_t &result, bool strict) {
-	if (!TryMultiplyOperator::Operation(input.micros, Interval::NANOS_PER_MICRO, result.micros)) {
-		throw ConversionException("Could not convert TIME to TIME_NS");
-	}
-	return true;
-}
-
-template <>
 bool TryCast::Operation(dtime_t input, dtime_tz_t &result, bool strict) {
 	result = dtime_tz_t(input, 0);
 	return true;
@@ -1183,16 +1161,16 @@ bool TryCast::Operation(interval_t input, interval_t &result, bool strict) {
 // Non-Standard Timestamps
 //===--------------------------------------------------------------------===//
 template <>
-duckdb::string_t CastFromTimestampNS::Operation(duckdb::timestamp_ns_t input, StringHeap &heap) {
-	return StringCast::Operation<timestamp_ns_t>(input, heap);
+duckdb::string_t CastFromTimestampNS::Operation(duckdb::timestamp_ns_t input, Vector &result) {
+	return StringCast::Operation<timestamp_ns_t>(input, result);
 }
 template <>
-duckdb::string_t CastFromTimestampMS::Operation(duckdb::timestamp_t input, StringHeap &heap) {
-	return StringCast::Operation<timestamp_t>(CastTimestampMsToUs::Operation<timestamp_t, timestamp_t>(input), heap);
+duckdb::string_t CastFromTimestampMS::Operation(duckdb::timestamp_t input, Vector &result) {
+	return StringCast::Operation<timestamp_t>(CastTimestampMsToUs::Operation<timestamp_t, timestamp_t>(input), result);
 }
 template <>
-duckdb::string_t CastFromTimestampSec::Operation(duckdb::timestamp_t input, StringHeap &heap) {
-	return StringCast::Operation<timestamp_t>(CastTimestampSecToUs::Operation<timestamp_t, timestamp_t>(input), heap);
+duckdb::string_t CastFromTimestampSec::Operation(duckdb::timestamp_t input, Vector &result) {
+	return StringCast::Operation<timestamp_t>(CastTimestampSecToUs::Operation<timestamp_t, timestamp_t>(input), result);
 }
 
 template <>
@@ -1280,11 +1258,6 @@ template <>
 dtime_t CastTimestampNsToTime::Operation(timestamp_t input) {
 	const auto us = CastTimestampNsToUs::Operation<timestamp_t, timestamp_t>(input);
 	return Timestamp::GetTime(us);
-}
-
-template <>
-dtime_ns_t CastTimestampNsToTimeNs::Operation(timestamp_ns_t input) {
-	return Timestamp::GetTimeNs(input);
 }
 
 template <>
@@ -1385,10 +1358,10 @@ bool TryCastToTimestampSec::Operation(date_t input, timestamp_t &result, bool st
 // Cast From Blob
 //===--------------------------------------------------------------------===//
 template <>
-string_t CastFromBlob::Operation(string_t input, StringHeap &heap) {
+string_t CastFromBlob::Operation(string_t input, Vector &vector) {
 	idx_t result_size = Blob::GetStringSize(input);
 
-	string_t result = heap.EmptyString(result_size);
+	string_t result = StringVector::EmptyString(vector, result_size);
 	Blob::ToString(input, result.GetDataWriteable());
 	result.Finalize();
 
@@ -1396,21 +1369,22 @@ string_t CastFromBlob::Operation(string_t input, StringHeap &heap) {
 }
 
 template <>
-string_t CastFromBlobToBit::Operation(string_t input, StringHeap &heap) {
+string_t CastFromBlobToBit::Operation(string_t input, Vector &vector) {
 	idx_t result_size = input.GetSize() + 1;
 	if (result_size <= 1) {
 		throw ConversionException("Cannot cast empty BLOB to BIT");
 	}
-	return heap.AddBlob(Bit::BlobToBit(input));
+	return StringVector::AddStringOrBlob(vector, Bit::BlobToBit(input));
 }
 
 //===--------------------------------------------------------------------===//
 // Cast From Bit
 //===--------------------------------------------------------------------===//
 template <>
-string_t CastFromBitToString::Operation(string_t input, StringHeap &heap) {
+string_t CastFromBitToString::Operation(string_t input, Vector &vector) {
+
 	idx_t result_size = Bit::BitLength(input);
-	string_t result = heap.EmptyString(result_size);
+	string_t result = StringVector::EmptyString(vector, result_size);
 	Bit::ToString(input, result.GetDataWriteable());
 	result.Finalize();
 
@@ -1421,25 +1395,9 @@ string_t CastFromBitToString::Operation(string_t input, StringHeap &heap) {
 // Cast From Pointer
 //===--------------------------------------------------------------------===//
 template <>
-string_t CastFromPointer::Operation(uintptr_t input, StringHeap &heap) {
+string_t CastFromPointer::Operation(uintptr_t input, Vector &vector) {
 	std::string s = duckdb_fmt::format("0x{:x}", input);
-	return heap.AddString(s);
-}
-
-//===--------------------------------------------------------------------===//
-// Cast From Pointer
-//===--------------------------------------------------------------------===//
-template <>
-string_t CastFromType::Operation(string_t input, StringHeap &heap) {
-	MemoryStream stream(data_ptr_cast(input.GetDataWriteable()), input.GetSize());
-	BinaryDeserializer deserializer(stream);
-	try {
-		auto type = LogicalType::Deserialize(deserializer);
-		return heap.AddString(type.ToString());
-	} catch (std::exception &ex) {
-		// TODO: Format better error here?
-		return heap.AddString(ex.what());
-	}
+	return StringVector::AddString(vector, s);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1469,9 +1427,7 @@ bool TryCastToBit::Operation(string_t input, string_t &result, Vector &result_ve
 	}
 
 	result = StringVector::EmptyString(result_vector, result_size);
-	if (!Bit::ToBit(input, result, parameters.error_message)) {
-		return false;
-	}
+	Bit::ToBit(input, result);
 	result.Finalize();
 	return true;
 }
@@ -1491,9 +1447,8 @@ bool CastFromBitToNumeric::Operation(string_t input, hugeint_t &result, CastPara
 	D_ASSERT(input.GetSize() > 1);
 
 	if (input.GetSize() - 1 > sizeof(hugeint_t)) {
-		HandleCastError::AssignError("Bitstring doesn't fit inside of " + TypeIdToString(GetTypeId<hugeint_t>()),
-		                             parameters);
-		return false;
+		throw ConversionException(parameters.query_location, "Bitstring doesn't fit inside of %s",
+		                          GetTypeId<hugeint_t>());
 	}
 	Bit::BitToNumeric(input, result);
 	return (true);
@@ -1504,9 +1459,8 @@ bool CastFromBitToNumeric::Operation(string_t input, uhugeint_t &result, CastPar
 	D_ASSERT(input.GetSize() > 1);
 
 	if (input.GetSize() - 1 > sizeof(uhugeint_t)) {
-		HandleCastError::AssignError("Bitstring doesn't fit inside of " + TypeIdToString(GetTypeId<uhugeint_t>()),
-		                             parameters);
-		return false;
+		throw ConversionException(parameters.query_location, "Bitstring doesn't fit inside of %s",
+		                          GetTypeId<uhugeint_t>());
 	}
 	Bit::BitToNumeric(input, result);
 	return (true);
@@ -1516,25 +1470,9 @@ bool CastFromBitToNumeric::Operation(string_t input, uhugeint_t &result, CastPar
 // Cast From UUID
 //===--------------------------------------------------------------------===//
 template <>
-string_t CastFromUUID::Operation(hugeint_t input, StringHeap &heap) {
-	string_t result = heap.EmptyString(36);
+string_t CastFromUUID::Operation(hugeint_t input, Vector &vector) {
+	string_t result = StringVector::EmptyString(vector, 36);
 	UUID::ToString(input, result.GetDataWriteable());
-	result.Finalize();
-	return result;
-}
-
-//===--------------------------------------------------------------------===//
-// Cast From UUID To Blob
-//===--------------------------------------------------------------------===//
-template <>
-string_t CastFromUUIDToBlob::Operation(hugeint_t input, StringHeap &heap) {
-	// UUID is 16 bytes (128 bits)
-	string_t result = heap.EmptyString(16);
-	auto data = result.GetDataWriteable();
-
-	// Use the utility function from BaseUUID
-	BaseUUID::ToBlob(input, data_ptr_cast(data));
-
 	result.Finalize();
 	return result;
 }
@@ -1545,65 +1483,6 @@ string_t CastFromUUIDToBlob::Operation(hugeint_t input, StringHeap &heap) {
 template <>
 bool TryCastToUUID::Operation(string_t input, hugeint_t &result, Vector &result_vector, CastParameters &parameters) {
 	return UUID::FromString(input.GetString(), result, parameters.strict);
-}
-
-//===--------------------------------------------------------------------===//
-// Cast Blob To UUID
-//===--------------------------------------------------------------------===//
-template <>
-bool TryCastBlobToUUID::Operation(string_t input, hugeint_t &result, Vector &result_vector,
-                                  CastParameters &parameters) {
-	// BLOB must be exactly 16 bytes for UUID
-	if (input.GetSize() != 16) {
-		HandleCastError::AssignError("BLOB must be exactly 16 bytes to convert to UUID", parameters);
-		return false;
-	}
-
-	auto data = const_data_ptr_cast(input.GetData());
-
-	// Use the utility function from BaseUUID
-	result = BaseUUID::FromBlob(data);
-
-	return true;
-}
-
-template <>
-bool TryCastBlobToUUID::Operation(string_t input, hugeint_t &result, bool strict) {
-	// BLOB must be exactly 16 bytes for UUID
-	if (input.GetSize() != 16) {
-		return false;
-	}
-
-	auto data = const_data_ptr_cast(input.GetData());
-
-	// Use the utility function from BaseUUID
-	result = BaseUUID::FromBlob(data);
-
-	return true;
-}
-
-//===--------------------------------------------------------------------===//
-// Cast From UUID To UHUGEINT
-//===--------------------------------------------------------------------===//
-template <>
-uhugeint_t CastFromUUIDToUHugeint::Operation(hugeint_t input) {
-	return BaseUUID::ToUHugeint(input);
-}
-
-//===--------------------------------------------------------------------===//
-// Cast From UHUGEINT To UUID
-//===--------------------------------------------------------------------===//
-template <>
-hugeint_t CastFromUHugeintToUUID::Operation(uhugeint_t input) {
-	return BaseUUID::FromUHugeint(input);
-}
-
-//===--------------------------------------------------------------------===//
-// Cast To Geometry
-//===--------------------------------------------------------------------===//
-template <>
-bool TryCastToGeometry::Operation(string_t input, string_t &result, Vector &result_vector, CastParameters &parameters) {
-	return Geometry::FromString(input, result, StringVector::GetStringHeap(result_vector), parameters.strict);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1663,41 +1542,6 @@ dtime_t Cast::Operation(string_t input) {
 }
 
 //===--------------------------------------------------------------------===//
-// Cast To Time (ns)
-//===--------------------------------------------------------------------===//
-template <>
-bool TryCastErrorMessage::Operation(string_t input, dtime_ns_t &result, CastParameters &parameters) {
-	if (!TryCast::Operation<string_t, dtime_ns_t>(input, result, parameters.strict)) {
-		HandleCastError::AssignError(Time::ConversionError(input), parameters);
-		return false;
-	}
-	return true;
-}
-
-template <>
-bool TryCast::Operation(string_t input, dtime_ns_t &result, bool strict) {
-	idx_t pos;
-	dtime_t micros;
-	int32_t nanos = 0;
-	if (!Time::TryConvertTime(input.GetData(), input.GetSize(), pos, micros, strict, &nanos)) {
-		return false;
-	}
-	if (!TryCast::Operation(micros, result)) {
-		return false;
-	}
-	return TryAddOperator::Operation<int64_t, int64_t, int64_t>(result.micros, nanos, result.micros);
-}
-
-template <>
-dtime_ns_t Cast::Operation(string_t input) {
-	dtime_ns_t result;
-	if (!TryCast::Operation(input, result, false)) {
-		throw ConversionException(Time::ConversionError(input));
-	}
-	return result;
-}
-
-//===--------------------------------------------------------------------===//
 // Cast To TimeTZ
 //===--------------------------------------------------------------------===//
 template <>
@@ -1730,26 +1574,7 @@ dtime_tz_t Cast::Operation(string_t input) {
 //===--------------------------------------------------------------------===//
 template <>
 bool TryCastErrorMessage::Operation(string_t input, timestamp_t &result, CastParameters &parameters) {
-	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false)) {
-	case TimestampCastResult::SUCCESS:
-	case TimestampCastResult::STRICT_UTC:
-		return true;
-	case TimestampCastResult::ERROR_INCORRECT_FORMAT:
-		HandleCastError::AssignError(Timestamp::FormatError(input), parameters);
-		break;
-	case TimestampCastResult::ERROR_NON_UTC_TIMEZONE:
-		HandleCastError::AssignError(Timestamp::UnsupportedTimezoneError(input), parameters);
-		break;
-	case TimestampCastResult::ERROR_RANGE:
-		HandleCastError::AssignError(Timestamp::RangeError(input), parameters);
-		break;
-	}
-	return false;
-}
-
-template <>
-bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_t &result, CastParameters &parameters) {
-	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, true)) {
+	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result)) {
 	case TimestampCastResult::SUCCESS:
 	case TimestampCastResult::STRICT_UTC:
 		return true;
@@ -1768,14 +1593,7 @@ bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_t &result, Cast
 
 template <>
 bool TryCast::Operation(string_t input, timestamp_t &result, bool strict) {
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false) ==
-	       TimestampCastResult::SUCCESS;
-}
-
-template <>
-bool TryCast::Operation(string_t input, timestamp_tz_t &result, bool strict) {
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, true) ==
-	       TimestampCastResult::SUCCESS;
+	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result) == TimestampCastResult::SUCCESS;
 }
 
 template <>
@@ -1785,18 +1603,13 @@ bool TryCast::Operation(string_t input, timestamp_ns_t &result, bool strict) {
 
 template <>
 timestamp_t Cast::Operation(string_t input) {
-	return Timestamp::FromCString(input.GetData(), input.GetSize(), false);
-}
-
-template <>
-timestamp_tz_t Cast::Operation(string_t input) {
-	return timestamp_tz_t(Timestamp::FromCString(input.GetData(), input.GetSize(), true));
+	return Timestamp::FromCString(input.GetData(), input.GetSize());
 }
 
 template <>
 timestamp_ns_t Cast::Operation(string_t input) {
 	int32_t nanos;
-	const auto ts = Timestamp::FromCString(input.GetData(), input.GetSize(), false, &nanos);
+	const auto ts = Timestamp::FromCString(input.GetData(), input.GetSize(), &nanos);
 	timestamp_ns_t result;
 	if (!Timestamp::TryFromTimestampNanos(ts, nanos, result)) {
 		throw ConversionException(Timestamp::RangeError(input));
@@ -2104,23 +1917,23 @@ bool TryCastToDecimalCommaSeparated::Operation(string_t input, hugeint_t &result
 }
 
 template <>
-string_t StringCastFromDecimal::Operation(int16_t input, uint8_t width, uint8_t scale, StringHeap &heap) {
-	return DecimalToString::Format<int16_t>(input, width, scale, heap);
+string_t StringCastFromDecimal::Operation(int16_t input, uint8_t width, uint8_t scale, Vector &result) {
+	return DecimalToString::Format<int16_t>(input, width, scale, result);
 }
 
 template <>
-string_t StringCastFromDecimal::Operation(int32_t input, uint8_t width, uint8_t scale, StringHeap &heap) {
-	return DecimalToString::Format<int32_t>(input, width, scale, heap);
+string_t StringCastFromDecimal::Operation(int32_t input, uint8_t width, uint8_t scale, Vector &result) {
+	return DecimalToString::Format<int32_t>(input, width, scale, result);
 }
 
 template <>
-string_t StringCastFromDecimal::Operation(int64_t input, uint8_t width, uint8_t scale, StringHeap &heap) {
-	return DecimalToString::Format<int64_t>(input, width, scale, heap);
+string_t StringCastFromDecimal::Operation(int64_t input, uint8_t width, uint8_t scale, Vector &result) {
+	return DecimalToString::Format<int64_t>(input, width, scale, result);
 }
 
 template <>
-string_t StringCastFromDecimal::Operation(hugeint_t input, uint8_t width, uint8_t scale, StringHeap &heap) {
-	return DecimalToString::Format<hugeint_t>(input, width, scale, heap);
+string_t StringCastFromDecimal::Operation(hugeint_t input, uint8_t width, uint8_t scale, Vector &result) {
+	return DecimalToString::Format<hugeint_t>(input, width, scale, result);
 }
 
 //===--------------------------------------------------------------------===//

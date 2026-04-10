@@ -17,7 +17,6 @@ const duckdb_arrow_stream = Ptr{Cvoid}
 const duckdb_bind_info = Ptr{Cvoid}
 const duckdb_cast_function = Ptr{Cvoid}
 const duckdb_cast_function_ptr = Ptr{Cvoid}
-const duckdb_client_context = Ptr{Cvoid}
 const duckdb_config = Ptr{Cvoid}
 const duckdb_connection = Ptr{Cvoid}
 const duckdb_create_type_info = Ptr{Cvoid}
@@ -27,7 +26,6 @@ const duckdb_delete_callback = Ptr{Cvoid}
 const duckdb_extracted_statements = Ptr{Cvoid}
 const duckdb_function_info = Ptr{Cvoid}
 const duckdb_init_info = Ptr{Cvoid}
-const duckdb_instance_cache = Ptr{Cvoid}
 const duckdb_logical_type = Ptr{Cvoid}
 const duckdb_pending_result = Ptr{Cvoid}
 const duckdb_prepared_statement = Ptr{Cvoid}
@@ -35,9 +33,7 @@ const duckdb_profiling_info = Ptr{Cvoid}
 const duckdb_replacement_callback = Ptr{Cvoid}
 const duckdb_replacement_scan_info = Ptr{Cvoid}
 const duckdb_scalar_function = Ptr{Cvoid}
-const duckdb_scalar_function_bind = Ptr{Cvoid}
 const duckdb_scalar_function_set = Ptr{Cvoid}
-const duckdb_selection_vector = Ptr{Cvoid}
 const duckdb_table_description = Ptr{Cvoid}
 const duckdb_table_function = Ptr{Cvoid}
 const duckdb_table_function_ptr = Ptr{Cvoid}
@@ -189,10 +185,7 @@ const duckdb_cast_mode = DUCKDB_CAST_MODE_
     DUCKDB_TYPE_TIMESTAMP_TZ = 31
     DUCKDB_TYPE_ARRAY = 33
     DUCKDB_TYPE_ANY = 34
-    DUCKDB_TYPE_BIGNUM = 35
-    DUCKDB_TYPE_SQLNULL = 36
-    DUCKDB_TYPE_STRING_LITERAL = 37
-    DUCKDB_TYPE_INTEGER_LITERAL = 38
+    DUCKDB_TYPE_VARINT = 35
 end
 const DUCKDB_TYPE = DUCKDB_TYPE_
 
@@ -319,7 +312,7 @@ struct duckdb_query_progress_type
     total_rows_to_process::UInt64
 end
 
-struct duckdb_bignum
+struct duckdb_varint
     data::Ptr{UInt8}
     size::idx_t
     is_negative::Bool
@@ -373,8 +366,7 @@ INTERNAL_TYPE_MAP = Dict(
     DUCKDB_TYPE_LIST => duckdb_list_entry_t,
     DUCKDB_TYPE_STRUCT => Cvoid,
     DUCKDB_TYPE_MAP => duckdb_list_entry_t,
-    DUCKDB_TYPE_UNION => Cvoid,
-    DUCKDB_TYPE_ARRAY => Cvoid
+    DUCKDB_TYPE_UNION => Cvoid
 )
 
 JULIA_TYPE_MAP = Dict(
@@ -404,8 +396,8 @@ JULIA_TYPE_MAP = Dict(
     DUCKDB_TYPE_UUID => UUID,
     DUCKDB_TYPE_VARCHAR => String,
     DUCKDB_TYPE_ENUM => String,
-    DUCKDB_TYPE_BLOB => Vector{UInt8},
-    DUCKDB_TYPE_BIT => Vector{UInt8},
+    DUCKDB_TYPE_BLOB => Base.CodeUnits{UInt8, String},
+    DUCKDB_TYPE_BIT => Base.CodeUnits{UInt8, String},
     DUCKDB_TYPE_MAP => Dict
 )
 
@@ -435,8 +427,6 @@ function duckdb_type_to_julia_type(x)
         end
     elseif type_id == DUCKDB_TYPE_LIST
         return Vector{Union{Missing, duckdb_type_to_julia_type(get_list_child_type(x))}}
-    elseif type_id == DUCKDB_TYPE_ARRAY
-        return Vector{Union{Missing, duckdb_type_to_julia_type(get_array_child_type(x))}}
     elseif type_id == DUCKDB_TYPE_STRUCT
         child_count = get_struct_child_count(x)
         struct_names::Vector{Symbol} = Vector()

@@ -1,7 +1,11 @@
 # name: test/sql/storage/compression/dict_fsst/dictionary_covers_validity.test
 # group: [dict_fsst]
 
-load {TEST_DIR}/dictionary_covers_validity readwrite v1.3.0
+# This test defaults to another compression function for smaller block sizes,
+# because the bitpacking groups no longer fit the blocks.
+require block_size 262144
+
+load __TEST_DIR__/dictionary_covers_validity readwrite v1.3.0
 
 statement ok
 set checkpoint_threshold='10mb';
@@ -12,26 +16,28 @@ CREATE TABLE tbl AS SELECT
 		'a': i,
 		'b': NULL::VARCHAR
 	} col
-FROM range(5000) t(i)
-union all
-select
-	{
-		'a': 10000,
-		'b': 'hello'
-	}
+FROM range(5000) t(i);
 
 statement ok
 set force_compression='dict_fsst';
 
 statement ok
+INSERT INTO tbl VALUES (
+	{
+		'a': 10000,
+		'b': 'hello'
+	}
+);
+
+statement ok
 force checkpoint;
 
-# Dictionary FSST covers the validity mask replacing it with "Empty Validity".
-# The BIGINT segment type is either bitpacking (256kB blocks), or uncompressed (16kB blocks).
+# Dictionary covers the validity, so the validity gets replaced with "Empty Validity"
 query II
-SELECT segment_type, compression FROM pragma_storage_info('tbl') WHERE segment_type != 'BIGINT';
+select segment_type, compression from pragma_storage_info('tbl');
 ----
 VALIDITY	Constant
+BIGINT	BitPacking
 VALIDITY	Constant
 VARCHAR	DICT_FSST
 VALIDITY	Empty Validity
@@ -41,18 +47,12 @@ statement ok
 set force_compression='zstd';
 
 statement ok
-CREATE OR REPLACE TABLE tbl AS SELECT
-	{
-		'a': i,
-		'b': NULL::VARCHAR
-	} col
-FROM range(5000) t(i)
-union all
-select
+INSERT INTO tbl VALUES (
 	{
 		'a': 10000,
 		'b': 'hello'
-	} FROM range(2)
+	}
+);
 
 statement ok
 force checkpoint;

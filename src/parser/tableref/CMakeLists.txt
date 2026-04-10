@@ -3,7 +3,6 @@ add_library_unity(
   OBJECT
   at_clause.cpp
   basetableref.cpp
-  bound_ref_wrapper.cpp
   delimgetref.cpp
   emptytableref.cpp
   expressionlistref.cpp

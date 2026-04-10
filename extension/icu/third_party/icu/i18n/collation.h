@@ -221,8 +221,7 @@ public:
         /**
          * Points to contraction data.
          * Bits 31..13: Index into prefix/contraction data.
-         * Bit      12: Unused, 0.
-         * Bit      11: CONTRACT_HAS_STARTER flag. (Used by ICU4X only.)
+         * Bits 12..11: Unused, 0.
          * Bit      10: CONTRACT_TRAILING_CCC flag.
          * Bit       9: CONTRACT_NEXT_CCC flag.
          * Bit       8: CONTRACT_SINGLE_CP_NO_MATCH flag.
@@ -251,7 +250,7 @@ public:
          * Tag for a lead surrogate code unit.
          * Optional optimization for UTF-16 string processing.
          * Bits 31..10: Unused, 0.
-         *       9.. 8: =0: All associated supplementary code points are unassigned-implicit.
+         *       9.. 8: =0: All associated supplementary code points are unassigned-implict.
          *              =1: All associated supplementary code points fall back to the base data.
          *              else: (Normally 2) Look up the data for the supplementary code point.
          */
@@ -299,8 +298,6 @@ public:
     static const uint32_t CONTRACT_NEXT_CCC = 0x200;
     /** Set if any contraction suffix ends with lccc!=0. */
     static const uint32_t CONTRACT_TRAILING_CCC = 0x400;
-    /** Set if any contraction suffix contains a starter. (Used by ICU4X only.) */
-    static const uint32_t CONTRACT_HAS_STARTER = 0x800;
 
     /** For HANGUL_TAG: None of its Jamo CE32s isSpecialCE32(). */
     static const uint32_t HANGUL_NO_SPECIAL_JAMO = 0x100;
@@ -317,7 +314,7 @@ public:
         return ce32 & 0xffffff00;
     }
     static inline int64_t ceFromLongPrimaryCE32(uint32_t ce32) {
-        return (static_cast<int64_t>(ce32 & 0xffffff00) << 32) | COMMON_SEC_AND_TER_CE;
+        return ((int64_t)(ce32 & 0xffffff00) << 32) | COMMON_SEC_AND_TER_CE;
     }
 
     static uint32_t makeLongSecondaryCE32(uint32_t lower32) {
@@ -341,7 +338,7 @@ public:
     }
 
     static inline int32_t tagFromCE32(uint32_t ce32) {
-        return static_cast<int32_t>(ce32 & 0xf);
+        return (int32_t)(ce32 & 0xf);
     }
 
     static inline UBool hasCE32Tag(uint32_t ce32, int32_t tag) {
@@ -359,7 +356,7 @@ public:
     }
 
     /**
-     * @return true if the ce32 yields one or more CEs without further data lookups
+     * @return TRUE if the ce32 yields one or more CEs without further data lookups
      */
     static UBool isSelfContainedCE32(uint32_t ce32) {
         return !isSpecialCE32(ce32) ||
@@ -387,7 +384,7 @@ public:
      * @see LATIN_EXPANSION_TAG
      */
     static inline int64_t latinCE0FromCE32(uint32_t ce32) {
-        return (static_cast<int64_t>(ce32 & 0xff000000) << 32) | COMMON_SECONDARY_CE | ((ce32 & 0xff0000) >> 8);
+        return ((int64_t)(ce32 & 0xff000000) << 32) | COMMON_SECONDARY_CE | ((ce32 & 0xff0000) >> 8);
     }
 
     /**
@@ -402,7 +399,7 @@ public:
      * Returns the data index from a special CE32.
      */
     static inline int32_t indexFromCE32(uint32_t ce32) {
-        return static_cast<int32_t>(ce32 >> 13);
+        return (int32_t)(ce32 >> 13);
     }
 
     /**
@@ -416,14 +413,14 @@ public:
      * Returns the digit value from a DIGIT_TAG ce32.
      */
     static inline char digitFromCE32(uint32_t ce32) {
-        return static_cast<char>((ce32 >> 8) & 0xf);
+        return (char)((ce32 >> 8) & 0xf);
     }
 
     /** Returns a 64-bit CE from a simple CE32 (not special). */
     static inline int64_t ceFromSimpleCE32(uint32_t ce32) {
         // normal form ppppsstt -> pppp0000ss00tt00
         // assert (ce32 & 0xff) < SPECIAL_CE32_LOW_BYTE
-        return (static_cast<int64_t>(ce32 & 0xffff0000) << 32) | ((ce32 & 0xff00) << 16) | ((ce32 & 0xff) << 8);
+        return ((int64_t)(ce32 & 0xffff0000) << 32) | ((ce32 & 0xff00) << 16) | ((ce32 & 0xff) << 8);
     }
 
     /** Returns a 64-bit CE from a simple/long-primary/long-secondary CE32. */
@@ -431,12 +428,12 @@ public:
         uint32_t tertiary = ce32 & 0xff;
         if(tertiary < SPECIAL_CE32_LOW_BYTE) {
             // normal form ppppsstt -> pppp0000ss00tt00
-            return (static_cast<int64_t>(ce32 & 0xffff0000) << 32) | ((ce32 & 0xff00) << 16) | (tertiary << 8);
+            return ((int64_t)(ce32 & 0xffff0000) << 32) | ((ce32 & 0xff00) << 16) | (tertiary << 8);
         } else {
             ce32 -= tertiary;
             if((tertiary & 0xf) == LONG_PRIMARY_TAG) {
                 // long-primary form ppppppC1 -> pppppp00050000500
-                return (static_cast<int64_t>(ce32) << 32) | COMMON_SEC_AND_TER_CE;
+                return ((int64_t)ce32 << 32) | COMMON_SEC_AND_TER_CE;
             } else {
                 // long-secondary form ssssttC2 -> 00000000sssstt00
                 // assert (tertiary & 0xf) == LONG_SECONDARY_TAG
@@ -447,14 +444,14 @@ public:
 
     /** Creates a CE from a primary weight. */
     static inline int64_t makeCE(uint32_t p) {
-        return (static_cast<int64_t>(p) << 32) | COMMON_SEC_AND_TER_CE;
+        return ((int64_t)p << 32) | COMMON_SEC_AND_TER_CE;
     }
     /**
      * Creates a CE from a primary weight,
      * 16-bit secondary/tertiary weights, and a 2-bit quaternary.
      */
     static inline int64_t makeCE(uint32_t p, uint32_t s, uint32_t t, uint32_t q) {
-        return (static_cast<int64_t>(p) << 32) | (s << 16) | t | (q << 6);
+        return ((int64_t)p << 32) | (s << 16) | t | (q << 6);
     }
 
     /**
@@ -494,7 +491,7 @@ public:
     }
 
 private:
-    Collation() = delete;  // No instantiation.
+    Collation();  // No instantiation.
 };
 
 U_NAMESPACE_END

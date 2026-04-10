@@ -1,8 +1,3 @@
-#include "duckdb/common/vector/constant_vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
-#include "duckdb/common/vector/map_vector.hpp"
-#include "duckdb/common/vector/string_vector.hpp"
-#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
 
 #include "duckdb/common/exception.hpp"
@@ -175,7 +170,6 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 	auto &patterns = args.data[1];
 	auto &replaces = args.data[2];
 
-	auto &heap = StringVector::GetStringHeap(result);
 	if (info.constant_pattern) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		BinaryExecutor::Execute<string_t, string_t, string_t>(
@@ -186,7 +180,7 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 			    } else {
 				    RE2::Replace(&sstring, lstate.constant_pattern, CreateStringPiece(replace));
 			    }
-			    return heap.AddString(sstring);
+			    return StringVector::AddString(result, sstring);
 		    });
 	} else {
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
@@ -201,7 +195,7 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 			    } else {
 				    RE2::Replace(&sstring, re, CreateStringPiece(replace));
 			    }
-			    return heap.AddString(sstring);
+			    return StringVector::AddString(result, sstring);
 		    });
 	}
 }
@@ -233,17 +227,16 @@ static void RegexExtractFunction(DataChunk &args, ExpressionState &state, Vector
 
 	auto &strings = args.data[0];
 	auto &patterns = args.data[1];
-	auto &heap = StringVector::GetStringHeap(result);
 	if (info.constant_pattern) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		UnaryExecutor::Execute<string_t, string_t>(strings, result, args.size(), [&](string_t input) {
-			return Extract(input, heap, lstate.constant_pattern, info.rewrite);
+			return Extract(input, result, lstate.constant_pattern, info.rewrite);
 		});
 	} else {
 		BinaryExecutor::Execute<string_t, string_t, string_t>(strings, patterns, result, args.size(),
 		                                                      [&](string_t input, string_t pattern) {
 			                                                      RE2 re(CreateStringPiece(pattern), info.options);
-			                                                      return Extract(input, heap, re, info.rewrite);
+			                                                      return Extract(input, result, re, info.rewrite);
 		                                                      });
 	}
 }
@@ -252,11 +245,6 @@ static void RegexExtractFunction(DataChunk &args, ExpressionState &state, Vector
 // Regexp Extract Struct
 //===--------------------------------------------------------------------===//
 static void RegexExtractStructFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	// This function assumes a constant pre-compiled pattern stored in the local state.
-	// If a non-constant pattern reaches here it indicates a binder bug. Return a clean error instead of crashing.
-	if (!ExecuteFunctionState::GetFunctionState(state)) {
-		throw InternalException("REGEXP_EXTRACT struct variant executed without constant pattern state");
-	}
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 
 	const auto count = args.size();
@@ -267,7 +255,7 @@ static void RegexExtractStructFunction(DataChunk &args, ExpressionState &state, 
 	// Reference the 'input' StringBuffer, because we won't need to allocate new data
 	// for the result, all returned strings are substrings of the originals
 	for (auto &child_entry : child_entries) {
-		StringVector::AddHeapReference(child_entry, input);
+		child_entry->SetAuxiliary(input.GetAuxiliary());
 	}
 
 	vector<RE2::Arg> argv(groupSize);
@@ -282,7 +270,7 @@ static void RegexExtractStructFunction(DataChunk &args, ExpressionState &state, 
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 
 		if (ConstantVector::IsNull(input)) {
-			ConstantVector::SetNull(result);
+			ConstantVector::SetNull(result, true);
 		} else {
 			ConstantVector::SetNull(result, false);
 			auto idata = ConstantVector::GetData<string_t>(input);
@@ -291,36 +279,42 @@ static void RegexExtractStructFunction(DataChunk &args, ExpressionState &state, 
 			                                            UnsafeNumericCast<int>(groups.size()));
 			for (size_t col = 0; col < child_entries.size(); ++col) {
 				auto &child_entry = child_entries[col];
-				ConstantVector::SetNull(child_entry, false);
+				ConstantVector::SetNull(*child_entry, false);
 				auto &extracted = ws[col];
-				auto cdata = ConstantVector::GetData<string_t>(child_entry);
+				auto cdata = ConstantVector::GetData<string_t>(*child_entry);
 				cdata[0] = string_t(extracted.data(), UnsafeNumericCast<uint32_t>(match ? extracted.size() : 0));
 			}
 		}
 	} else {
+		UnifiedVectorFormat iunified;
+		input.ToUnifiedFormat(count, iunified);
+
+		const auto &ivalidity = iunified.validity;
+		auto idata = UnifiedVectorFormat::GetData<string_t>(iunified);
+
 		// Start with a valid flat vector
 		result.SetVectorType(VectorType::FLAT_VECTOR);
 
 		// Start with valid children
 		for (size_t col = 0; col < child_entries.size(); ++col) {
 			auto &child_entry = child_entries[col];
-			child_entry.SetVectorType(VectorType::FLAT_VECTOR);
+			child_entry->SetVectorType(VectorType::FLAT_VECTOR);
 		}
 
-		for (auto entry : input.Values<string_t>(count)) {
-			if (!entry.IsValid()) {
-				FlatVector::SetNull(result, entry.index, true);
-				continue;
-			}
-			auto str = CreateStringPiece(entry.value);
-			auto match = duckdb_re2::RE2::PartialMatchN(str, lstate.constant_pattern, groups.data(),
-			                                            UnsafeNumericCast<int>(groups.size()));
-			for (size_t col = 0; col < child_entries.size(); ++col) {
-				auto &child_entry = child_entries[col];
-				auto cdata = FlatVector::GetDataMutable<string_t>(child_entry);
-				auto &extracted = ws[col];
-				cdata[entry.index] =
-				    string_t(extracted.data(), UnsafeNumericCast<uint32_t>(match ? extracted.size() : 0));
+		for (idx_t i = 0; i < count; ++i) {
+			const auto idx = iunified.sel->get_index(i);
+			if (ivalidity.RowIsValid(idx)) {
+				auto str = CreateStringPiece(idata[idx]);
+				auto match = duckdb_re2::RE2::PartialMatchN(str, lstate.constant_pattern, groups.data(),
+				                                            UnsafeNumericCast<int>(groups.size()));
+				for (size_t col = 0; col < child_entries.size(); ++col) {
+					auto &child_entry = child_entries[col];
+					auto cdata = FlatVector::GetData<string_t>(*child_entry);
+					auto &extracted = ws[col];
+					cdata[i] = string_t(extracted.data(), UnsafeNumericCast<uint32_t>(match ? extracted.size() : 0));
+				}
+			} else {
+				FlatVector::SetNull(result, i, true);
 			}
 		}
 	}
@@ -352,13 +346,32 @@ static unique_ptr<FunctionData> RegexExtractBind(ClientContext &context, ScalarF
 			group_string = "";
 		} else if (group.type().id() == LogicalTypeId::LIST) {
 			if (!constant_pattern) {
-				throw BinderException("%s with LIST of group names requires a constant pattern", bound_function.name);
+				throw BinderException("%s with LIST requires a constant pattern", bound_function.name);
 			}
-			vector<string> dummy_names; // not reused after bind
+			auto &list_children = ListValue::GetChildren(group);
+			if (list_children.empty()) {
+				throw BinderException("%s requires non-empty lists of capture names", bound_function.name);
+			}
+			case_insensitive_set_t name_collision_set;
 			child_list_t<LogicalType> struct_children;
-			regexp_util::ParseGroupNameList(context, bound_function.name, *arguments[2], constant_string, options,
-			                                constant_pattern, dummy_names, struct_children);
-			bound_function.SetReturnType(LogicalType::STRUCT(struct_children));
+			for (const auto &child : list_children) {
+				if (child.IsNull()) {
+					throw BinderException("NULL group name in %s", bound_function.name);
+				}
+				const auto group_name = child.ToString();
+				if (name_collision_set.find(group_name) != name_collision_set.end()) {
+					throw BinderException("Duplicate group name \"%s\" in %s", group_name, bound_function.name);
+				}
+				name_collision_set.insert(group_name);
+				struct_children.emplace_back(make_pair(group_name, LogicalType::VARCHAR));
+			}
+			bound_function.return_type = LogicalType::STRUCT(struct_children);
+
+			duckdb_re2::StringPiece constant_piece(constant_string.c_str(), constant_string.size());
+			RE2 constant_pattern(constant_piece, options);
+			if (size_t(constant_pattern.NumberOfCapturingGroups()) < list_children.size()) {
+				throw BinderException("Not enough group names in %s", bound_function.name);
+			}
 		} else {
 			auto group_idx = group.GetValue<int32_t>();
 			if (group_idx < 0 || group_idx > 9) {
@@ -396,7 +409,7 @@ ScalarFunctionSet RegexpMatchesFun::GetFunctions() {
 	    RegexpMatchesFunction<RegexPartialMatch>, RegexpMatchesBind, nullptr, nullptr, RegexInitLocalState,
 	    LogicalType::INVALID, FunctionStability::CONSISTENT, FunctionNullHandling::SPECIAL_HANDLING));
 	for (auto &func : regexp_partial_match.functions) {
-		func.SetFallible();
+		BaseScalarFunction::SetReturnsError(func);
 	}
 	return (regexp_partial_match);
 }
@@ -454,19 +467,6 @@ ScalarFunctionSet RegexpExtractAllFun::GetFunctions() {
 	                   LogicalType::LIST(LogicalType::VARCHAR), RegexpExtractAll::Execute, RegexpExtractAll::Bind,
 	                   nullptr, nullptr, RegexpExtractAll::InitLocalState, LogicalType::INVALID,
 	                   FunctionStability::CONSISTENT, FunctionNullHandling::SPECIAL_HANDLING));
-	// Struct multi-match variant(s): pattern must be constant due to bind-time struct shape inference
-	regexp_extract_all.AddFunction(
-	    ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)},
-	                   LogicalType::LIST(LogicalType::VARCHAR), // temporary, replaced in bind
-	                   RegexpExtractAllStruct::Execute, RegexpExtractAllStruct::Bind, nullptr, nullptr,
-	                   RegexpExtractAllStruct::InitLocalState, LogicalType::INVALID, FunctionStability::CONSISTENT,
-	                   FunctionNullHandling::SPECIAL_HANDLING));
-	regexp_extract_all.AddFunction(ScalarFunction(
-	    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR},
-	    LogicalType::LIST(LogicalType::VARCHAR), // temporary, replaced in bind
-	    RegexpExtractAllStruct::Execute, RegexpExtractAllStruct::Bind, nullptr, nullptr,
-	    RegexpExtractAllStruct::InitLocalState, LogicalType::INVALID, FunctionStability::CONSISTENT,
-	    FunctionNullHandling::SPECIAL_HANDLING));
 	return (regexp_extract_all);
 }
 

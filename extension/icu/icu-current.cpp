@@ -1,6 +1,6 @@
 #include "include/icu-dateadd.hpp"
 
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -36,28 +36,28 @@ static void CurrentDateFunction(DataChunk &input, ExpressionState &state, Vector
 
 ScalarFunction GetCurrentTimeFun() {
 	ScalarFunction current_time({}, LogicalType::TIME_TZ, CurrentTimeFunction);
-	current_time.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
+	current_time.stability = FunctionStability::CONSISTENT_WITHIN_QUERY;
 	return current_time;
 }
 
 ScalarFunction GetCurrentDateFun() {
 	ScalarFunction current_date({}, LogicalType::DATE, CurrentDateFunction);
-	current_date.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
+	current_date.stability = FunctionStability::CONSISTENT_WITHIN_QUERY;
 	return current_date;
 }
 
-void RegisterICUCurrentFunctions(ExtensionLoader &loader) {
+void RegisterICUCurrentFunctions(DatabaseInstance &db) {
 	//	temporal + interval
 	ScalarFunctionSet current_time("get_current_time");
 	current_time.AddFunction(GetCurrentTimeFun());
-	loader.RegisterFunction(current_time);
+	ExtensionUtil::RegisterFunction(db, current_time);
 
 	ScalarFunctionSet current_date("current_date");
 	current_date.AddFunction(GetCurrentDateFun());
-	loader.RegisterFunction(current_date);
+	ExtensionUtil::RegisterFunction(db, current_date);
 
 	current_date.name = "today";
-	loader.RegisterFunction(current_date);
+	ExtensionUtil::RegisterFunction(db, current_date);
 }
 
 } // namespace duckdb

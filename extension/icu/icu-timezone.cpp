@@ -4,12 +4,11 @@
 #include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast_rules.hpp"
-#include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -164,7 +163,7 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 		if (!input.context) {
 			throw InternalException("Missing context for TIMESTAMP to TIMESTAMPTZ cast.");
 		}
-		if (Settings::Get<DisableTimestamptzCastsSetting>(*input.context)) {
+		if (input.context->config.disable_timestamptz_casts) {
 			throw BinderException("Casting from TIMESTAMP to TIMESTAMP WITH TIME ZONE without an explicit time zone "
 			                      "has been disabled  - use \"AT TIME ZONE ...\"");
 		}
@@ -185,13 +184,14 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 			throw InternalException("Type %s not handled in BindCastFromNaive", LogicalTypeIdToString(source.id()));
 		}
 	}
+
 	static void AddCast(CastFunctionSet &casts, const LogicalType &source, const LogicalType &target) {
 		const auto implicit_cost = CastRules::ImplicitCast(source, target);
 		casts.RegisterCastFunction(source, target, BindCastFromNaive, implicit_cost);
 	}
 
-	static void AddCasts(ExtensionLoader &loader) {
-		auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
+	static void AddCasts(DatabaseInstance &db) {
+		auto &config = DBConfig::GetConfig(db);
 		auto &casts = config.GetCastFunctions();
 
 		AddCast(casts, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP_TZ);
@@ -251,7 +251,7 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		if (!input.context) {
 			throw InternalException("Missing context for TIMESTAMPTZ to TIMESTAMP cast.");
 		}
-		if (Settings::Get<DisableTimestamptzCastsSetting>(*input.context)) {
+		if (input.context->config.disable_timestamptz_casts) {
 			throw BinderException("Casting from TIMESTAMP WITH TIME ZONE to TIMESTAMP without an explicit time zone "
 			                      "has been disabled  - use \"AT TIME ZONE ...\"");
 		}
@@ -261,12 +261,16 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		return BoundCastInfo(CastToNaive, std::move(cast_data));
 	}
 
-	static void AddCasts(ExtensionLoader &loader) {
-		loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP, BindCastToNaive);
+	static void AddCasts(DatabaseInstance &db) {
+		auto &config = DBConfig::GetConfig(db);
+		auto &casts = config.GetCastFunctions();
+
+		casts.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP, BindCastToNaive);
 	}
 };
 
 struct ICULocalTimestampFunc : public ICUDateFunc {
+
 	struct BindDataNow : public BindData {
 		explicit BindDataNow(ClientContext &context) : BindData(context) {
 			now = MetaTransaction::Get(context).start_timestamp;
@@ -313,10 +317,10 @@ struct ICULocalTimestampFunc : public ICUDateFunc {
 		rdata[0] = GetLocalTimestamp(state);
 	}
 
-	static void AddFunction(const string &name, ExtensionLoader &loader) {
+	static void AddFunction(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(ScalarFunction({}, LogicalType::TIMESTAMP, Execute, BindNow));
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
@@ -329,10 +333,10 @@ struct ICULocalTimeFunc : public ICUDateFunc {
 		rdata[0] = Timestamp::GetTime(local);
 	}
 
-	static void AddFunction(const string &name, ExtensionLoader &loader) {
+	static void AddFunction(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(ScalarFunction({}, LogicalType::TIME, Execute, ICULocalTimestampFunc::BindNow));
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
@@ -404,9 +408,12 @@ BoundCastInfo ICUToTimeTZ::BindCastToTimeTZ(BindCastInput &input, const LogicalT
 	return BoundCastInfo(CastToTimeTZ, std::move(cast_data));
 }
 
-void ICUToTimeTZ::AddCasts(ExtensionLoader &loader) {
+void ICUToTimeTZ::AddCasts(DatabaseInstance &db) {
+	auto &config = DBConfig::GetConfig(db);
+	auto &casts = config.GetCastFunctions();
+
 	const auto implicit_cost = CastRules::ImplicitCast(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ);
-	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ, BindCastToTimeTZ, implicit_cost);
+	casts.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ, BindCastToTimeTZ, implicit_cost);
 }
 
 struct ICUTimeZoneFunc : public ICUDateFunc {
@@ -423,7 +430,8 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		auto &ts_vec = input.data[1];
 		if (tz_vec.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(tz_vec)) {
-				ConstantVector::SetNull(result);
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(result, true);
 			} else {
 				SetTimeZone(calendar, *ConstantVector::GetData<string_t>(tz_vec));
 				UnaryExecutor::Execute<T, T>(ts_vec, result, input.size(),
@@ -441,7 +449,7 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		}
 	}
 
-	static void AddFunction(const string &name, ExtensionLoader &loader) {
+	static void AddFunction(const string &name, DatabaseInstance &db) {
 		ScalarFunctionSet set(name);
 		set.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::TIMESTAMP}, LogicalType::TIMESTAMP_TZ,
 		                               Execute<ICUFromNaiveTimestamp, timestamp_t>, Bind));
@@ -450,9 +458,9 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		set.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::TIME_TZ}, LogicalType::TIME_TZ,
 		                               Execute<ICUToTimeTZ, dtime_tz_t>, Bind));
 		for (auto &func : set.functions) {
-			func.SetFallible();
+			BaseScalarFunction::SetReturnsError(func);
 		}
-		loader.RegisterFunction(set);
+		ExtensionUtil::RegisterFunction(db, set);
 	}
 };
 
@@ -460,20 +468,20 @@ timestamp_t ICUDateFunc::FromNaive(icu::Calendar *calendar, timestamp_t naive) {
 	return ICUFromNaiveTimestamp::Operation(calendar, naive);
 }
 
-void RegisterICUTimeZoneFunctions(ExtensionLoader &loader) {
+void RegisterICUTimeZoneFunctions(DatabaseInstance &db) {
 	//	Table functions
 	TableFunction tz_names("pg_timezone_names", {}, ICUTimeZoneFunction, ICUTimeZoneBind, ICUTimeZoneInit);
-	loader.RegisterFunction(tz_names);
+	ExtensionUtil::RegisterFunction(db, tz_names);
 
 	//	Scalar functions
-	ICUTimeZoneFunc::AddFunction("timezone", loader);
-	ICULocalTimestampFunc::AddFunction("current_localtimestamp", loader);
-	ICULocalTimeFunc::AddFunction("current_localtime", loader);
+	ICUTimeZoneFunc::AddFunction("timezone", db);
+	ICULocalTimestampFunc::AddFunction("current_localtimestamp", db);
+	ICULocalTimeFunc::AddFunction("current_localtime", db);
 
 	// 	Casts
-	ICUFromNaiveTimestamp::AddCasts(loader);
-	ICUToNaiveTimestamp::AddCasts(loader);
-	ICUToTimeTZ::AddCasts(loader);
+	ICUFromNaiveTimestamp::AddCasts(db);
+	ICUToNaiveTimestamp::AddCasts(db);
+	ICUToTimeTZ::AddCasts(db);
 }
 
 } // namespace duckdb
