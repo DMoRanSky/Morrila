@@ -1,4 +1,8 @@
-#include <bits/stdc++.h>
+#include <atomic>
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
+#include <string>
 
 inline int cnt = 0;
 inline int cnt_token = 0;

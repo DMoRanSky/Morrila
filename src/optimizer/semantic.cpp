@@ -33,6 +33,11 @@
 
 namespace duckdb {
 
+static bool SemanticDebugEnabled() {
+	const char *env = std::getenv("DUCKDB_SEMANTIC_DEBUG");
+	return env && env[0] != '\0' && env[0] != '0';
+}
+
 // Enhanced ToString with optional per-node annotations injected inside each box.
 static std::string EnhancedToStringWithAnnotations(
 	LogicalOperator *plan,
@@ -292,8 +297,10 @@ static void ClearProjectionMaps(LogicalOperator &op) {
 		break;
 	}
 	default: {
-		std::cout << "[SwapFilterWithParent] WARNING: Parent has projection_map but is not a handled type: \n"
-				  << op.ToString() << "\n";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[SwapFilterWithParent] WARNING: Parent has projection_map but is not a handled type: \n"
+					  << op.ToString() << "\n";
+		}
 		break;
 	}
 	}
@@ -436,7 +443,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::Rewrite(unique_ptr<LogicalOperato
 	}
 	auto t0 = std::chrono::high_resolution_clock::now();
 	// Print detailed plans only when debugging is enabled via env var
-	if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+	if (SemanticDebugEnabled()) {
 		std::cout <<"Before Semantic Optimizations::\n" << EnhancedToString(plan.get()) <<"\n";
 	}
 
@@ -455,19 +462,25 @@ unique_ptr<LogicalOperator> SemanticOptimizer::Rewrite(unique_ptr<LogicalOperato
 	};
 
 	Mode mode = parse_mode();
-	std::cout << "semantic_optimizer = " << (mode == Mode::NONE ? "off" : (mode == Mode::PULLUP ? "pullup" : "costmodel")) << "\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "semantic_optimizer = " << (mode == Mode::NONE ? "off" : (mode == Mode::PULLUP ? "pullup" : "costmodel")) << "\n";
+	}
 
 	if (mode == Mode::NONE) {
 		return plan;
 	}
 	if (mode == Mode::COSTMODEL) {
-		std::cerr << "[DEBUG] Enter SemanticOptimizer::Rewrite" << std::endl;
+		if (SemanticDebugEnabled()) {
+			std::cerr << "[DEBUG] Enter SemanticOptimizer::Rewrite" << std::endl;
+		}
 		// ====== Optimizer latency timing begin ======
 		
 		plan = RunDPPlacement(std::move(plan));
 		auto t1 = std::chrono::high_resolution_clock::now();
 		double ms = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
-		std::cout << "[optimizer_latency_ms=" << ms << "]\n";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[optimizer_latency_ms=" << ms << "]\n";
+		}
 		// ====== Optimizer latency timing end ======
 		return plan;
 	}
@@ -479,7 +492,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::Rewrite(unique_ptr<LogicalOperato
 		}
 		SwapFilterWithParent(*filter_location);
 	}
-	if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+	if (SemanticDebugEnabled()) {
 		std::cout <<"Rewritten by Semantic Optimizer::\n" << EnhancedToString(plan.get()) <<"\n";
 	}
 	return plan;
@@ -490,7 +503,9 @@ unique_ptr<LogicalOperator> SemanticOptimizer::Rewrite(unique_ptr<LogicalOperato
 static double GetAblationFilter() {
 	static double ablation_filter = []() {
 		const char* f = std::getenv("ABLA_FILTER");
-		std::cout << "[GetAblationFilter] ABLA_FILTER env var: " << (f ? f : "not set") << "\n";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[GetAblationFilter] ABLA_FILTER env var: " << (f ? f : "not set") << "\n";
+		}
 		if (f) return atof(f);
 		return 0.2;
 	}();
@@ -501,7 +516,9 @@ static double GetAblationFilter() {
 static double GetAblationJoin() {
 	static double ablation_join = []() {
 		const char* j = std::getenv("ABLA_JOIN");
-		std::cout << "[GetAblationJoin] ABLA_JOIN env var: " << (j ? j : "not set") << "\n";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[GetAblationJoin] ABLA_JOIN env var: " << (j ? j : "not set") << "\n";
+		}
 		if (j) return atof(j);
 		return 0.1;
 	}();
@@ -542,9 +559,11 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 
 	std::unordered_map<LogicalOperator*, idx_t> node_ids;
 	// 调试：输出unordered_map遍历顺序
-	std::cout << "[DEBUG] RunDPPlacement node_ids order:";
-	for (auto &p : node_ids) std::cout << " " << p.second;
-	std::cout << std::endl;
+	if (SemanticDebugEnabled()) {
+		std::cout << "[DEBUG] RunDPPlacement node_ids order:";
+		for (auto &p : node_ids) std::cout << " " << p.second;
+		std::cout << std::endl;
+	}
 	idx_t next_id = 0;
 	std::function<void(unique_ptr<LogicalOperator>&)> assign;
 	assign = [&](unique_ptr<LogicalOperator> &n) {
@@ -557,16 +576,18 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 	// We already computed node_ids above; print the textual plan followed by a compact
 	// mapping from assigned node id -> single-line node description. This keeps the
 	// printing inline (no separate helper) as requested.
-	std::cout << "--- plan->ToString() (original) ---\n";
-	std::cout << EnhancedToString(plan.get()) << "\n";
-	std::cout << "--- plan node id mapping ---\n";
-	for (auto &p : node_ids) {
-		auto node = p.first;
-		auto id = p.second;
-		std::string nt = EnhancedToString(node);
-		std::cout << "NODE " << id << ":::: \n " << nt << "\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "--- plan->ToString() (original) ---\n";
+		std::cout << EnhancedToString(plan.get()) << "\n";
+		std::cout << "--- plan node id mapping ---\n";
+		for (auto &p : node_ids) {
+			auto node = p.first;
+			auto id = p.second;
+			std::string nt = EnhancedToString(node);
+			std::cout << "NODE " << id << ":::: \n " << nt << "\n";
+		}
+		std::cout << "--- end plan annotation ---\n";
 	}
-	std::cout << "--- end plan annotation ---\n";
 
 	vector<DPNode> nodes; nodes.reserve(node_ids.size());
 	std::function<void(unique_ptr<LogicalOperator>&)> build;
@@ -603,9 +624,11 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 
 	// Compute subtree table sets (union of table indices from leaves under each node).
 	std::unordered_map<LogicalOperator*, std::unordered_set<idx_t>> subtree_table_indices;
-	std::cout << "[DEBUG] RunDPPlacement subtree_table_indices keys:";
-	for (auto &p : subtree_table_indices) std::cout << " " << p.first;
-	std::cout << std::endl;
+	if (SemanticDebugEnabled()) {
+		std::cout << "[DEBUG] RunDPPlacement subtree_table_indices keys:";
+		for (auto &p : subtree_table_indices) std::cout << " " << p.first;
+		std::cout << std::endl;
+	}
 
 	std::function<const std::unordered_set<idx_t>&(LogicalOperator*)> collect_subtree_tables;
 	collect_subtree_tables = [&](LogicalOperator *n) -> const std::unordered_set<idx_t>& {
@@ -637,9 +660,11 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 
 	// Map projection-assigned table_index -> underlying original table set
 	std::unordered_map<idx_t, std::unordered_set<idx_t>> proj_index_to_subtrees;
-	std::cout << "[DEBUG] RunDPPlacement proj_index_to_subtrees keys:";
-	for (auto &p : proj_index_to_subtrees) std::cout << " " << p.first;
-	std::cout << std::endl;
+	if (SemanticDebugEnabled()) {
+		std::cout << "[DEBUG] RunDPPlacement proj_index_to_subtrees keys:";
+		for (auto &p : proj_index_to_subtrees) std::cout << " " << p.first;
+		std::cout << std::endl;
+	}
 	for (auto &p : node_ids) {
 		auto node = p.first;
 		if (node && node->type == LogicalOperatorType::LOGICAL_PROJECTION) {
@@ -651,19 +676,23 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 			}
 		}
 		// 调试：输出每个节点的children、tables
-		std::cout << "[DEBUG] node " << p.second << " children:";
-		for (auto &c : node->children) std::cout << " " << c.get();
-		std::cout << " tables:";
-		auto tbls = node->GetTableIndex();
-		for (auto t : tbls) std::cout << " " << t;
-		std::cout << std::endl;
+		if (SemanticDebugEnabled()) {
+			std::cout << "[DEBUG] node " << p.second << " children:";
+			for (auto &c : node->children) std::cout << " " << c.get();
+			std::cout << " tables:";
+			auto tbls = node->GetTableIndex();
+			for (auto t : tbls) std::cout << " " << t;
+			std::cout << std::endl;
+		}
 	}
 
 	// Invert proj_index_to_subtrees: map each leaf table index -> owning projection index (if any)
 	std::unordered_map<idx_t, idx_t> leaf_to_proj;
-	std::cout << "[DEBUG] RunDPPlacement leaf_to_proj keys:";
-	for (auto &p : leaf_to_proj) std::cout << " " << p.first;
-	std::cout << std::endl;
+	if (SemanticDebugEnabled()) {
+		std::cout << "[DEBUG] RunDPPlacement leaf_to_proj keys:";
+		for (auto &p : leaf_to_proj) std::cout << " " << p.first;
+		std::cout << std::endl;
+	}
 	for (auto &pp : proj_index_to_subtrees) {
 		idx_t proj_idx = pp.first;
 		for (auto leaf : pp.second) {
@@ -674,26 +703,27 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 
 	// Print DP_TABLES as the top-level projection table indices (if available),
 	// falling back to binder's bindings when projections are not detected.
-	std::cout << "DP_TABLES:\n";
-	if (!proj_index_to_subtrees.empty()) {
-		// gather proj indices and sort for deterministic output
-		vector<idx_t> proj_idxs;
-		for (auto &pp : proj_index_to_subtrees) proj_idxs.push_back(pp.first);
-		sort(proj_idxs.begin(), proj_idxs.end());
-		for (auto pidx : proj_idxs) {
-			auto it = table_names_map.find(pidx);
-			if (it != table_names_map.end()) std::cout << "TABLE[" << pidx << "] NAME=\"" << it->second << "\"\n";
-			else std::cout << "TABLE[" << pidx << "] NAME=\"tbl#" << pidx << "\"\n";
-		}
-	} else {
-		try {
-			auto &bindings = optimizer.binder.bind_context.GetBindingsList();
-			for (auto &b : bindings) {
-				if (!b) continue;
-				std::cout << "TABLE[" << b->index << "] NAME=\"" << b->GetAlias() << "\"\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "DP_TABLES:\n";
+		if (!proj_index_to_subtrees.empty()) {
+			vector<idx_t> proj_idxs;
+			for (auto &pp : proj_index_to_subtrees) proj_idxs.push_back(pp.first);
+			sort(proj_idxs.begin(), proj_idxs.end());
+			for (auto pidx : proj_idxs) {
+				auto it = table_names_map.find(pidx);
+				if (it != table_names_map.end()) std::cout << "TABLE[" << pidx << "] NAME=\"" << it->second << "\"\n";
+				else std::cout << "TABLE[" << pidx << "] NAME=\"tbl#" << pidx << "\"\n";
 			}
-		} catch (...) {
-			std::cout << "DP_TABLES: (binder not available)\n";
+		} else {
+			try {
+				auto &bindings = optimizer.binder.bind_context.GetBindingsList();
+				for (auto &b : bindings) {
+					if (!b) continue;
+					std::cout << "TABLE[" << b->index << "] NAME=\"" << b->GetAlias() << "\"\n";
+				}
+			} catch (...) {
+				std::cout << "DP_TABLES: (binder not available)\n";
+			}
 		}
 	}
 	map<int, int> table_size;
@@ -765,13 +795,15 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		semantic_filter_tables.push_back(filt_tbls);
 		semantic_filter_exprs.push_back(f.expressions[0]->ToString());
 		double filter_card = (double)node->EstimateCardinality(optimizer.GetContext());
-		std::cout << "F" << i << " = FILTER_NODE[" << id << "] EXPR=(" << f.expressions[0]->ToString() 
-		          << ") TABLES={";
-		for (size_t j = 0; j < filt_tbls.size(); ++j) {
-			if (j) std::cout << ",";
-			std::cout << table_name(filt_tbls[j]);
+		if (SemanticDebugEnabled()) {
+			std::cout << "F" << i << " = FILTER_NODE[" << id << "] EXPR=(" << f.expressions[0]->ToString()
+			          << ") TABLES={";
+			for (size_t j = 0; j < filt_tbls.size(); ++j) {
+				if (j) std::cout << ",";
+				std::cout << table_name(filt_tbls[j]);
+			}
+			std::cout << "} CARD=" << filter_card << "\n";
 		}
-		std::cout << "} CARD=" << filter_card << "\n";
 	}
 
 
@@ -923,13 +955,14 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		state_son[u] = ws;
 		ord[u] = od;
 		if (!IsSwapParentAllowed(p.node -> type)) ban_set[u] |= filter_set[u];
-		// 新增：输出每个节点的DP表、filter_set、ban_set、wt
-		std::cout << "[DEBUG][DP] node " << u << ": filter_set=" << filter_set[u] << ", ban_set=" << ban_set[u] << ", wt=" << wt[u] << std::endl;
-		std::cout << "[DEBUG][DP] dp[" << u << "] = ";
-		for (int i = 0; i < (1 << m); ++i) {
-			if (dp[u][i] < INF) std::cout << "(" << i << ":" << dp[u][i] << ") ";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[DEBUG][DP] node " << u << ": filter_set=" << filter_set[u] << ", ban_set=" << ban_set[u] << ", wt=" << wt[u] << std::endl;
+			std::cout << "[DEBUG][DP] dp[" << u << "] = ";
+			for (int i = 0; i < (1 << m); ++i) {
+				if (dp[u][i] < INF) std::cout << "(" << i << ":" << dp[u][i] << ") ";
+			}
+			std::cout << std::endl;
 		}
-		std::cout << std::endl;
 		std::vector<std::string> annos;
 		annos.push_back(StringUtil::Format("DP card=%.4g cost=%.4g", p.card, p.cost));
 		annos.push_back("Filters=" + format_filter_mask(filter_set[u]));
@@ -1032,7 +1065,9 @@ unique_ptr<LogicalOperator> SemanticOptimizer::RunDPPlacement(unique_ptr<Logical
 		SwapFilterWithParent(*filter_location);
 
 	}
-	std::cout << EnhancedToStringWithAnnotations(plan.get(), &node_annotations) <<"\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << EnhancedToStringWithAnnotations(plan.get(), &node_annotations) <<"\n";
+	}
 
 	return plan; // no transformation yet
 }
@@ -1062,7 +1097,7 @@ unique_ptr<LogicalOperator> SemanticOptimizer::SplitSemanticConjunctions(unique_
 	}
 	auto &filter = op->Cast<LogicalFilter>();
 	LogicalFilter::SplitPredicates(filter.expressions);
-	if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+	if (SemanticDebugEnabled()) {
 		std::cout << "[SplitSemanticConjunctions] Encountered filter. Pure semantic? "
 		          << (IsPureSemanticFilter(filter) ? "yes" : "no") << "\n";
 	}
@@ -1098,8 +1133,10 @@ unique_ptr<LogicalOperator> SemanticOptimizer::SplitSemanticConjunctions(unique_
 			continue;
 		}
 		auto new_filter = make_uniq<LogicalFilter>(std::move(*it));
-		std::cout << "[SplitSemanticConjunctions] Created new semantic filter with expression: "
-		          << new_filter->expressions[0]->ToString() << "\n";
+		if (SemanticDebugEnabled()) {
+			std::cout << "[SplitSemanticConjunctions] Created new semantic filter with expression: "
+			          << new_filter->expressions[0]->ToString() << "\n";
+		}
 		if (tail) {
 			new_filter->children.push_back(std::move(tail));
 		}
@@ -1141,7 +1178,7 @@ std::optional<SemanticOptimizer::FilterLocation> SemanticOptimizer::FindSemantic
 						if (parent_table_count >= child_table_count) {
 							continue;
 						}
-						if (parent_has_semantic && std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+						if (parent_has_semantic && SemanticDebugEnabled()) {
 							std::cout << "[FindSemanticFilter] Both parent and child are semantic filters. "
 									  << "Parent table count: " << parent_table_count
 									  << ", Child table count: " << child_table_count << "\n";
@@ -1266,7 +1303,7 @@ void SemanticOptimizer::FuseFilterWithParent(FilterLocation &location, const std
 
 	if(parent->type != LogicalOperatorType::LOGICAL_FILTER ||
 	   child->type != LogicalOperatorType::LOGICAL_FILTER) {
-		if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+		if (SemanticDebugEnabled()) {
 			std::cout << "[FuseFilterWithParent] Either parent or child is not a filter. Parent type: "
 					  << LogicalOperatorToString(parent->type)
 					  << ", Child type: " << LogicalOperatorToString(child->type) << "\n";
@@ -1276,7 +1313,7 @@ void SemanticOptimizer::FuseFilterWithParent(FilterLocation &location, const std
 
 	if(!IsPureSemanticFilter(parent->Cast<LogicalFilter>()) ||
 	   !IsPureSemanticFilter(child->Cast<LogicalFilter>())) {
-		if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+		if (SemanticDebugEnabled()) {
 			std::cout << "[FuseFilterWithParent] Either parent or child filter is not pure semantic.\n";
 		}
 		return;
@@ -1285,18 +1322,24 @@ void SemanticOptimizer::FuseFilterWithParent(FilterLocation &location, const std
 	std::string prompt_child = FetchPromptFromSemanticFilter(*child->expressions[0]);
 	std::string prompt_parent = FetchPromptFromSemanticFilter(*parent->expressions[0]);
 	
-	std::cout << "[FuseFilterWithParent] Child prompt: " << prompt_child << "\n";
-	std::cout << "[FuseFilterWithParent] Parent prompt: " << prompt_parent << "\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "[FuseFilterWithParent] Child prompt: " << prompt_child << "\n";
+		std::cout << "[FuseFilterWithParent] Parent prompt: " << prompt_parent << "\n";
+	}
 
 	std::string fused_prompt = fuse_semantic_filters(prompt_parent, prompt_child, model_name);
 
-	std::cout << "[FuseFilterWithParent] Fused prompt: " << fused_prompt << "\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "[FuseFilterWithParent] Fused prompt: " << fused_prompt << "\n";
+	}
 
 	unique_ptr<Expression> fused_expr = make_uniq<BoundConstantExpression>(Value(fused_prompt));
 	auto filter_expr = optimizer.BindScalarFunction(
 		"semantic", std::move(fused_expr)
 	);
-	std::cout << "[FuseFilterWithParent] Created fused semantic expression: " << filter_expr->ToString() << "\n";
+	if (SemanticDebugEnabled()) {
+		std::cout << "[FuseFilterWithParent] Created fused semantic expression: " << filter_expr->ToString() << "\n";
+	}
 	// replace parent's expression with fused expression
 	parent->expressions[0] = std::move(filter_expr);
 	// remove child filter from parent's children
