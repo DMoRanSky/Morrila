@@ -113,7 +113,6 @@ auto getLLMCallManagerInstance(const std::string &model_name = "gpt-5-mini") -> 
 
 LLMCallManager::LLMCallManager(const std::string &model_name) : model_name_(model_name) {
     // Initialize API key and URL from environment variables or use defaults
-    // NOTE (Qiuyang): Now we only support OpenAI API
 
     // Set logger path
     logger_.set_log_path("llm_calls_" + model_name_ + ".log");

@@ -351,7 +351,6 @@ unique_ptr<BoundTableRef> Binder::Bind(JoinRef &ref) {
 			if (!StringUtil::CIEquals(fexpr.function_name, "semantic")) {
 				return;
 			}
-			// NOTE (Qiuyang) Now we only support SEMANTIC('') instead of SEMANTIC("") due to unknown issues.
 			if (fexpr.children.empty() || fexpr.children[0]->GetExpressionClass() != ExpressionClass::CONSTANT) {
 				return;
 			}
