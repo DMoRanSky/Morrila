@@ -1,5 +1,3 @@
-# Morrila
-
 Fork from https://github.com/duckdb/duckdb.
 
 ## Build
