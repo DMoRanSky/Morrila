@@ -33,7 +33,7 @@ except Exception as e:
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 # try a couple of known locations for the DataAgentBench dataset
 candidate_db_dirs = [
-    '/home/moransky/DataAgentBench/query_GITHUB_REPOS/query_dataset',
+    './DataAgentBench/query_GITHUB_REPOS/query_dataset',
     os.path.join(ROOT, 'DataAgentBench', 'query_GITHUB_REPOS', 'query_dataset'),
 ]
 DB_DIR = None
