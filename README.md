@@ -18,10 +18,6 @@ From repository root:
 	cmake .
 	make
 
-If you use the release binary path in this README, build it first:
-
-	make release
-
 ## Environment setup
 
 Set OpenAI key used by semantic operators:
@@ -64,17 +60,17 @@ Current public demo query:
 
 Run it:
 
+	./duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
+
+If your environment still uses the older output path, you can also use:
+
 	./build/release/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
-
-If you only built the default target, you can also use:
-
-	./build/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
 
 ### 2) Batch run all query files in demo folder
 
 	for f in test/semantic/demo_queries/*.sql; do
 	  echo "Running ${f}"
-	  ./build/release/duckdb -unsigned < "${f}"
+	  ./duckdb -unsigned < "${f}"
 	done
 
 ## Add your own synthetic queries
