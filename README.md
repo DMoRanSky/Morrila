@@ -1,55 +1,106 @@
-Fork from https://github.com/duckdb/duckdb.
+Horrila: Cost-Based Placement of Semantic Operators in Hybrid Query Plans
+
+This repository is a research fork of DuckDB focused on Horrila.
+
+Source base: https://github.com/duckdb/duckdb
+
+## Scope of this open-source release
+
+- This repo supports reproducing our method (Horrila optimizer) and running semantic SQL queries in this codebase.
+- We only document how to run our queries and our optimizer modes.
+- We do not include private DB-agent query assets in this repository.
+- Reproducing other external systems is out of scope for this README.
 
 ## Build
 
-```bash
-cmake .
-make
-```
+From repository root:
 
+	cmake .
+	make
 
+If you use the release binary path in this README, build it first:
 
-### Change the semantic optimizer mode
+	make release
 
-**Important:** First, ensure the semantic optimizer is enabled (it's enabled by default):
+## Environment setup
 
-```bash
-# Make sure SEMANTIC_OPTIMIZER is not set to false
-unset SEMANTIC_OPTIMIZER
-# Or explicitly enable it:
-export SEMANTIC_OPTIMIZER=true
-```
+Set OpenAI key used by semantic operators:
 
-The semantic optimizer has three modes:
+	export API_KEY="your-openai-api-key"
 
-- `costmodel` (default): DP-based optimization with cost model
-- `pullup`: Aggressive filter pullup strategy
-- `none`: Disable semantic optimizer
+Enable semantic optimizer (enabled by default, but set explicitly for clarity):
 
-To switch modes:
+	export SEMANTIC_OPTIMIZER=true
 
-```bash
-export DUCKDB_SEMANTIC_MODE=costmodel  # Use cost-based optimization
-export DUCKDB_SEMANTIC_MODE=pullup     # Use filter pullup strategy
-export DUCKDB_SEMANTIC_MODE=none       # Disable semantic optimizer
-```
+Optional debug output (prints semantic plan rewrite info):
 
-To see detailed query tree output (before and after semantic optimization):
+	export DUCKDB_SEMANTIC_DEBUG=1
 
-```bash
-export DUCKDB_SEMANTIC_DEBUG=1
-```
+Optional concurrency for LLM workers (default is 100):
 
-## Single Demo
+	export NUM_LLM_WORKERS=32
 
-Run only this demo query:
+## Optimizer modes
 
-```bash
-export API_KEY="your-openai-api-key"
-./build/release/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
-```
+Horrila exposes three semantic optimization modes:
 
-## Notes
+- costmodel: DP-based cost model (default)
+- pullup: greedy semantic filter pull-up
+- none: disable semantic optimization
 
-- If API key is missing or invalid, semantic calls will fail with 401.
-- LLM call logs are written to local log files, e.g. `llm_calls_gpt-5-mini.log`.
+Switch mode with:
+
+	export DUCKDB_SEMANTIC_MODE=costmodel
+	export DUCKDB_SEMANTIC_MODE=pullup
+	export DUCKDB_SEMANTIC_MODE=none
+
+## Run our queries
+
+### 1) Single query demo
+
+Current public demo query:
+
+- [test/semantic/demo_queries/semantic_filter_1.sql](test/semantic/demo_queries/semantic_filter_1.sql)
+
+Run it:
+
+	./build/release/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
+
+If you only built the default target, you can also use:
+
+	./build/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
+
+### 2) Batch run all query files in demo folder
+
+	for f in test/semantic/demo_queries/*.sql; do
+	  echo "Running ${f}"
+	  ./build/release/duckdb -unsigned < "${f}"
+	done
+
+## Add your own synthetic queries
+
+To run additional queries for this release:
+
+1. Put SQL files into [test/semantic/demo_queries](test/semantic/demo_queries).
+2. Use SEMANTIC(...) predicates in SQL.
+3. Run each file with the same command shown above.
+
+Example pattern:
+
+	SELECT *
+	FROM your_table t
+	WHERE SEMANTIC('Question about tuple {t.col1}, {t.col2} ...');
+
+## Query inventory in this repo
+
+Public semantic query files currently included:
+
+- [test/semantic/demo_queries/semantic_filter_1.sql](test/semantic/demo_queries/semantic_filter_1.sql)
+
+As more query files are added into [test/semantic/demo_queries](test/semantic/demo_queries), the same run commands apply.
+
+## Logs and troubleshooting
+
+- LLM call logs are written to files like llm_calls_gpt-5-mini.log in repository root.
+- If API_KEY is missing or invalid, semantic calls can fail with HTTP 401.
+- If you see no semantic optimization effect, check SEMANTIC_OPTIMIZER and DUCKDB_SEMANTIC_MODE.
