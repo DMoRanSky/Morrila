@@ -84,37 +84,17 @@ or
 
 ### Step 4: Run semantic SQL queries
 
-Single demo query:
-
-    ./duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
-
-Compatibility path (if your build outputs there):
-
-    ./build/release/duckdb -unsigned < test/semantic/demo_queries/semantic_filter_1.sql
-
-Batch run all demo queries:
-
-    for f in test/semantic/demo_queries/*.sql; do
-      echo "Running ${f}"
-      ./duckdb -unsigned < "${f}"
-    done
+Use your own runner script to execute queries under [test/semantic/demo_queries](test/semantic/demo_queries) with `./duckdb -unsigned < <query.sql>`.
 
 ### Step 5: Reproduce the main benchmark
 
 The main hybrid benchmark queries live under [test/semantic/agent_bench](test/semantic/agent_bench).
 
-Run all 30 benchmark queries in order:
+Use your own script to run [test/semantic/agent_bench/Q1.sql](test/semantic/agent_bench/Q1.sql) through [test/semantic/agent_bench/Q30.sql](test/semantic/agent_bench/Q30.sql).
 
-        for f in test/semantic/agent_bench/Q*.sql; do
-            echo "Running ${f}"
-            ./duckdb -unsigned < "${f}"
-        done
+Execution is separate from metric aggregation. LLM call count, token usage, and the values needed for cost accounting are recorded in the generated log at [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log). For our paper numbers, derive cost from the logged GPT-5 mini token usage and the provider pricing you used in the run.
 
-If you want to inspect one query at a time, run it directly with the same command pattern.
-
-The shell loop above is for execution only. LLM call count, token usage, and the values needed for cost accounting are recorded in the generated log at [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log). For our paper numbers, derive cost from the logged GPT-5 mini token usage and the provider pricing you used in the run.
-
-If you want per-query runtime printed by the driver, use [test/semantic/main.cpp](test/semantic/main.cpp); it scans `../*.sql`, prints runtime plus LLM call/token summaries, and writes into the same log file.
+Fetch all LLM metrics from [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log) and write your own aggregation script for call count, tokens, and cost.
 
 To reproduce the paper numbers, keep the same environment variables, run the same query set, and aggregate runtime from the terminal output with LLM calls/tokens from [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log).
 
@@ -123,9 +103,7 @@ To reproduce the paper numbers, keep the same environment variables, run the sam
 Current public semantic query files in this repo:
 
 - [test/semantic/demo_queries/semantic_filter_1.sql](test/semantic/demo_queries/semantic_filter_1.sql)
-- [test/semantic/agent_bench/Q1.sql](test/semantic/agent_bench/Q1.sql) through [test/semantic/agent_bench/Q30.sql](test/semantic/agent_bench/Q30.sql)
-- [test/semantic/agent_bench/dataset](test/semantic/agent_bench/dataset)
-
+- [test/semantic/agent_bench/](test/semantic/agent_bench/) includes 30 main queries and 14 queries from ecomm in DataAgentBench.
 The 30-query hybrid benchmark described in the paper is stored in [test/semantic/agent_bench](test/semantic/agent_bench). It follows the same execution pattern as the demo query, but is kept in a separate directory so the reproduction steps stay explicit.
 
 The 14-query SemBench E-Commerce evaluation is a public external benchmark; if you reproduce that part, download the benchmark data from the SemBench release and run those queries with the same driver.
