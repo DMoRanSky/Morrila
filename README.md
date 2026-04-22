@@ -112,9 +112,11 @@ Run all 30 benchmark queries in order:
 
 If you want to inspect one query at a time, run it directly with the same command pattern.
 
-The benchmark driver in [test/semantic/main.cpp](test/semantic/main.cpp) prints per-query runtime and LLM call/token summaries. It scans `../*.sql`, so the shell loop above is the simplest way to execute the current `agent_bench` layout in place. The full request log is written to files such as `llm_calls_gpt-5-mini.log`.
+The shell loop above is for execution only. LLM call count, token usage, and the values needed for cost accounting are recorded in the generated log at [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log). For our paper numbers, derive cost from the logged GPT-5 mini token usage and the provider pricing you used in the run.
 
-To reproduce the paper numbers, keep the same environment variables, run the same query set, and aggregate the results from the terminal output plus the log file.
+If you want per-query runtime printed by the driver, use [test/semantic/main.cpp](test/semantic/main.cpp); it scans `../*.sql`, prints runtime plus LLM call/token summaries, and writes into the same log file.
+
+To reproduce the paper numbers, keep the same environment variables, run the same query set, and aggregate runtime from the terminal output with LLM calls/tokens from [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log).
 
 ## Query Inventory
 
@@ -140,7 +142,7 @@ If you add more synthetic queries, place them in [test/semantic/demo_queries](te
 ## Troubleshooting
 
 - Missing/invalid API key causes semantic calls to fail with HTTP 401.
-- LLM logs are written to files such as llm_calls_gpt-5-mini.log.
+- LLM logs are written to [llm_calls_gpt-5-mini.log](llm_calls_gpt-5-mini.log).
 - The log records total LLM calls and token usage. It does not print a separate cost field, so derive cost from the token totals and the provider's pricing or billing dashboard.
 - If optimizer behavior seems unchanged, check SEMANTIC_OPTIMIZER and DUCKDB_SEMANTIC_MODE.
 
