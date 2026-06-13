@@ -18,8 +18,7 @@ namespace duckdb {
 // Hand-written chained hash table for global LLM response cache
 class LLMResponseCacheTable {
 public:
-    struct Node {
-        int next = -1;
+    struct Entry {
         std::string key;
         LLMResponse value;
     };
@@ -32,16 +31,14 @@ public:
         int64_t value_text_len_delta = 0;
     };
 
-    LLMResponseCacheTable() : head_(MOD, -1), bucket_mutex_(MOD) {
-        nodes_.reserve(4096);
-    }
+    LLMResponseCacheTable() : buckets_(MOD), bucket_mutex_(MOD) {}
 
     auto TryGet(const std::string &key, LLMResponse &out) -> bool {
         const int bucket = Bucket(key);
         std::lock_guard<std::mutex> lk(bucket_mutex_[bucket]);
-        for (int i = head_[bucket]; i != -1; i = nodes_[i].next) {
-            if (nodes_[i].key == key) {
-                out = nodes_[i].value;
+        for (const auto &entry : buckets_[bucket]) {
+            if (entry.key == key) {
+                out = entry.value;
                 return true;
             }
         }
@@ -53,26 +50,22 @@ public:
         std::lock_guard<std::mutex> lk(bucket_mutex_[bucket]);
         const int64_t new_value_text_len = static_cast<int64_t>(value.text.size());
 
-        for (int i = head_[bucket]; i != -1; i = nodes_[i].next) {
-            if (nodes_[i].key == key) {
-                const int64_t old_value_text_len = static_cast<int64_t>(nodes_[i].value.text.size());
-                nodes_[i].value = value;
+        for (auto &entry : buckets_[bucket]) {
+            if (entry.key == key) {
+                const int64_t old_value_text_len = static_cast<int64_t>(entry.value.text.size());
+                entry.value = value;
                 return UpsertResult{false, 0, new_value_text_len - old_value_text_len};
             }
         }
 
-        Node node;
-        node.key = key;
-        node.value = value;
-        node.next = head_[bucket];
-        nodes_.push_back(std::move(node));
-        head_[bucket] = static_cast<int>(nodes_.size()) - 1;
+        buckets_[bucket].push_back(Entry{key, value});
         return UpsertResult{true, static_cast<int64_t>(key.size()), new_value_text_len};
     }
 
 private:
-    std::vector<int> head_;
-    std::vector<Node> nodes_;
+    // Per-bucket chains: a push_back only touches buckets_[bucket], which is
+    // guarded by bucket_mutex_[bucket]; other buckets are never reallocated.
+    std::vector<std::vector<Entry>> buckets_;
     std::vector<std::mutex> bucket_mutex_;
 
     auto Bucket(const std::string &key) const -> int {
