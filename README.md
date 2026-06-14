@@ -124,6 +124,53 @@ If you add more synthetic queries, place them in [test/semantic/demo_queries](te
 - The log records total LLM calls and token usage. It does not print a separate cost field, so derive cost from the token totals and the provider's pricing or billing dashboard.
 - If optimizer behavior seems unchanged, check SEMANTIC_OPTIMIZER and DUCKDB_SEMANTIC_MODE.
 
+## Modified Files (Artifact Map)
+
+This repo is a DuckDB fork. Morrila-specific code is concentrated in a **small set of new files** plus a few hook points in the existing planner/optimizer pipeline. To see the full delta from upstream DuckDB, start from commit `f1be2944fd` (`Restore semantic source changes from backup branch`) and later Morrila commits (`git log --oneline -- src/optimizer/semantic.cpp src/common/llm_query.cpp`).
+
+### Core (read these first)
+
+| Path | Role |
+|------|------|
+| [`src/optimizer/semantic.cpp`](src/optimizer/semantic.cpp) | **Semantic optimizer pass**: SJ→SF rewrites, SP pull-up, filter splitting, **`RunDPPlacement()`** (DP cost model + traceback), pull-up mode. Entry: `SemanticOptimizer::Rewrite()`. |
+| [`src/include/duckdb/optimizer/semantic.hpp`](src/include/duckdb/optimizer/semantic.hpp) | Optimizer API / mode enum (`none`, `pullup`, `costmodel`). |
+| [`src/common/llm_query.cpp`](src/common/llm_query.cpp) | **LLM runtime + function cache**: `LLMCallManager`, batched OpenAI calls, **`batch_check_semantic*()`**, per-predicate result cache keyed by `(prompt, tuple)`. |
+| [`src/include/duckdb/common/llm_query.hpp`](src/include/duckdb/common/llm_query.hpp) | LLM/cache headers and cache API. |
+| [`src/function/scalar/semantic_functions.cpp`](src/function/scalar/semantic_functions.cpp) | SQL UDFs `semantic()`, `semantic_int()`, `semantic_string()`, `semantic_double()`; invoke cache + LLM layer. |
+
+### Optimizer hook (1 call site)
+
+| Path | Role |
+|------|------|
+| [`src/optimizer/optimizer.cpp`](src/optimizer/optimizer.cpp) | Invokes `SemanticOptimizer` when `SEMANTIC_OPTIMIZER=true` / `DUCKDB_SEMANTIC_MODE` is set (after join-filter pushdown). |
+
+### Planner / binder glue (small edits)
+
+| Path | Role |
+|------|------|
+| [`src/planner/semantic_placeholder.cpp`](src/planner/semantic_placeholder.cpp) | `{column}` placeholders in semantic prompts. |
+| [`src/planner/operator/logical_semantic_join.cpp`](src/planner/operator/logical_semantic_join.cpp) | Logical `SEMANTIC JOIN` operator (rewritten away by optimizer). |
+| [`src/planner/binder/tableref/bind_joinref.cpp`](src/planner/binder/tableref/bind_joinref.cpp) | Parses `SEMANTIC JOIN` in SQL. |
+| [`src/planner/expression_binder/where_binder.cpp`](src/planner/expression_binder/where_binder.cpp), [`select_binder.cpp`](src/planner/expression_binder/select_binder.cpp) | Bind `semantic(...)` in WHERE / SELECT. |
+| [`src/function/function.cpp`](src/function/function.cpp) | Registers semantic scalar functions. |
+
+### Build integration
+
+| Path | Role |
+|------|------|
+| [`src/optimizer/CMakeLists.txt`](src/optimizer/CMakeLists.txt), [`src/common/CMakeLists.txt`](src/common/CMakeLists.txt), [`src/function/scalar/CMakeLists.txt`](src/function/scalar/CMakeLists.txt), [`src/planner/CMakeLists.txt`](src/planner/CMakeLists.txt) | Add the new `.cpp` files to the DuckDB build. |
+
+### Benchmarks & logs (not engine code)
+
+| Path | Role |
+|------|------|
+| [`test/semantic/agent_bench/`](test/semantic/agent_bench/) | 30 hybrid benchmark SQL files (paper eval). |
+| [`test/semantic/demo_queries/`](test/semantic/demo_queries/) | Minimal demo queries. |
+| [`llm_calls_gpt-5-mini.log`](llm_calls_gpt-5-mini.log) | Per-run LLM call / token log (generated at runtime). |
+
+**Where is predicate placement implemented?**  
+`SemanticOptimizer::RunDPPlacement()` in [`src/optimizer/semantic.cpp`](src/optimizer/semantic.cpp) (DP over filter positions on a fixed join tree); realized by `FindSemanticFilter()` + `SwapFilterWithParent()`. Pull-up-only mode skips DP and always pulls semantic filters up. Environment knob: `DUCKDB_SEMANTIC_MODE=costmodel|pullup|none`.
+
 ## License
 
 MIT.
