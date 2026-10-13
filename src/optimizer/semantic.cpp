@@ -20,6 +20,10 @@
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_cross_product.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
+#include "duckdb/planner/operator/logical_order.hpp"
+#include "duckdb/planner/operator/logical_distinct.hpp"
+#include "duckdb/planner/operator/logical_limit.hpp"
+#include "duckdb/planner/operator/logical_top_n.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include <iostream>
@@ -356,6 +360,186 @@ static auto FetchPromptFromSemanticFilter(Expression &expr) -> std::string {
 	return "";
 }
 
+// Helper: Add offset to column indices in an expression that reference a specific table
+// Used when pulling projection up past a JOIN (column indices shift due to schema merge)
+static void AddColumnOffset(Expression &expr, idx_t target_table_index, idx_t offset) {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr.Cast<BoundColumnRefExpression>();
+		if (colref.binding.table_index == target_table_index) {
+			colref.binding.column_index += offset;
+		}
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		AddColumnOffset(child, target_table_index, offset);
+	});
+}
+
+// Helper: Update table index references in an expression
+static void UpdateTableIndex(Expression &expr, idx_t old_table_index, idx_t new_table_index) {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr.Cast<BoundColumnRefExpression>();
+		if (colref.binding.table_index == old_table_index) {
+			colref.binding.table_index = new_table_index;
+		}
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		UpdateTableIndex(child, old_table_index, new_table_index);
+	});
+}
+
+// Get the number of output columns from an operator
+static idx_t GetOutputColumnCount(LogicalOperator &op) {
+	// For most operators, we can get this from the types vector
+	return op.types.size();
+}
+
+// Find the type of a column binding by traversing the operator tree to leaf nodes
+// This is necessary because intermediate operators (like CROSS_PRODUCT after restructuring)
+// may have stale types vectors that don't reflect the current tree structure
+static LogicalType FindBindingType(LogicalOperator &op, const ColumnBinding &binding) {
+	// For leaf operators (SEQ_SCAN, GET, TABLE_FUNCTION, etc.), 
+	// the types vector is authoritative
+	bool is_leaf = op.children.empty();
+	
+	if (is_leaf) {
+		auto bindings = op.GetColumnBindings();
+		for (size_t i = 0; i < bindings.size() && i < op.types.size(); i++) {
+			if (bindings[i].table_index == binding.table_index &&
+			    bindings[i].column_index == binding.column_index) {
+				return op.types[i];
+			}
+		}
+		return LogicalType::ANY;
+	}
+	
+	// For PROJECTION, check if this projection produces the binding
+	if (op.type == LogicalOperatorType::LOGICAL_PROJECTION) {
+		auto &proj = op.Cast<LogicalProjection>();
+		if (proj.table_index == binding.table_index && 
+		    binding.column_index < proj.expressions.size()) {
+			// Get the return type of the expression at this column index
+			return proj.expressions[binding.column_index]->return_type;
+		}
+	}
+	
+	// For non-leaf operators, recurse into children to find the source
+	// Check which child can produce this binding
+	for (auto &child : op.children) {
+		if (!child) continue;
+		
+		auto child_bindings = child->GetColumnBindings();
+		for (const auto &cb : child_bindings) {
+			if (cb.table_index == binding.table_index &&
+			    cb.column_index == binding.column_index) {
+				// This child can produce the binding, recurse into it
+				return FindBindingType(*child, binding);
+			}
+		}
+	}
+	
+	return LogicalType::ANY;
+}
+
+// Collect all column bindings referenced by an expression
+static void CollectReferencedBindings(Expression &expr, std::unordered_set<idx_t> &table_indices,
+                                      std::vector<ColumnBinding> &bindings) {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr.Cast<BoundColumnRefExpression>();
+		table_indices.insert(colref.binding.table_index);
+		bindings.push_back(colref.binding);
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		CollectReferencedBindings(child, table_indices, bindings);
+	});
+}
+
+// Add pass-through columns to a projection so it exposes columns that ancestors need
+// This is necessary when pulling a projection up past a JOIN, because the ancestors
+// may reference columns from the JOIN's other child
+static void AddPassThroughColumns(LogicalProjection &proj, LogicalOperator &grandparent, 
+                                  LogicalOperator &new_child, idx_t proj_table_index, bool debug) {
+	// Collect all column bindings that grandparent references
+	std::unordered_set<idx_t> referenced_tables;
+	std::vector<ColumnBinding> referenced_bindings;
+	
+	for (auto &expr : grandparent.expressions) {
+		if (expr) {
+			CollectReferencedBindings(*expr, referenced_tables, referenced_bindings);
+		}
+	}
+	
+	if (debug) {
+		std::cout << "[AddPassThroughColumns] Grandparent references tables: {";
+		bool first = true;
+		for (auto t : referenced_tables) {
+			if (!first) std::cout << ", ";
+			std::cout << t;
+			first = false;
+		}
+		std::cout << "}\n";
+	}
+	
+	// Get bindings that the new child (JOIN) can provide
+	auto child_bindings = new_child.GetColumnBindings();
+	
+	// For each binding that grandparent references but is NOT from this projection,
+	// we need to add it as a pass-through column
+	std::unordered_set<idx_t> existing_proj_cols;
+	for (size_t i = 0; i < proj.expressions.size(); i++) {
+		// Track column indices we already expose
+		existing_proj_cols.insert(i);
+	}
+	
+	idx_t next_col_idx = proj.expressions.size();
+	for (const auto &binding : referenced_bindings) {
+		// Skip bindings that reference this projection itself
+		if (binding.table_index == proj_table_index) {
+			continue;
+		}
+		
+		// Check if this binding is available from the child
+		bool found_in_child = false;
+		for (const auto &child_binding : child_bindings) {
+			if (child_binding.table_index == binding.table_index && 
+			    child_binding.column_index == binding.column_index) {
+				found_in_child = true;
+				break;
+			}
+		}
+		
+		if (found_in_child) {
+			// Check if we already have a pass-through for this binding
+			bool already_added = false;
+			for (auto &expr : proj.expressions) {
+				if (expr && expr->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+					auto &colref = expr->Cast<BoundColumnRefExpression>();
+					if (colref.binding.table_index == binding.table_index &&
+					    colref.binding.column_index == binding.column_index) {
+						already_added = true;
+						break;
+					}
+				}
+			}
+			
+			if (!already_added) {
+				// Add a pass-through column reference
+				auto new_colref = make_uniq<BoundColumnRefExpression>(
+					LogicalType::ANY, // Type will be resolved later
+					binding
+				);
+				
+				if (debug) {
+					std::cout << "[AddPassThroughColumns] Adding pass-through for #[" 
+					          << binding.table_index << "." << binding.column_index << "]\n";
+				}
+				
+				proj.expressions.push_back(std::move(new_colref));
+				next_col_idx++;
+			}
+		}
+	}
+}
+
 bool SemanticOptimizer::IsSemanticExpr(Expression &expr) const {
 	return IsSemanticExprRecursive(expr);
 }
@@ -447,9 +631,9 @@ unique_ptr<LogicalOperator> SemanticOptimizer::Rewrite(unique_ptr<LogicalOperato
 		std::cout <<"Before Semantic Optimizations::\n" << EnhancedToString(plan.get()) <<"\n";
 	}
 
-	// Breaking semantic joins => cross product + filter
+	// SP pull-up (paper §2) before SJ decomposition and SF placement.
+	plan = PullUpSemanticProjections(std::move(plan));
 	plan = RewriteJoin(std::move(plan));
-	// Ensure SEMANTIC(X) AND SEMANTIC(Y) are lifted into individual filter nodes
 	plan = SplitSemanticConjunctions(std::move(plan));
 	auto parse_mode = []() -> Mode {
 		const char *m = std::getenv("DUCKDB_SEMANTIC_MODE");
@@ -1145,6 +1329,776 @@ unique_ptr<LogicalOperator> SemanticOptimizer::SplitSemanticConjunctions(unique_
 	}
 	return tail;
 }
+
+bool SemanticOptimizer::IsSemanticProjectionExpr(Expression &expr) const {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
+		auto &bf = expr.Cast<BoundFunctionExpression>();
+		std::string func_name = StringUtil::Lower(bf.function.name);
+		// semantic_int, semantic_string, semantic_double are projection functions
+		// semantic/semantic_bool are filter functions (return boolean)
+		if (func_name == "semantic_int" || func_name == "semantic_string" || 
+		    func_name == "semantic_double") {
+			return true;
+		}
+	}
+	// Check children recursively
+	bool found = false;
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		if (!found && IsSemanticProjectionExpr(child)) {
+			found = true;
+		}
+	});
+	return found;
+}
+
+// Check if a projection node contains semantic projection expressions
+bool SemanticOptimizer::HasSemanticProjectionExprs(LogicalProjection &proj) const {
+	for (auto &expr : proj.expressions) {
+		if (expr && IsSemanticProjectionExpr(*expr)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Check if an expression references a specific table index
+bool SemanticOptimizer::ExpressionReferencesTable(Expression &expr, idx_t table_index) const {
+	if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &colref = expr.Cast<BoundColumnRefExpression>();
+		if (colref.binding.table_index == table_index) {
+			return true;
+		}
+	}
+	bool found = false;
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+		if (!found && ExpressionReferencesTable(child, table_index)) {
+			found = true;
+		}
+	});
+	return found;
+}
+
+// Check if a parent operator references the projection's output IN A WAY THAT BLOCKS PULL-UP
+bool SemanticOptimizer::ParentReferencesProjection(LogicalOperator &parent, idx_t proj_table_index) const {
+	// Check all expressions in the parent
+	for (auto &expr : parent.expressions) {
+		if (expr && ExpressionReferencesTable(*expr, proj_table_index)) {
+			return true;
+		}
+	}
+	
+	// Special handling for different parent types
+	switch (parent.type) {
+	case LogicalOperatorType::LOGICAL_ANY_JOIN: {
+		auto &join = parent.Cast<LogicalAnyJoin>();
+		if (join.condition && ExpressionReferencesTable(*join.condition, proj_table_index)) {
+			return true;
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
+		auto &join = parent.Cast<LogicalComparisonJoin>();
+		for (auto &cond : join.conditions) {
+			if (cond.left && ExpressionReferencesTable(*cond.left, proj_table_index)) {
+				return true;
+			}
+			if (cond.right && ExpressionReferencesTable(*cond.right, proj_table_index)) {
+				return true;
+			}
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_ORDER_BY: {
+		// Check if ORDER BY columns reference the projection
+		auto &order = parent.Cast<LogicalOrder>();
+		for (auto &bound_order : order.orders) {
+			if (bound_order.expression && ExpressionReferencesTable(*bound_order.expression, proj_table_index)) {
+				return true;
+			}
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_DISTINCT: {
+		// Check if DISTINCT columns reference the projection
+		auto &distinct = parent.Cast<LogicalDistinct>();
+		for (auto &target : distinct.distinct_targets) {
+			if (target && ExpressionReferencesTable(*target, proj_table_index)) {
+				return true;
+			}
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_LIMIT: {
+		// LIMIT doesn't reference columns, always safe
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_TOP_N: {
+		// TOP_N (ORDER BY + LIMIT) - check if ORDER BY columns reference the projection
+		auto &topn = parent.Cast<LogicalTopN>();
+		for (auto &order : topn.orders) {
+			if (order.expression && ExpressionReferencesTable(*order.expression, proj_table_index)) {
+				return true;
+			}
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_PROJECTION: {
+		// For nested projections, check if any expression references the semantic projection's output
+		// This is the default check done above via parent.expressions
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT: {
+		// CROSS_PRODUCT doesn't have join conditions, only check expressions (done above)
+		break;
+	}
+	default:
+		break;
+	}
+	
+	return false;
+}
+
+// Check if operator type is potentially allowed for projection pull-up
+// These operators may allow pull-up IF they don't reference the semantic projection's output
+static bool IsPullUpParentAllowed(LogicalOperatorType type) {
+	switch (type) {
+	// Safe operators that don't change schema:
+	case LogicalOperatorType::LOGICAL_FILTER:      // Just filters rows
+	case LogicalOperatorType::LOGICAL_LIMIT:       // Just limits row count
+	case LogicalOperatorType::LOGICAL_ORDER_BY:    // Just orders rows (need to check column refs)
+	case LogicalOperatorType::LOGICAL_DISTINCT:    // Just deduplicates (need to check column refs)
+	case LogicalOperatorType::LOGICAL_TOP_N:       // ORDER BY + LIMIT combined
+	// Operators that need column binding updates:
+	case LogicalOperatorType::LOGICAL_PROJECTION:  // Need to remap column references
+	// JOIN operators - bindings are passed through from children:
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:    // Cartesian product, simple case
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:  // Equi-join with conditions
+	case LogicalOperatorType::LOGICAL_ANY_JOIN:         // Non-equi join
+	case LogicalOperatorType::LOGICAL_JOIN:             // Generic join
+		return true;
+	// NOT allowed:
+	// - AGGREGATE: changes schema (group by + aggregates)
+	// - UNION: requires schema compatibility across branches
+	default:
+		return false;
+	}
+}
+
+// Find a semantic projection that can be pulled up
+std::optional<SemanticOptimizer::ProjectionLocation> SemanticOptimizer::FindSemanticProjection(
+    unique_ptr<LogicalOperator> &op,
+    std::optional<std::reference_wrapper<unique_ptr<LogicalOperator>>> parent_opt) {
+	
+	if (!op) {
+		return std::nullopt;
+	}
+	
+	// Debug: print what we're looking at
+	if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+		std::cout << "[FindSemanticProjection] Visiting node type=" << LogicalOperatorToString(op->type) 
+		          << " IsPullUpAllowed=" << (IsPullUpParentAllowed(op->type) ? "yes" : "no") << "\n";
+		for (size_t i = 0; i < op->children.size(); i++) {
+			if (op->children[i]) {
+				std::cout << "  Child[" << i << "]: " << LogicalOperatorToString(op->children[i]->type);
+				if (op->children[i]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+					auto &proj = op->children[i]->Cast<LogicalProjection>();
+					std::cout << " HasSemanticProj=" << (HasSemanticProjectionExprs(proj) ? "yes" : "no");
+					std::cout << " exprs=[";
+					for (size_t j = 0; j < proj.expressions.size(); j++) {
+						if (j > 0) std::cout << ", ";
+						std::cout << proj.expressions[j]->ToString();
+					}
+					std::cout << "]";
+				}
+				std::cout << "\n";
+			}
+		}
+	}
+	
+	// Check if current operator allows pull-up and has a semantic projection child
+	if (IsPullUpParentAllowed(op->type)) {
+		for (size_t i = 0; i < op->children.size(); i++) {
+			auto &child = op->children[i];
+			if (!child) {
+				continue;
+			}
+			
+			// Check if child is a projection with semantic expressions
+			if (child->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+				auto &proj = child->Cast<LogicalProjection>();
+				
+				if (HasSemanticProjectionExprs(proj)) {
+					// Check if parent references this projection's output - if so, can't pull up
+					if (ParentReferencesProjection(*op, proj.table_index)) {
+						if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+							std::cout << "[FindSemanticProjection] Parent references projection table_index=" 
+							          << proj.table_index << ", cannot pull up\n";
+						}
+						continue;
+					}
+					
+					// Note: We allow pull-up even if parent has semantic expressions
+					// This enables optimization across multiple semantic operators
+					
+					// For JOIN parents, additional check: grandparent must not reference
+					// columns from the JOIN's OTHER children that would become inaccessible
+					// after pull-up. We handle this by adding pass-through columns later.
+					// But first verify we have a grandparent to work with.
+					if (!parent_opt) {
+						if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+							std::cout << "[FindSemanticProjection] No grandparent available, cannot pull up\n";
+						}
+						continue;
+					}
+					
+					// Found a valid candidate
+					ProjectionLocation loc{
+						parent_opt.value(),
+						std::ref(op),
+						std::ref(child)
+					};
+					return loc;
+				}
+			}
+		}
+	}
+	
+	// Recursively search children
+	for (auto &child : op->children) {
+		if (child) {
+			auto result = FindSemanticProjection(child, std::ref(op));
+			if (result) {
+				return result;
+			}
+		}
+	}
+	
+	return std::nullopt;
+}
+
+// Swap a semantic projection with its parent
+// Handles different parent types with appropriate column binding adjustments
+void SemanticOptimizer::SwapProjectionWithParent(ProjectionLocation &location) {
+	auto &grandparent = location.grandparent_ref.get();
+	auto &parent = location.parent_ref.get();
+	auto &semantic_proj_ptr = location.projection_ref.get();
+	
+	if (!grandparent || !parent || !semantic_proj_ptr) {
+		return;
+	}
+	
+	auto &semantic_proj = semantic_proj_ptr->Cast<LogicalProjection>();
+	D_ASSERT(semantic_proj_ptr->children.size() == 1);
+	
+	// Save parent type before any structural changes that might invalidate pointers
+	LogicalOperatorType parent_type = parent->type;
+	idx_t semantic_proj_table_index = semantic_proj.table_index;
+	
+	bool debug = std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0';
+	
+	// CRITICAL: For JOIN/CROSS_PRODUCT parents, collect binding->type mapping BEFORE the swap
+	// After the swap, the structure changes and types become unreliable
+	std::unordered_map<uint64_t, LogicalType> binding_types_before_swap;
+	auto make_binding_key = [](const ColumnBinding &b) -> uint64_t {
+		return ((uint64_t)b.table_index << 32) | (uint64_t)b.column_index;
+	};
+	
+	if (parent_type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT ||
+	    parent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+	    parent_type == LogicalOperatorType::LOGICAL_ANY_JOIN ||
+	    parent_type == LogicalOperatorType::LOGICAL_JOIN) {
+		// Get bindings and types from parent (JOIN/CROSS_PRODUCT)
+		auto parent_bindings = parent->GetColumnBindings();
+		auto &parent_types = parent->types;
+		
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] Pre-collecting types from parent\n";
+			std::cout << "  Parent has " << parent_bindings.size() << " bindings, " 
+			          << parent_types.size() << " types\n";
+		}
+		
+		for (size_t i = 0; i < parent_bindings.size() && i < parent_types.size(); i++) {
+			auto key = make_binding_key(parent_bindings[i]);
+			binding_types_before_swap[key] = parent_types[i];
+			if (debug) {
+				std::cout << "  Binding #[" << parent_bindings[i].table_index << "." 
+				          << parent_bindings[i].column_index << "] -> " 
+				          << parent_types[i].ToString() << "\n";
+			}
+		}
+	}
+	
+	if (debug) {
+		std::cout << "[SwapProjectionWithParent] Pulling up projection (table_index=" 
+		          << semantic_proj.table_index << ") above parent type=" 
+		          << LogicalOperatorToString(parent->type) << "\n";
+		std::cout << "[SwapProjectionWithParent] Grandparent type=" 
+		          << LogicalOperatorToString(grandparent->type) << " with "
+		          << grandparent->expressions.size() << " expressions\n";
+	}
+	
+	// Handle parent-type-specific adjustments BEFORE the swap
+	switch (parent->type) {
+	case LogicalOperatorType::LOGICAL_FILTER: {
+		// FILTER: Clear projection maps, no column binding changes needed
+		ClearProjectionMaps(*parent);
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_LIMIT: {
+		// LIMIT: No column binding changes needed, LIMIT just counts rows
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] LIMIT parent - no binding changes needed\n";
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_ORDER_BY: {
+		// ORDER_BY: Check passed (order columns don't reference projection output)
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] ORDER_BY parent - order expressions preserved\n";
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_DISTINCT: {
+		// DISTINCT: Check passed (distinct targets don't reference projection output)
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] DISTINCT parent - distinct targets preserved\n";
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_TOP_N: {
+		// TOP_N: Check passed (order columns don't reference projection output)
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] TOP_N parent - order expressions preserved\n";
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_PROJECTION: {
+		// PROJECTION parent: The outer projection's expressions reference the child's output.
+		// Since we verified the outer projection doesn't reference the semantic projection's output,
+		// its column references should point to columns that are "passed through" from below.
+		// After swap, these references will still be valid because the semantic projection
+		// still exposes the same non-semantic columns from its child.
+		if (debug) {
+			auto &outer_proj = parent->Cast<LogicalProjection>();
+			std::cout << "[SwapProjectionWithParent] PROJECTION parent (table_index=" 
+			          << outer_proj.table_index << ")\n";
+			std::cout << "  Outer proj expressions: [";
+			for (size_t i = 0; i < outer_proj.expressions.size(); i++) {
+				if (i > 0) std::cout << ", ";
+				std::cout << outer_proj.expressions[i]->ToString();
+			}
+			std::cout << "]\n";
+		}
+		break;
+	}
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+	case LogicalOperatorType::LOGICAL_ANY_JOIN:
+	case LogicalOperatorType::LOGICAL_JOIN:
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT: {
+		// JOIN parent: Need comprehensive column binding handling
+		// After pull-up, semantic projection sits between grandparent and JOIN
+		// We need to:
+		// 1. Add pass-through columns to semantic projection for columns grandparent needs
+		// 2. Update grandparent's expressions to reference the new column positions
+		ClearProjectionMaps(*parent);
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] JOIN parent type=" 
+			          << LogicalOperatorToString(parent->type) << "\n";
+			std::cout << "  Will handle pass-through columns after structural swap\n";
+		}
+		break;
+	}
+	default:
+		// Other types: just clear projection maps if present
+		ClearProjectionMaps(*parent);
+		break;
+	}
+	
+	// Step 1: Detach the projection's child (what's below the projection)
+	auto proj_child = std::move(semantic_proj_ptr->children[0]);
+	semantic_proj_ptr->children.clear();
+	
+	// Step 2: Find which child index of parent has the semantic projection
+	// and replace it with the projection's child
+	unique_ptr<LogicalOperator> semantic_proj_node = nullptr;
+	size_t proj_child_index = 0;
+	for (size_t i = 0; i < parent->children.size(); i++) {
+		if (parent->children[i].get() == semantic_proj_ptr.get()) {
+			proj_child_index = i;
+			semantic_proj_node = std::move(parent->children[i]);
+			parent->children[i] = std::move(proj_child);
+			break;
+		}
+	}
+	
+	D_ASSERT(semantic_proj_node != nullptr);
+	
+	// Step 2.5: For JOIN parents, update column bindings in semantic projection
+	// The semantic projection's expressions reference its original child's columns.
+	// After pull-up, it sits above the JOIN, so we need to remap references.
+	// JOIN output = [left_child_cols..., right_child_cols...]
+	if (parent->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+	    parent->type == LogicalOperatorType::LOGICAL_ANY_JOIN ||
+	    parent->type == LogicalOperatorType::LOGICAL_JOIN ||
+	    parent->type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT) {
+		// If semantic projection was on the RIGHT child (index 1), 
+		// its column references need offset by left child's column count
+		if (proj_child_index == 1 && parent->children.size() >= 1) {
+			// Get the left child's column count (now parent->children[0])
+			idx_t left_col_count = 0;
+			if (parent->children[0]) {
+				left_col_count = GetOutputColumnCount(*parent->children[0]);
+			}
+			
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Semantic proj was on RIGHT side of JOIN\n";
+				std::cout << "  Left child has " << left_col_count << " columns\n";
+				std::cout << "  Adding offset to semantic projection's column references\n";
+			}
+			
+			// The semantic projection's expressions reference the original right child's table_index
+			// After the swap, it needs to reference columns in the JOIN's output
+			// JOIN output: [left_cols (0..left_col_count-1), right_cols (left_col_count..)]
+			// So we need to add left_col_count to all column indices that reference the right child
+			
+			// Get the table_index that the semantic projection's expressions reference
+			// This should be the table_index of what was the right child (now parent->children[1])
+			idx_t original_child_table_idx = DConstants::INVALID_INDEX;
+			if (parent->children[1]) {
+				auto child_tables = parent->children[1]->GetTableIndex();
+				if (!child_tables.empty()) {
+					original_child_table_idx = child_tables[0];
+				}
+			}
+			
+			// Update column indices in the semantic projection's expressions
+			auto &sem_proj = semantic_proj_node->Cast<LogicalProjection>();
+			for (auto &expr : sem_proj.expressions) {
+				if (expr && original_child_table_idx != DConstants::INVALID_INDEX) {
+					AddColumnOffset(*expr, original_child_table_idx, left_col_count);
+				}
+			}
+			
+			if (debug) {
+				std::cout << "  Updated expressions: [";
+				for (size_t i = 0; i < sem_proj.expressions.size(); i++) {
+					if (i > 0) std::cout << ", ";
+					std::cout << sem_proj.expressions[i]->ToString();
+				}
+				std::cout << "]\n";
+			}
+		}
+	}
+	
+	// Step 3: Insert projection above parent in grandparent
+	// Make parent the child of the projection
+	for (size_t i = 0; i < grandparent->children.size(); i++) {
+		if (grandparent->children[i].get() == parent.get()) {
+			auto parent_ptr = std::move(grandparent->children[i]);
+			semantic_proj_node->children.push_back(std::move(parent_ptr));
+			grandparent->children[i] = std::move(semantic_proj_node);
+			break;
+		}
+	}
+	
+	if (debug) {
+		std::cout << "[SwapProjectionWithParent] Structural swap completed\n";
+		std::cout << "  Structure: grandparent -> semantic_proj -> parent -> child\n";
+	}
+	
+	// Step 4: Handle pass-through columns for ALL parent types
+	// After the swap, grandparent's child is now the semantic projection.
+	// If grandparent references columns that aren't exposed by the semantic projection,
+	// we need to add those as pass-through columns.
+	// This is critical for:
+	// - JOIN parents: columns from the other child become accessible through semantic projection
+	// - All parents: ensure grandparent's references are satisfied
+	{
+		
+		if (debug) {
+			std::cout << "[SwapProjectionWithParent] Step 4: Handling pass-through columns\n";
+		}
+		
+		// Find the semantic projection (now in grandparent's children)
+		// It was just inserted in Step 3
+		LogicalProjection *sem_proj = nullptr;
+		LogicalOperator *child_op = nullptr;  // The operator now under semantic projection
+		
+		for (auto &gchild : grandparent->children) {
+			if (gchild && gchild->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+				auto &proj = gchild->Cast<LogicalProjection>();
+				if (proj.table_index == semantic_proj_table_index) {
+					sem_proj = &proj;
+					// Get the child (the original parent, now under semantic projection)
+					if (!gchild->children.empty()) {
+						child_op = gchild->children[0].get();
+					}
+					break;
+				}
+			}
+		}
+		
+		if (!sem_proj || !child_op) {
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] WARNING: Could not locate sem_proj or child_op!\n";
+			}
+		} else {
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Found semantic projection (table_index=" 
+				          << sem_proj->table_index << ") with " 
+				          << sem_proj->expressions.size() << " expressions\n";
+				std::cout << "[SwapProjectionWithParent] Child type=" 
+				          << LogicalOperatorToString(child_op->type) << "\n";
+			}
+			
+			// Collect bindings that grandparent references
+			std::unordered_set<idx_t> referenced_tables;
+			std::vector<ColumnBinding> referenced_bindings;
+			
+			for (auto &expr : grandparent->expressions) {
+				if (expr) {
+					CollectReferencedBindings(*expr, referenced_tables, referenced_bindings);
+				}
+			}
+			
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Grandparent references " 
+				          << referenced_bindings.size() << " column bindings: ";
+				for (const auto &b : referenced_bindings) {
+					std::cout << "#[" << b.table_index << "." << b.column_index << "] ";
+				}
+				std::cout << "\n";
+			}
+			
+			// Get bindings available from the child operator (which is now under semantic projection)
+			auto child_bindings = child_op->GetColumnBindings();
+			
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Child provides " 
+				          << child_bindings.size() << " bindings: ";
+				for (const auto &b : child_bindings) {
+					std::cout << "#[" << b.table_index << "." << b.column_index << "] ";
+				}
+				std::cout << "\n";
+			}
+			
+			// Build a map from original binding to new column index in semantic projection
+			// Start after the existing expressions
+			idx_t next_col_idx = sem_proj->expressions.size();
+			std::unordered_map<uint64_t, idx_t> binding_to_new_col;
+			
+			// Helper to create a key from binding
+			auto make_key = [](const ColumnBinding &b) -> uint64_t {
+				return ((uint64_t)b.table_index << 32) | (uint64_t)b.column_index;
+			};
+			
+			// First, map existing semantic projection columns
+			for (idx_t i = 0; i < sem_proj->expressions.size(); i++) {
+				auto &expr = sem_proj->expressions[i];
+				if (expr && expr->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+					auto &colref = expr->Cast<BoundColumnRefExpression>();
+					binding_to_new_col[make_key(colref.binding)] = i;
+					if (debug) {
+						std::cout << "[SwapProjectionWithParent] Existing mapping: #[" 
+						          << colref.binding.table_index << "." << colref.binding.column_index 
+						          << "] -> col " << i << "\n";
+					}
+				}
+			}
+			
+			// Also map the semantic projection's own output columns
+			for (idx_t i = 0; i < sem_proj->expressions.size(); i++) {
+				binding_to_new_col[make_key(ColumnBinding(sem_proj->table_index, i))] = i;
+			}
+			
+			// For JOIN/CROSS_PRODUCT parents: add ALL child bindings as pass-through
+			// This ensures ancestors can access any column from the original child
+			// For other parents: only add bindings that grandparent references
+			bool add_all_child_bindings = (parent_type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT ||
+			                               parent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+			                               parent_type == LogicalOperatorType::LOGICAL_ANY_JOIN ||
+			                               parent_type == LogicalOperatorType::LOGICAL_JOIN);
+			
+			// Determine which bindings to add as pass-through
+			std::vector<ColumnBinding> bindings_to_add;
+			if (add_all_child_bindings) {
+				// Add ALL child bindings (for JOIN parents)
+				bindings_to_add = std::vector<ColumnBinding>(child_bindings.begin(), child_bindings.end());
+				if (debug) {
+					std::cout << "[SwapProjectionWithParent] Adding ALL " << bindings_to_add.size() 
+					          << " child bindings as pass-through (JOIN parent)\n";
+				}
+			} else {
+				// Only add bindings that grandparent references
+				bindings_to_add = referenced_bindings;
+			}
+			
+			// For each binding, add pass-through if not already mapped
+			for (const auto &binding : bindings_to_add) {
+				// Skip if this is the semantic projection's output
+				if (binding.table_index == sem_proj->table_index) {
+					if (debug) {
+						std::cout << "[SwapProjectionWithParent] Skip binding #[" 
+						          << binding.table_index << "." << binding.column_index 
+						          << "] - from semantic proj output\n";
+					}
+					continue;
+				}
+				
+				uint64_t key = make_key(binding);
+				
+				// Skip if already mapped
+				if (binding_to_new_col.find(key) != binding_to_new_col.end()) {
+					if (debug) {
+						std::cout << "[SwapProjectionWithParent] Skip binding #[" 
+						          << binding.table_index << "." << binding.column_index 
+						          << "] - already mapped to col " << binding_to_new_col[key] << "\n";
+					}
+					continue;
+				}
+				
+				// Check if this binding is available from the child operator
+				// Use the pre-collected type information (collected before the swap)
+				bool found = false;
+				LogicalType col_type = LogicalType::ANY;
+				for (size_t j = 0; j < child_bindings.size(); j++) {
+					if (child_bindings[j].table_index == binding.table_index &&
+					    child_bindings[j].column_index == binding.column_index) {
+						found = true;
+						// Look up type from pre-collected mapping first
+						auto type_key = make_binding_key(binding);
+						auto type_it = binding_types_before_swap.find(type_key);
+						if (type_it != binding_types_before_swap.end()) {
+							col_type = type_it->second;
+						} else {
+							// Fallback: recursively find the type from the source operator
+							// This is more reliable than using child_op->types[j] which may be stale
+							col_type = FindBindingType(*child_op, binding);
+						}
+						if (debug) {
+							std::cout << "[SwapProjectionWithParent] Binding #[" 
+							          << binding.table_index << "." << binding.column_index 
+							          << "] found at j=" << j << ", type=" << col_type.ToString() << "\n";
+						}
+						break;
+					}
+				}
+				
+				if (found) {
+					// Add pass-through column using LogicalType::ANY
+					// The actual type will be resolved by DuckDB's type system later
+					auto new_colref = make_uniq<BoundColumnRefExpression>(col_type, binding);
+					
+					if (debug) {
+						std::cout << "[SwapProjectionWithParent] Adding pass-through: #[" 
+						          << binding.table_index << "." << binding.column_index 
+						          << "] -> col " << next_col_idx << "\n";
+					}
+					
+					binding_to_new_col[key] = next_col_idx;
+					sem_proj->expressions.push_back(std::move(new_colref));
+					// Don't update sem_proj->types - let DuckDB's resolution handle it
+					next_col_idx++;
+				} else if (!add_all_child_bindings) {
+					// Only warn if we were explicitly looking for this binding
+					if (debug) {
+						std::cout << "[SwapProjectionWithParent] WARNING: Binding #[" 
+						          << binding.table_index << "." << binding.column_index 
+						          << "] not found in child output!\n";
+					}
+				}
+			}
+			
+			// Now update grandparent's expressions to reference the new column positions
+			// in the semantic projection
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Remapping step: binding_to_new_col has " 
+				          << binding_to_new_col.size() << " entries\n";
+				for (auto &kv : binding_to_new_col) {
+					idx_t table_idx = kv.first >> 32;
+					idx_t col_idx = kv.first & 0xFFFFFFFF;
+					std::cout << "  #[" << table_idx << "." << col_idx << "] -> col " << kv.second << "\n";
+				}
+			}
+			
+			std::function<void(Expression &)> update_refs = [&](Expression &expr) {
+				if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+					auto &colref = expr.Cast<BoundColumnRefExpression>();
+					uint64_t key = make_key(colref.binding);
+					
+					auto it = binding_to_new_col.find(key);
+					if (it != binding_to_new_col.end()) {
+						// Only remap if it's NOT already referencing the semantic projection
+						if (colref.binding.table_index != sem_proj->table_index) {
+							idx_t old_table = colref.binding.table_index;
+							idx_t old_col = colref.binding.column_index;
+							
+							colref.binding.table_index = sem_proj->table_index;
+							colref.binding.column_index = it->second;
+							
+							if (debug) {
+								std::cout << "[SwapProjectionWithParent] Remapped grandparent ref: #[" 
+								          << old_table << "." << old_col << "] -> #[" 
+								          << colref.binding.table_index << "." 
+								          << colref.binding.column_index << "]\n";
+							}
+						}
+					}
+				}
+				ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
+					update_refs(child);
+				});
+			};
+			
+			for (auto &expr : grandparent->expressions) {
+				if (expr) {
+					update_refs(*expr);
+				}
+			}
+			
+			if (debug) {
+				std::cout << "[SwapProjectionWithParent] Updated semantic projection has " 
+				          << sem_proj->expressions.size() << " expressions\n";
+			}
+		}
+	}
+	
+	if (debug) {
+		std::cout << "[SwapProjectionWithParent] All adjustments completed successfully\n";
+	}
+	
+	// Note: After this swap, the projection now sits above the parent.
+	// For non-JOIN parents, the projection's expressions still reference columns 
+	// from its (now grandchild) subtree via table_index.
+	// For JOIN parents, we've added pass-through columns and remapped grandparent's references.
+	//
+	// Structure change:
+	// Before:  grandparent -> parent -> projection -> child
+	// After:   grandparent -> projection -> parent -> child
+}
+
+// Main entry point for semantic projection pull-up
+unique_ptr<LogicalOperator> SemanticOptimizer::PullUpSemanticProjections(unique_ptr<LogicalOperator> plan) {
+	if (!plan) {
+		return plan;
+	}
+	
+	// Repeatedly find and pull up semantic projections
+	while (true) {
+		auto proj_location = FindSemanticProjection(plan, std::nullopt);
+		if (!proj_location) {
+			break;
+		}
+		SwapProjectionWithParent(*proj_location);
+	}
+	
+	if (std::getenv("DUCKDB_SEMANTIC_DEBUG") && std::getenv("DUCKDB_SEMANTIC_DEBUG")[0] != '\0') {
+		std::cout << "[PullUpSemanticProjections] Completed projection pull-up\n";
+	}
+	
+	return plan;
+}
+
 
 // Find semantic filter in the tree
 std::optional<SemanticOptimizer::FilterLocation> SemanticOptimizer::FindSemanticFilter(
