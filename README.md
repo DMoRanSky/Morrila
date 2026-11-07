@@ -1,10 +1,11 @@
-# Morrila: Cost-Based Placement of Semantic Operators in Hybrid Query Plans
+# [SIGMOD'27] Morrila: Cost-Based Placement of Semantic Operators in Hybrid Query Plans
+
+Paper: https://arxiv.org/pdf/2604.09944
 
 Morrila is a plan-level optimizer for hybrid semantic-relational SQL execution.
 It optimizes where semantic operators are placed in query plans to reduce total cost while preserving exact operator semantics.
 
 This repository is a research fork based on DuckDB:
-
 - Upstream: https://github.com/duckdb/duckdb
 
 ## Overview
